@@ -4,6 +4,13 @@ import type { ExtensionAPI, ExtensionContext } from "@anthropic-ai/claude-code";
 
 const WORKFLOW_PHASES = ["idle", "finder", "skeptic", "arbiter", "fixer"] as const;
 type WorkflowPhase = (typeof WORKFLOW_PHASES)[number];
+type AnalysisPhase = Exclude<WorkflowPhase, "idle" | "fixer">;
+
+const ANALYSIS_PHASE_ORDER: AnalysisPhase[] = ["finder", "skeptic", "arbiter"];
+const NEXT_ANALYSIS_PHASE: Record<Exclude<AnalysisPhase, "arbiter">, AnalysisPhase> = {
+  finder: "skeptic",
+  skeptic: "arbiter",
+};
 
 const PHASE_LABELS: Record<Exclude<WorkflowPhase, "idle">, string> = {
   finder: "Finding bugs...",
@@ -19,8 +26,18 @@ const PROMPT_FILE_NAMES = {
   fixer: "fixer.md",
 } as const;
 
+const MAX_EMPTY_OUTPUT_RETRIES = 2;
+const MAX_REFINEMENT_ATTEMPTS = 3;
+const BLOCKED_TOOLS_IN_ANALYSIS = new Set(["Edit", "Write"]);
+
 type PromptKey = keyof typeof PROMPT_FILE_NAMES;
 type PromptBundle = Record<PromptKey, string>;
+
+type WorkflowResultKind = "ok" | "blocked" | "recoverable_error";
+interface WorkflowResult {
+  kind: WorkflowResultKind;
+  reason?: string;
+}
 
 interface WorkflowReports {
   finder?: string;
@@ -32,6 +49,8 @@ interface WorkflowState {
   phase: WorkflowPhase;
   scope?: string;
   reports: WorkflowReports;
+  refinementAttempts: number;
+  emptyOutputRetries: number;
 }
 
 interface TextBlock {
@@ -59,17 +78,20 @@ export default function bugFinder(api: ExtensionAPI) {
 
   api.registerCommand("bug-finder", {
     description: "Run the adversarial bug-finding workflow (4 phases)",
-    handler: async (args, ctx) => {
-      await workflow.handleCommand(args, ctx);
-    },
+    handler: workflow.handleCommand.bind(workflow),
   });
 
-  api.on("tool_call", async (event) => workflow.handleToolCall(event));
-  api.on("agent_end", async (event, ctx) => workflow.handleAgentEnd(event, ctx));
+  api.on("tool_call", workflow.handleToolCall.bind(workflow));
+  api.on("agent_end", workflow.handleAgentEnd.bind(workflow));
 }
 
-class BugFinderWorkflow {
-  private state: WorkflowState = { phase: "idle", reports: {} };
+export class BugFinderWorkflow {
+  private state: WorkflowState = {
+    phase: "idle",
+    reports: {},
+    refinementAttempts: 0,
+    emptyOutputRetries: 0,
+  };
 
   constructor(
     private readonly api: ExtensionAPI,
@@ -77,36 +99,49 @@ class BugFinderWorkflow {
     private readonly startupError?: string,
   ) {}
 
-  async handleCommand(args: unknown, ctx: ExtensionContext) {
+  /**
+   * Command contract:
+   * - {kind:"ok"}: run started
+   * - {kind:"blocked"}: workflow already active or prompts unavailable
+   */
+  async handleCommand(args: unknown, ctx: ExtensionContext): Promise<WorkflowResult> {
     if (!this.prompts) {
       ctx.ui.notify(
         `Bug finder is unavailable: ${this.startupError ?? "prompt initialization failed."}`,
         "error",
       );
-      return;
+      return { kind: "blocked", reason: "prompts_unavailable" };
     }
 
     if (this.state.phase !== "idle") {
       ctx.ui.notify("Bug finder is already running. Finish or cancel the current run first.", "warning");
-      return;
+      return { kind: "blocked", reason: "already_running" };
     }
 
     this.state = {
       phase: "finder",
       scope: parseScopeArg(args),
       reports: {},
+      refinementAttempts: 0,
+      emptyOutputRetries: 0,
     };
 
     this.updateStatus(ctx);
-    this.api.sendUserMessage(buildFinderPrompt(this.prompts.finder, this.state.scope));
+    this.sendPromptForPhase("finder");
+    return { kind: "ok" };
   }
 
+  /**
+   * Tool-policy contract:
+   * - returns undefined when tool is allowed
+   * - returns block payload for disallowed mutating tools during analysis phases
+   */
   async handleToolCall(event: { toolName?: string }) {
-    if (!["finder", "skeptic", "arbiter"].includes(this.state.phase)) {
+    if (!isAnalysisPhase(this.state.phase)) {
       return;
     }
 
-    if (["Edit", "Write"].includes(event.toolName ?? "")) {
+    if (BLOCKED_TOOLS_IN_ANALYSIS.has(event.toolName ?? "")) {
       return {
         block: true,
         reason: "Bug finder analysis phase: writes are disabled",
@@ -114,49 +149,46 @@ class BugFinderWorkflow {
     }
   }
 
-  async handleAgentEnd(event: { messages?: unknown[] }, ctx: ExtensionContext) {
+  /**
+   * Agent-end contract:
+   * - advances deterministic phase flow when assistant text exists
+   * - bounded retries for empty output to avoid infinite churn
+   */
+  async handleAgentEnd(event: { messages?: unknown[] }, ctx: ExtensionContext): Promise<WorkflowResult> {
     if (this.state.phase === "idle" || !this.prompts) {
-      return;
+      return { kind: "blocked", reason: "inactive" };
     }
 
     const assistantText = extractAssistantText(event.messages ?? []);
     if (!assistantText) {
-      ctx.ui.notify(
-        `No assistant output captured for phase '${this.state.phase}'. Keeping workflow in the same phase.`,
-        "warning",
-      );
-      this.requeueCurrentPhase();
-      return;
+      return this.handleMissingAssistantOutput(ctx);
     }
 
-    if (this.state.phase === "finder") {
-      this.state.reports.finder = assistantText;
-      this.state.phase = "skeptic";
-      this.updateStatus(ctx);
-      this.api.sendUserMessage(buildSkepticPrompt(this.prompts, this.state.reports));
-      return;
-    }
-
-    if (this.state.phase === "skeptic") {
-      this.state.reports.skeptic = assistantText;
-      this.state.phase = "arbiter";
-      this.updateStatus(ctx);
-      this.api.sendUserMessage(buildArbiterPrompt(this.prompts, this.state.reports));
-      return;
-    }
-
-    if (this.state.phase === "arbiter") {
-      this.state.reports.arbiter = assistantText;
-      await this.handleArbiterComplete(ctx);
-      return;
-    }
+    this.state.emptyOutputRetries = 0;
 
     if (this.state.phase === "fixer") {
       this.finishRun(ctx, "Bug finder workflow complete!");
+      return { kind: "ok" };
     }
+
+    if (isAnalysisPhase(this.state.phase)) {
+      this.capturePhaseReport(this.state.phase, assistantText);
+
+      if (this.state.phase === "arbiter") {
+        await this.handleArbiterComplete(ctx);
+        return { kind: "ok" };
+      }
+
+      this.state.phase = NEXT_ANALYSIS_PHASE[this.state.phase];
+      this.updateStatus(ctx);
+      this.sendPromptForPhase(this.state.phase);
+      return { kind: "ok" };
+    }
+
+    return { kind: "recoverable_error", reason: "unknown_phase" };
   }
 
-  private async handleArbiterComplete(ctx: ExtensionContext) {
+  private async handleArbiterComplete(ctx: ExtensionContext): Promise<void> {
     this.updateStatus(ctx);
 
     const choice = await ctx.ui.select("Bug Finder - Analysis Complete", [
@@ -167,53 +199,80 @@ class BugFinderWorkflow {
 
     if (choice?.startsWith("Execute")) {
       this.state.phase = "fixer";
+      this.state.refinementAttempts = 0;
       this.updateStatus(ctx);
-      ctx.ui.setWidget("bug-finder", `## Verified Bugs\n\n${this.state.reports.arbiter ?? ""}`);
-      this.api.sendUserMessage(buildFixerPrompt(this.prompts!, this.state.reports));
+      ctx.ui.setWidget("bug-finder", [
+        "## Verified Bugs",
+        "",
+        ...(this.state.reports.arbiter ?? "").split("\n"),
+      ]);
+      this.sendPromptForPhase("fixer");
       return;
     }
 
     if (choice?.startsWith("Refine")) {
+      if (this.state.refinementAttempts >= MAX_REFINEMENT_ATTEMPTS) {
+        ctx.ui.notify(
+          `Maximum refinement attempts reached (${MAX_REFINEMENT_ATTEMPTS}). Execute fixes or cancel.`,
+          "warning",
+        );
+        return;
+      }
+
       const refinement = await ctx.ui.editor("Refine analysis:", "");
       if (!refinement?.trim()) {
         ctx.ui.notify("Refinement cancelled: no refinement text was provided.", "info");
         return;
       }
 
-      this.api.sendUserMessage(buildRefinementPrompt(this.prompts!, this.state.reports, refinement));
+      this.state.refinementAttempts += 1;
+      this.api.sendUserMessage(buildPrompt("arbiter", this.prompts!, this.state.reports, this.state.scope, refinement));
       return;
     }
 
     this.finishRun(ctx, "Bug finder cancelled.");
   }
 
-  private requeueCurrentPhase() {
-    if (!this.prompts || this.state.phase === "idle") {
-      return;
+  private handleMissingAssistantOutput(ctx: ExtensionContext): WorkflowResult {
+    this.state.emptyOutputRetries += 1;
+
+    if (this.state.emptyOutputRetries > MAX_EMPTY_OUTPUT_RETRIES) {
+      this.finishRun(
+        ctx,
+        `Bug finder stopped: no assistant output captured after ${MAX_EMPTY_OUTPUT_RETRIES + 1} attempts.`,
+      );
+      return { kind: "recoverable_error", reason: "max_empty_output_retries" };
     }
 
-    if (this.state.phase === "finder") {
-      this.api.sendUserMessage(buildFinderPrompt(this.prompts.finder, this.state.scope));
-      return;
+    ctx.ui.notify(
+      `No assistant output captured for phase '${this.state.phase}'. Retrying (${this.state.emptyOutputRetries}/${MAX_EMPTY_OUTPUT_RETRIES}).`,
+      "warning",
+    );
+
+    if (isAnalysisPhase(this.state.phase) || this.state.phase === "fixer") {
+      this.sendPromptForPhase(this.state.phase);
     }
 
-    if (this.state.phase === "skeptic") {
-      this.api.sendUserMessage(buildSkepticPrompt(this.prompts, this.state.reports));
-      return;
-    }
+    return { kind: "recoverable_error", reason: "empty_output_retry" };
+  }
 
-    if (this.state.phase === "arbiter") {
-      this.api.sendUserMessage(buildArbiterPrompt(this.prompts, this.state.reports));
-      return;
-    }
+  private sendPromptForPhase(phase: AnalysisPhase | "fixer") {
+    this.api.sendUserMessage(
+      buildPrompt(phase, this.prompts!, this.state.reports, this.state.scope),
+    );
+  }
 
-    if (this.state.phase === "fixer") {
-      this.api.sendUserMessage(buildFixerPrompt(this.prompts, this.state.reports));
-    }
+  private capturePhaseReport(phase: AnalysisPhase, report: string) {
+    this.state.reports[phase] = report;
   }
 
   private finishRun(ctx: ExtensionContext, message: string) {
-    this.state = { phase: "idle", reports: {} };
+    this.state = {
+      phase: "idle",
+      reports: {},
+      refinementAttempts: 0,
+      emptyOutputRetries: 0,
+    };
     this.updateStatus(ctx);
     ctx.ui.notify(message, "info");
   }
@@ -227,10 +286,7 @@ class BugFinderWorkflow {
 
     const phaseIndex = WORKFLOW_PHASES.indexOf(this.state.phase);
     const icon = this.state.phase === "fixer" ? "🔧" : "🔍";
-    ctx.ui.setStatus(
-      "bug-finder",
-      `${icon} Phase ${phaseIndex}/4: ${PHASE_LABELS[this.state.phase]}`,
-    );
+    ctx.ui.setStatus("bug-finder", `${icon} Phase ${phaseIndex}/4: ${PHASE_LABELS[this.state.phase]}`);
   }
 }
 
@@ -266,6 +322,10 @@ export function extractAssistantText(messages: unknown[]): string | undefined {
   return text.length > 0 ? text : undefined;
 }
 
+function isAnalysisPhase(phase: WorkflowPhase): phase is AnalysisPhase {
+  return ANALYSIS_PHASE_ORDER.includes(phase as AnalysisPhase);
+}
+
 function loadPrompts(promptDirectory: string): PromptLoadResult {
   try {
     const prompts = {
@@ -277,7 +337,7 @@ function loadPrompts(promptDirectory: string): PromptLoadResult {
 
     return { prompts };
   } catch (error) {
-    const reason = error instanceof Error ? error.message : "unknown I/O error";
+    const reason = error instanceof Error ? `${error.name}: ${error.message}` : "unknown I/O error";
     return {
       error: `failed to load prompt bundle from '${promptDirectory}': ${reason}`,
     };
@@ -295,39 +355,49 @@ function readPromptFile(promptDirectory: string, fileName: string): string {
   return content;
 }
 
-function buildFinderPrompt(finderPrompt: string, scope?: string): string {
-  return scope ? `${finderPrompt}\n\nFocus on: ${scope}` : finderPrompt;
-}
-
-function buildSkepticPrompt(prompts: PromptBundle, reports: WorkflowReports): string {
-  return `${prompts.skeptic}\n\n## Bug Report from Phase 1\n\n${reports.finder ?? ""}`;
-}
-
-function buildArbiterPrompt(prompts: PromptBundle, reports: WorkflowReports): string {
-  return [
-    prompts.arbiter,
-    "## Bug Report (Phase 1)",
-    reports.finder ?? "",
-    "## Skeptic Review (Phase 2)",
-    reports.skeptic ?? "",
-  ].join("\n\n");
-}
-
-function buildRefinementPrompt(
+function buildPrompt(
+  phase: AnalysisPhase | "fixer",
   prompts: PromptBundle,
   reports: WorkflowReports,
-  refinement: string,
+  scope?: string,
+  refinement?: string,
 ): string {
-  return [
-    prompts.arbiter,
-    "## Existing Arbitration",
-    reports.arbiter ?? "",
-    "## Refinement Request",
-    refinement.trim(),
-    "Please produce a fully revised arbitration report.",
-  ].join("\n\n");
-}
+  const sections: string[] = [];
 
-function buildFixerPrompt(prompts: PromptBundle, reports: WorkflowReports): string {
-  return `${prompts.fixer}\n\n## Verified Bug List\n\n${reports.arbiter ?? ""}`;
+  if (phase === "finder") {
+    sections.push(prompts.finder);
+    if (scope) {
+      sections.push(`Focus on: ${scope}`);
+    }
+  }
+
+  if (phase === "skeptic") {
+    sections.push(prompts.skeptic, "## Bug Report from Phase 1", reports.finder ?? "");
+  }
+
+  if (phase === "arbiter") {
+    sections.push(
+      prompts.arbiter,
+      "## Bug Report (Phase 1)",
+      reports.finder ?? "",
+      "## Skeptic Review (Phase 2)",
+      reports.skeptic ?? "",
+    );
+
+    if (refinement?.trim()) {
+      sections.push(
+        "## Existing Arbitration",
+        reports.arbiter ?? "",
+        "## Refinement Request",
+        refinement.trim(),
+        "Please produce a fully revised arbitration report.",
+      );
+    }
+  }
+
+  if (phase === "fixer") {
+    sections.push(prompts.fixer, "## Verified Bug List", reports.arbiter ?? "");
+  }
+
+  return sections.join("\n\n");
 }
