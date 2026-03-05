@@ -58,7 +58,11 @@
         { pkgs, system }:
         {
           default = pkgs.mkShellNoCC {
-            packages = [ self.formatter.${system} ];
+            packages = [
+              self.formatter.${system}
+
+              pkgs.bun
+            ];
           };
         }
       );
@@ -68,7 +72,8 @@
       packages = forEachSupportedSystem (
         { pkgs, ... }:
         let
-          browsers = (builtins.fromJSON (builtins.readFile "${pkgs.playwright-driver}/browsers.json")).browsers;
+          browsers =
+            (builtins.fromJSON (builtins.readFile "${pkgs.playwright-driver}/browsers.json")).browsers;
           chromium-rev = (builtins.head (builtins.filter (x: x.name == "chromium") browsers)).revision;
           chromium-executable-relative =
             if pkgs.stdenv.isDarwin then
