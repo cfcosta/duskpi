@@ -120,13 +120,8 @@
             src = self;
 
             buildPhase = ''
-              mkdir -p $out/extensions/bug-finder/prompts
-
-              cp ${./prompts}/bug-finder-1.md $out/extensions/bug-finder/prompts/finder.md
-              cp ${./prompts}/bug-finder-2.md $out/extensions/bug-finder/prompts/skeptic.md
-              cp ${./prompts}/bug-finder-3.md $out/extensions/bug-finder/prompts/arbiter.md
-              cp ${./prompts}/bug-finder-4.md $out/extensions/bug-finder/prompts/fixer.md
-              cp -rf ${./extensions}/bug-finder/index.ts $out/extensions/bug-finder/
+              mkdir -p $out/extensions
+              cp -rf ${./extensions}/bug-finder $out/extensions/
             '';
           };
 
