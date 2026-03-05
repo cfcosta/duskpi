@@ -243,13 +243,18 @@ test("workflow limits refinement attempts", async () => {
   assert.match(notifications.at(-1)?.message ?? "", /bug fix cancelled/i);
 });
 
-test("analysis phases block write tools", async () => {
+test("analysis phases block write-capable tool variants", async () => {
   const { workflow, ctx } = createHarness();
 
   await workflow.handleCommand("", ctx);
-  const result = await workflow.handleToolCall({ toolName: "Write" });
 
-  assert.equal(result?.block, true);
+  const writeResult = await workflow.handleToolCall({ toolName: "Write" });
+  const lowerEditResult = await workflow.handleToolCall({ toolName: "edit" });
+  const multiEditResult = await workflow.handleToolCall({ toolName: "MultiEdit" });
+
+  assert.equal(writeResult?.block, true);
+  assert.equal(lowerEditResult?.block, true);
+  assert.equal(multiEditResult?.block, true);
 });
 
 test("loadPrompts loads prompt bundle from a valid directory", () => {

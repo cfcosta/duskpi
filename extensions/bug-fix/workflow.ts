@@ -26,7 +26,7 @@ const PHASE_LABELS: Record<Exclude<WorkflowPhase, "idle">, string> = {
 
 const MAX_EMPTY_OUTPUT_RETRIES = 2;
 const MAX_REFINEMENT_ATTEMPTS = 3;
-const BLOCKED_TOOLS_IN_ANALYSIS = new Set(["Edit", "Write"]);
+const BLOCKED_TOOLS_IN_ANALYSIS = new Set(["edit", "write", "multiedit"]);
 
 type WorkflowResultKind = "ok" | "blocked" | "recoverable_error";
 interface WorkflowResult {
@@ -106,7 +106,7 @@ export class BugFinderWorkflow {
       return;
     }
 
-    if (BLOCKED_TOOLS_IN_ANALYSIS.has(event.toolName ?? "")) {
+    if (isWriteCapableTool(event.toolName)) {
       return {
         block: true,
         reason: "Bug fix analysis phase: writes are disabled",
@@ -310,4 +310,13 @@ function isAnalysisPhase(phase: WorkflowPhase): phase is AnalysisPhase {
 
 function normalizeMessage(value: string): string {
   return value.trim().replace(/\r\n/g, "\n");
+}
+
+function isWriteCapableTool(toolName?: string): boolean {
+  const normalized = (toolName ?? "").trim().toLowerCase();
+  if (BLOCKED_TOOLS_IN_ANALYSIS.has(normalized)) {
+    return true;
+  }
+
+  return normalized.includes("edit") || normalized.includes("write");
 }
