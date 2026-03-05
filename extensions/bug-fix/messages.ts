@@ -1,5 +1,15 @@
-export {
-  extractAssistantText,
+import {
+  extractLastAssistantText,
   extractLastUserText,
-  parseScopeArg,
-} from "../../packages/workflow-core/src/bug-fix/messages";
+  parseTrimmedStringArg,
+} from "../../packages/workflow-core/src/index";
+
+export function parseScopeArg(args: unknown): string | undefined {
+  return parseTrimmedStringArg(args);
+}
+
+export function extractAssistantText(messages: unknown[]): string | undefined {
+  return extractLastAssistantText(messages);
+}
+
+export { extractLastUserText };
