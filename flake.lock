@@ -1,6 +1,6 @@
 {
   "nodes": {
-    "desloppify-src": {
+    "skill-desloppify": {
       "flake": false,
       "locked": {
         "lastModified": 1772659711,
@@ -50,7 +50,7 @@
     },
     "root": {
       "inputs": {
-        "desloppify-src": "desloppify-src",
+        "skill-desloppify": "skill-desloppify",
         "nixpkgs": "nixpkgs",
         "playwright-cli": "playwright-cli",
         "skill-design-taste-frontend": "skill-design-taste-frontend",

@@ -11,6 +11,10 @@
       url = "github:Leonxlnx/taste-skill";
       flake = false;
     };
+    skill-desloppify = {
+      url = "github:peteromallet/desloppify";
+      flake = false;
+    };
     skill-humanizer = {
       url = "github:blader/humanizer";
       flake = false;
@@ -22,11 +26,6 @@
 
     skillset-openai = {
       url = "github:openai/skills";
-      flake = false;
-    };
-
-    desloppify-src = {
-      url = "github:peteromallet/desloppify";
       flake = false;
     };
   };
@@ -108,9 +107,9 @@
 
           desloppify = pkgs.python3Packages.buildPythonApplication {
             pname = "desloppify";
-            version = inputs.desloppify-src.shortRev;
+            version = inputs.skill-desloppify.shortRev;
             pyproject = true;
-            src = inputs.desloppify-src;
+            src = inputs.skill-desloppify;
 
             build-system = [ pkgs.python3Packages.setuptools ];
 
