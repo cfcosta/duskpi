@@ -27,15 +27,12 @@ export function extractAssistantText(messages: unknown[]): string | undefined {
     return typeof message === "object" && message !== null;
   });
 
-  const lastAssistantMessage = [...typedMessages]
-    .reverse()
-    .find((message) => message.role === "assistant");
-
-  if (!lastAssistantMessage || !Array.isArray(lastAssistantMessage.content)) {
+  const lastMessage = typedMessages.at(-1);
+  if (!lastMessage || lastMessage.role !== "assistant" || !Array.isArray(lastMessage.content)) {
     return undefined;
   }
 
-  const text = lastAssistantMessage.content
+  const text = lastMessage.content
     .filter((block): block is TextBlock => typeof block === "object" && block !== null)
     .filter(isTextContentBlock)
     .map((block) => block.text)

@@ -87,6 +87,15 @@ test("extractAssistantText returns undefined when no text is present", () => {
   assert.equal(result, undefined);
 });
 
+test("extractAssistantText does not reuse stale assistant output", () => {
+  const result = extractAssistantText([
+    { role: "assistant", content: [{ type: "text", text: "stale" }] },
+    { role: "user", content: [{ type: "text", text: "new prompt" }] },
+  ]);
+
+  assert.equal(result, undefined);
+});
+
 test("workflow advances through finder and skeptic phases", async () => {
   const { workflow, ctx, sentMessages } = createHarness();
 
@@ -140,7 +149,9 @@ test("workflow blocks rerun while active", async () => {
 });
 
 test("workflow executes fixer phase with latest arbiter output", async () => {
-  const { workflow, ctx, sentMessages, widgets } = createHarness({ selectChoice: "Execute fixes (TDD workflow)" });
+  const { workflow, ctx, sentMessages, widgets } = createHarness({
+    selectChoice: "Execute fixes (TDD workflow)",
+  });
 
   await workflow.handleCommand("", ctx);
   await workflow.handleAgentEnd(
@@ -222,11 +233,15 @@ test("loadPrompts returns structured error when files are missing", () => {
 });
 
 test("bugFinder registers command and event handlers", () => {
-  const commands: Record<string, { handler: (args: unknown, ctx: unknown) => Promise<unknown> }> = {};
+  const commands: Record<string, { handler: (args: unknown, ctx: unknown) => Promise<unknown> }> =
+    {};
   const listeners: Record<string, (...args: unknown[]) => Promise<unknown>> = {};
 
   const api = {
-    registerCommand(name: string, config: { handler: (args: unknown, ctx: unknown) => Promise<unknown> }) {
+    registerCommand(
+      name: string,
+      config: { handler: (args: unknown, ctx: unknown) => Promise<unknown> },
+    ) {
       commands[name] = config;
     },
     on(name: string, handler: (...args: unknown[]) => Promise<unknown>) {
