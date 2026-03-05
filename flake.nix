@@ -91,6 +91,22 @@
         in
         {
           inherit playwright-cli;
+
+          pi-bug-fix = pkgs.stdenv.mkDerivation {
+            name = "pi-bug-fix";
+            src = self;
+
+            buildPhase = ''
+              mkdir -p $out/extensions/bug-finder/prompts
+
+              cp ${./prompts}/bug-finder-1.md $out/extensions/bug-finder/prompts/finder.md
+              cp ${./prompts}/bug-finder-2.md $out/extensions/bug-finder/prompts/skeptic.md
+              cp ${./prompts}/bug-finder-3.md $out/extensions/bug-finder/prompts/arbiter.md
+              cp ${./prompts}/bug-finder-4.md $out/extensions/bug-finder/prompts/fixer.md
+              cp -rf ${./extensions}/bug-finder/index.ts $out/extensions/bug-finder/
+            '';
+          };
+
           default = pkgs.stdenv.mkDerivation (_: {
             name = "dusk-skills";
             src = self;
