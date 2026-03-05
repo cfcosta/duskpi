@@ -105,7 +105,12 @@ test("workflow advances through finder and skeptic phases", async () => {
   assert.match(sentMessages[0], /Focus on: src/);
 
   await workflow.handleAgentEnd(
-    { messages: [{ role: "assistant", content: [{ type: "text", text: "bugs" }] }] },
+    {
+      messages: [
+        { role: "user", content: [{ type: "text", text: sentMessages[0] }] },
+        { role: "assistant", content: [{ type: "text", text: "bugs" }] },
+      ],
+    },
     ctx,
   );
   assert.equal(sentMessages.length, 2);
@@ -113,12 +118,51 @@ test("workflow advances through finder and skeptic phases", async () => {
   assert.match(sentMessages[1], /bugs/);
 
   await workflow.handleAgentEnd(
-    { messages: [{ role: "assistant", content: [{ type: "text", text: "skeptic-notes" }] }] },
+    {
+      messages: [
+        { role: "user", content: [{ type: "text", text: sentMessages[1] }] },
+        { role: "assistant", content: [{ type: "text", text: "skeptic-notes" }] },
+      ],
+    },
     ctx,
   );
   assert.equal(sentMessages.length, 3);
   assert.match(sentMessages[2], /ARBITER/);
   assert.match(sentMessages[2], /skeptic-notes/);
+});
+
+test("workflow ignores agent_end events that do not match pending prompt", async () => {
+  const { workflow, ctx, sentMessages } = createHarness();
+
+  await workflow.handleCommand("", ctx);
+  assert.equal(sentMessages.length, 1);
+
+  const mismatched = await workflow.handleAgentEnd(
+    {
+      messages: [
+        { role: "user", content: [{ type: "text", text: "some other prompt" }] },
+        { role: "assistant", content: [{ type: "text", text: "wrong response" }] },
+      ],
+    },
+    ctx,
+  );
+
+  assert.equal(mismatched.kind, "blocked");
+  assert.equal(mismatched.reason, "unmatched_agent_end");
+  assert.equal(sentMessages.length, 1);
+
+  await workflow.handleAgentEnd(
+    {
+      messages: [
+        { role: "user", content: [{ type: "text", text: sentMessages[0] }] },
+        { role: "assistant", content: [{ type: "text", text: "finder-report" }] },
+      ],
+    },
+    ctx,
+  );
+
+  assert.equal(sentMessages.length, 2);
+  assert.match(sentMessages[1], /SKEPTIC/);
 });
 
 test("workflow stops after bounded empty-output retries", async () => {

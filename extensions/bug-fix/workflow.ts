@@ -5,7 +5,7 @@ import {
   type PromptLoadResult,
   type WorkflowReports,
 } from "./prompting";
-import { extractAssistantText, parseScopeArg } from "./messages";
+import { extractAssistantText, extractLastUserText, parseScopeArg } from "./messages";
 
 const WORKFLOW_PHASES = ["idle", "finder", "skeptic", "arbiter", "fixer"] as const;
 type WorkflowPhase = (typeof WORKFLOW_PHASES)[number];
@@ -42,6 +42,7 @@ interface WorkflowState {
   emptyOutputRetries: number;
   pendingRefinement?: string;
   awaitingResponse: boolean;
+  pendingPrompt?: string;
 }
 
 export class BugFinderWorkflow {
@@ -52,6 +53,7 @@ export class BugFinderWorkflow {
     emptyOutputRetries: 0,
     pendingRefinement: undefined,
     awaitingResponse: false,
+    pendingPrompt: undefined,
   };
 
   private prompts?: PromptBundle;
@@ -74,7 +76,10 @@ export class BugFinderWorkflow {
     }
 
     if (this.state.phase !== "idle") {
-      ctx.ui.notify("Bug fix is already running. Finish or cancel the current run first.", "warning");
+      ctx.ui.notify(
+        "Bug fix is already running. Finish or cancel the current run first.",
+        "warning",
+      );
       return { kind: "blocked", reason: "already_running" };
     }
 
@@ -86,6 +91,7 @@ export class BugFinderWorkflow {
       emptyOutputRetries: 0,
       pendingRefinement: undefined,
       awaitingResponse: false,
+      pendingPrompt: undefined,
     };
 
     this.updateStatus(ctx);
@@ -93,9 +99,9 @@ export class BugFinderWorkflow {
     return { kind: "ok" };
   }
 
-  async handleToolCall(
-    event: { toolName?: string },
-  ): Promise<{ block: true; reason: string } | void> {
+  async handleToolCall(event: {
+    toolName?: string;
+  }): Promise<{ block: true; reason: string } | void> {
     if (!isAnalysisPhase(this.state.phase)) {
       return;
     }
@@ -108,7 +114,10 @@ export class BugFinderWorkflow {
     }
   }
 
-  async handleAgentEnd(event: { messages?: unknown[] }, ctx: ExtensionContext): Promise<WorkflowResult> {
+  async handleAgentEnd(
+    event: { messages?: unknown[] },
+    ctx: ExtensionContext,
+  ): Promise<WorkflowResult> {
     if (this.state.phase === "idle" || !this.prompts) {
       return { kind: "blocked", reason: "inactive" };
     }
@@ -117,13 +126,24 @@ export class BugFinderWorkflow {
       return { kind: "blocked", reason: "stale_agent_end" };
     }
 
+    const eventMessages = event.messages ?? [];
+    const lastUserText = extractLastUserText(eventMessages);
+    if (
+      this.state.pendingPrompt &&
+      lastUserText &&
+      normalizeMessage(lastUserText) !== normalizeMessage(this.state.pendingPrompt)
+    ) {
+      return { kind: "blocked", reason: "unmatched_agent_end" };
+    }
+
     this.state.awaitingResponse = false;
-    const assistantText = extractAssistantText(event.messages ?? []);
+    const assistantText = extractAssistantText(eventMessages);
     if (!assistantText) {
       return this.handleMissingAssistantOutput(ctx);
     }
 
     this.state.emptyOutputRetries = 0;
+    this.state.pendingPrompt = undefined;
 
     if (this.state.phase === "fixer") {
       this.finishRun(ctx, "Bug fix workflow complete!");
@@ -231,16 +251,17 @@ export class BugFinderWorkflow {
   }
 
   private sendPromptForPhase(phase: AnalysisPhase | "fixer") {
-    this.state.awaitingResponse = true;
-    this.api.sendUserMessage(
-      buildPrompt(
-        phase,
-        this.prompts!,
-        this.state.reports,
-        this.state.scope,
-        phase === "arbiter" ? this.state.pendingRefinement : undefined,
-      ),
+    const prompt = buildPrompt(
+      phase,
+      this.prompts!,
+      this.state.reports,
+      this.state.scope,
+      phase === "arbiter" ? this.state.pendingRefinement : undefined,
     );
+
+    this.state.pendingPrompt = prompt;
+    this.state.awaitingResponse = true;
+    this.api.sendUserMessage(prompt);
   }
 
   private refreshPromptSnapshot() {
@@ -264,6 +285,7 @@ export class BugFinderWorkflow {
       emptyOutputRetries: 0,
       pendingRefinement: undefined,
       awaitingResponse: false,
+      pendingPrompt: undefined,
     };
     this.updateStatus(ctx);
     ctx.ui.notify(message, "info");
@@ -284,4 +306,8 @@ export class BugFinderWorkflow {
 
 function isAnalysisPhase(phase: WorkflowPhase): phase is AnalysisPhase {
   return ANALYSIS_PHASE_ORDER.includes(phase as AnalysisPhase);
+}
+
+function normalizeMessage(value: string): string {
+  return value.trim().replace(/\r\n/g, "\n");
 }
