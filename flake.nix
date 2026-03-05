@@ -149,6 +149,17 @@
             '';
           };
 
+          pi-test-audit = pkgs.stdenv.mkDerivation {
+            name = "pi-test-audit";
+            src = self;
+
+            buildPhase = ''
+              mkdir -p $out/extensions $out/packages
+              cp -rf ${./extensions}/test-audit $out/extensions/
+              cp -rf ${./packages}/workflow-core $out/packages/
+            '';
+          };
+
           default = pkgs.stdenv.mkDerivation (_: {
             name = "dusk-skills";
             src = self;
