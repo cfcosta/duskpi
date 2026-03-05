@@ -36,16 +36,20 @@ export function loadPromptFiles<Keys extends string>(
 
     return { ok: true, prompts };
   } catch (error) {
-    const reason = error instanceof Error ? `${error.name}: ${error.message}` : "unknown I/O error";
-    return {
-      ok: false,
-      error: new PromptLoadError(
-        "PROMPT_READ_FAILED",
-        `failed to load prompt bundle from '${promptDirectory}': ${reason}`,
-        { cause: error instanceof Error ? error : undefined },
-      ),
-    };
+    return buildPromptLoadFailure(promptDirectory, error);
   }
+}
+
+function buildPromptLoadFailure(promptDirectory: string, error: unknown): PromptLoadResult<never> {
+  const reason = error instanceof Error ? `${error.name}: ${error.message}` : "unknown I/O error";
+  return {
+    ok: false,
+    error: new PromptLoadError(
+      "PROMPT_READ_FAILED",
+      `failed to load prompt bundle from '${promptDirectory}': ${reason}`,
+      { cause: error instanceof Error ? error : undefined },
+    ),
+  };
 }
 
 function readPromptFile(promptDirectory: string, fileName: string): string {

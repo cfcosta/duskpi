@@ -60,7 +60,7 @@ function createHarness(options?: {
     fixer: "FIXER",
   };
 
-  const workflow = new OwaspWorkflow(api as never, () => ({ prompts }));
+  const workflow = new OwaspWorkflow(api as never, () => ({ ok: true, prompts }));
 
   return { workflow, ctx: ctx as never, sentMessages, notifications, statuses, widgets };
 }
@@ -274,10 +274,12 @@ test("analysis phases block write-capable tool variants", async () => {
   const writeResult = await workflow.handleToolCall({ toolName: "Write" });
   const lowerEditResult = await workflow.handleToolCall({ toolName: "edit" });
   const multiEditResult = await workflow.handleToolCall({ toolName: "MultiEdit" });
+  const bashResult = await workflow.handleToolCall({ toolName: "Bash" });
 
   assert.equal(writeResult?.block, true);
   assert.equal(lowerEditResult?.block, true);
   assert.equal(multiEditResult?.block, true);
+  assert.equal(bashResult?.block, true);
 });
 
 test("loadPrompts loads prompt bundle from a valid directory", () => {
@@ -289,8 +291,10 @@ test("loadPrompts loads prompt bundle from a valid directory", () => {
 
   const result = loadPrompts(tempDir);
 
-  assert.equal(result.error, undefined);
-  assert.equal(result.prompts?.finder, "finder");
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.prompts.finder, "finder");
+  }
 });
 
 test("loadPrompts returns structured error when files are missing", () => {
@@ -299,9 +303,11 @@ test("loadPrompts returns structured error when files are missing", () => {
 
   const result = loadPrompts(tempDir);
 
-  assert.equal(result.prompts, undefined);
-  assert.equal(result.error?.code, "PROMPT_READ_FAILED");
-  assert.match(result.error?.message ?? "", /failed to load prompt bundle/);
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.error.code, "PROMPT_READ_FAILED");
+    assert.match(result.error.message, /failed to load prompt bundle/);
+  }
 });
 
 test("owaspFix registers command and event handlers", () => {

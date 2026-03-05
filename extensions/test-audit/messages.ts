@@ -8,8 +8,10 @@ export function parseScopeArg(args: unknown): string | undefined {
   return parseTrimmedStringArg(args);
 }
 
-export function extractAssistantText(messages: unknown[]): string | undefined {
+export function extractLastAssistantTextFromMessages(messages: unknown[]): string | undefined {
   return extractLastAssistantText(messages);
 }
+
+export const extractAssistantText = extractLastAssistantTextFromMessages;
 
 export { extractLastUserText };

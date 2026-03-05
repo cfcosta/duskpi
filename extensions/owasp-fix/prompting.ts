@@ -16,65 +16,90 @@ export interface WorkflowReports {
   arbiter?: string;
 }
 
-export interface PromptLoadResult {
-  prompts?: PromptBundle;
-  error?: PromptLoadError;
-}
+export type PromptLoadResult =
+  | {
+      ok: true;
+      prompts: PromptBundle;
+    }
+  | {
+      ok: false;
+      error: PromptLoadError;
+    };
 
 export function loadPrompts(promptDirectory: string): PromptLoadResult {
   const result = loadPromptFiles(promptDirectory, PROMPT_FILE_NAMES);
   if (!result.ok) {
-    return { error: result.error };
+    return { ok: false, error: result.error };
   }
 
-  return { prompts: result.prompts };
+  return { ok: true, prompts: result.prompts };
 }
 
-export function buildPrompt(
-  phase: "finder" | "skeptic" | "arbiter" | "fixer",
-  prompts: PromptBundle,
-  reports: WorkflowReports,
-  scope?: string,
-  refinement?: string,
-): string {
-  const sections: string[] = [];
+type BuildPromptInput =
+  | {
+      phase: "finder";
+      prompts: PromptBundle;
+      reports: WorkflowReports;
+      scope?: string;
+    }
+  | {
+      phase: "skeptic";
+      prompts: PromptBundle;
+      reports: WorkflowReports;
+    }
+  | {
+      phase: "arbiter";
+      prompts: PromptBundle;
+      reports: WorkflowReports;
+      refinement?: string;
+    }
+  | {
+      phase: "fixer";
+      prompts: PromptBundle;
+      reports: WorkflowReports;
+    };
+
+export function buildPrompt(input: BuildPromptInput): string {
+  const { phase, prompts, reports } = input;
 
   if (phase === "finder") {
-    sections.push(prompts.finder);
-    if (scope) {
-      sections.push(`Focus on: ${scope}`);
+    const sections = [prompts.finder];
+    if (input.scope) {
+      sections.push(`Focus on: ${input.scope}`);
     }
+
+    return sections.join("\n\n");
   }
 
   if (phase === "skeptic") {
-    sections.push(prompts.skeptic, "## Security Findings from Phase 1", reports.finder ?? "");
+    return [prompts.skeptic, "## Security Findings from Phase 1", reports.finder ?? ""].join(
+      "\n\n",
+    );
   }
 
   if (phase === "arbiter") {
-    sections.push(
+    const sections = [
       prompts.arbiter,
       "## Security Findings (Phase 1)",
       reports.finder ?? "",
       "## Skeptic Security Review (Phase 2)",
       reports.skeptic ?? "",
-    );
+    ];
 
-    if (refinement?.trim()) {
+    if (input.refinement?.trim()) {
       sections.push(
         "## Existing Arbitration",
         reports.arbiter ?? "",
         "## Refinement Request",
-        refinement.trim(),
+        input.refinement.trim(),
         "Please produce a fully revised arbitration report.",
       );
     }
+
+    return sections.join("\n\n");
   }
 
-  if (phase === "fixer") {
-    sections.push(prompts.fixer, "## Verified OWASP Findings", reports.arbiter ?? "");
-  }
-
-  return sections.join("\n\n");
+  return [prompts.fixer, "## Verified OWASP Findings", reports.arbiter ?? ""].join("\n\n");
 }
 
 export { PromptLoadError };

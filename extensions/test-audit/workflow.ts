@@ -23,17 +23,17 @@ export class TestAuditWorkflow extends PhaseWorkflow<PromptBundle> {
       promptProvider: () => mapPromptResult(promptProvider()),
       parseScopeArg,
       buildPrompt: ({ phase, prompts, reports, scope, refinement }) =>
-        buildPrompt(
-          phase as (typeof ANALYSIS_PHASES)[number] | typeof EXECUTION_PHASE,
+        buildPrompt({
+          phase: phase as (typeof ANALYSIS_PHASES)[number] | typeof EXECUTION_PHASE,
           prompts,
-          {
+          reports: {
             finder: reports.finder,
             skeptic: reports.skeptic,
             arbiter: reports.arbiter,
           },
           scope,
           refinement,
-        ),
+        }),
       text: {
         unavailable: (error) =>
           `Test audit is unavailable: ${error?.message ?? "prompt initialization failed."}`,
@@ -59,8 +59,9 @@ export class TestAuditWorkflow extends PhaseWorkflow<PromptBundle> {
 }
 
 function mapPromptResult(result: PromptLoadResult): PromptSnapshot<PromptBundle> {
-  return {
-    prompts: result.prompts,
-    error: result.error,
-  };
+  if (result.ok) {
+    return { prompts: result.prompts };
+  }
+
+  return { error: result.error };
 }

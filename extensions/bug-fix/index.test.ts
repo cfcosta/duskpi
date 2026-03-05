@@ -6,7 +6,7 @@ import * as path from "node:path";
 import bugFinder from "./index";
 import { BugFinderWorkflow } from "./workflow";
 import { extractAssistantText, parseScopeArg } from "./messages";
-import { loadPrompts } from "./prompting";
+import { buildPrompt, loadPrompts } from "./prompting";
 
 type NotifyLevel = "info" | "warning" | "error";
 
@@ -60,7 +60,7 @@ function createHarness(options?: {
     fixer: "FIXER",
   };
 
-  const workflow = new BugFinderWorkflow(api as never, () => ({ prompts }));
+  const workflow = new BugFinderWorkflow(api as never, () => ({ ok: true, prompts }));
 
   return { workflow, ctx: ctx as never, sentMessages, notifications, statuses, widgets };
 }
@@ -274,10 +274,12 @@ test("analysis phases block write-capable tool variants", async () => {
   const writeResult = await workflow.handleToolCall({ toolName: "Write" });
   const lowerEditResult = await workflow.handleToolCall({ toolName: "edit" });
   const multiEditResult = await workflow.handleToolCall({ toolName: "MultiEdit" });
+  const bashResult = await workflow.handleToolCall({ toolName: "Bash" });
 
   assert.equal(writeResult?.block, true);
   assert.equal(lowerEditResult?.block, true);
   assert.equal(multiEditResult?.block, true);
+  assert.equal(bashResult?.block, true);
 });
 
 test("loadPrompts loads prompt bundle from a valid directory", () => {
@@ -289,8 +291,10 @@ test("loadPrompts loads prompt bundle from a valid directory", () => {
 
   const result = loadPrompts(tempDir);
 
-  assert.equal(result.error, undefined);
-  assert.equal(result.prompts?.finder, "finder");
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.prompts.finder, "finder");
+  }
 });
 
 test("loadPrompts returns structured error when files are missing", () => {
@@ -299,9 +303,98 @@ test("loadPrompts returns structured error when files are missing", () => {
 
   const result = loadPrompts(tempDir);
 
-  assert.equal(result.prompts, undefined);
-  assert.equal(result.error?.code, "PROMPT_READ_FAILED");
-  assert.match(result.error?.message ?? "", /failed to load prompt bundle/);
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.equal(result.error.code, "PROMPT_READ_FAILED");
+    assert.match(result.error.message, /failed to load prompt bundle/);
+  }
+});
+
+test("buildPrompt includes refinement contract for arbiter mode", () => {
+  const prompt = buildPrompt({
+    phase: "arbiter",
+    prompts: {
+      finder: "FINDER",
+      skeptic: "SKEPTIC",
+      arbiter: "ARBITER",
+      fixer: "FIXER",
+    },
+    reports: {
+      finder: "finder-report",
+      skeptic: "skeptic-report",
+      arbiter: "arbiter-report",
+    },
+    refinement: "tighten exploit validation",
+  });
+
+  assert.match(prompt, /## Existing Arbitration/);
+  assert.match(prompt, /arbiter-report/);
+  assert.match(prompt, /## Refinement Request/);
+  assert.match(prompt, /tighten exploit validation/);
+});
+
+test("workflow reports invalid assistant payload instead of retrying as empty output", async () => {
+  const { workflow, ctx, sentMessages, notifications } = createHarness();
+
+  await workflow.handleCommand("", ctx);
+  assert.equal(sentMessages.length, 1);
+
+  const result = await workflow.handleAgentEnd(
+    { messages: [{ role: "assistant", content: "invalid-payload-shape" }] },
+    ctx,
+  );
+
+  assert.equal(result.kind, "recoverable_error");
+  assert.equal(result.reason, "invalid_agent_payload");
+  assert.equal(notifications.at(-1)?.level, "error");
+  assert.match(notifications.at(-1)?.message ?? "", /invalid assistant payload/i);
+});
+
+test("bugFinder command wiring uses real prompt files end-to-end", async () => {
+  const commands: Record<string, { handler: (args: unknown, ctx: unknown) => Promise<unknown> }> =
+    {};
+  const listeners: Record<string, (...args: unknown[]) => Promise<unknown>> = {};
+  const sentMessages: string[] = [];
+
+  const api = {
+    registerCommand(
+      name: string,
+      config: { handler: (args: unknown, ctx: unknown) => Promise<unknown> },
+    ) {
+      commands[name] = config;
+    },
+    on(name: string, handler: (...args: unknown[]) => Promise<unknown>) {
+      listeners[name] = handler;
+    },
+    sendUserMessage(message: string) {
+      sentMessages.push(message);
+    },
+  };
+
+  const ctx = {
+    ui: {
+      notify() {},
+      setStatus() {},
+      setWidget() {},
+      async select() {
+        return "Cancel";
+      },
+      async editor() {
+        return "";
+      },
+    },
+  };
+
+  bugFinder(api as never);
+
+  await commands["bug-fix"]?.handler("", ctx as never);
+  assert.match(sentMessages[0] ?? "", /You are a bug-finding agent/);
+
+  await listeners.agent_end?.(
+    { messages: [{ role: "assistant", content: [{ type: "text", text: "finder-report" }] }] },
+    ctx,
+  );
+  assert.match(sentMessages[1] ?? "", /You are an adversarial bug reviewer/);
 });
 
 test("bugFinder registers command and event handlers", () => {

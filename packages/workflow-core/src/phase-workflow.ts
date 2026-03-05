@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@anthropic-ai/claude-code";
-import { extractLastAssistantText, extractLastUserText } from "./message-content";
+import { extractLastUserText, getLastAssistantTextResult } from "./message-content";
 
 type WorkflowResultKind = "ok" | "blocked" | "recoverable_error";
 
@@ -17,6 +17,7 @@ interface WorkflowState {
   pendingRefinement?: string;
   awaitingResponse: boolean;
   pendingPrompt?: string;
+  pendingRequestId?: string;
 }
 
 export interface PromptSnapshot<Prompts> {
@@ -60,7 +61,16 @@ export interface PhaseWorkflowOptions<Prompts> {
   isWriteCapableTool?: (toolName?: string) => boolean;
 }
 
-const DEFAULT_BLOCKED_TOOLS_IN_ANALYSIS = new Set(["edit", "write", "multiedit"]);
+const DEFAULT_BLOCKED_TOOLS_IN_ANALYSIS = new Set([
+  "edit",
+  "write",
+  "multiedit",
+  "bash",
+  "sh",
+  "shell",
+  "terminal",
+  "execute",
+]);
 
 export class PhaseWorkflow<Prompts> {
   private readonly maxEmptyOutputRetries: number;
@@ -72,6 +82,7 @@ export class PhaseWorkflow<Prompts> {
   private state: WorkflowState = this.createIdleState();
   private prompts?: Prompts;
   private startupError?: Error;
+  private requestSequence = 0;
 
   constructor(
     private readonly api: ExtensionAPI,
@@ -148,6 +159,15 @@ export class PhaseWorkflow<Prompts> {
 
     const eventMessages = event.messages ?? [];
     const lastUserText = extractLastUserText(eventMessages);
+    const observedRequestId = lastUserText ? extractRequestId(lastUserText) : undefined;
+    if (
+      this.state.pendingRequestId &&
+      observedRequestId &&
+      observedRequestId !== this.state.pendingRequestId
+    ) {
+      return { kind: "blocked", reason: "unmatched_agent_end" };
+    }
+
     if (
       this.state.pendingPrompt &&
       lastUserText &&
@@ -157,13 +177,21 @@ export class PhaseWorkflow<Prompts> {
     }
 
     this.state.awaitingResponse = false;
-    const assistantText = extractLastAssistantText(eventMessages);
-    if (!assistantText) {
+    const assistantResult = getLastAssistantTextResult(eventMessages);
+    if (assistantResult.kind === "invalid_payload") {
+      this.finishRun(ctx, this.options.text.cancelled);
+      ctx.ui.notify("Workflow stopped: invalid assistant payload shape received.", "error");
+      return { kind: "recoverable_error", reason: "invalid_agent_payload" };
+    }
+
+    if (assistantResult.kind !== "ok") {
       return this.handleMissingAssistantOutput(ctx);
     }
 
+    const assistantText = assistantResult.text;
     this.state.emptyOutputRetries = 0;
     this.state.pendingPrompt = undefined;
+    this.state.pendingRequestId = undefined;
 
     if (this.state.phase === this.options.executionPhase) {
       this.finishRun(ctx, this.options.text.complete);
@@ -171,7 +199,7 @@ export class PhaseWorkflow<Prompts> {
     }
 
     if (!this.isAnalysisPhase(this.state.phase)) {
-      return { kind: "recoverable_error", reason: "unknown_phase" };
+      throw new Error(`Unreachable workflow phase '${this.state.phase}' in handleAgentEnd`);
     }
 
     this.capturePhaseReport(this.state.phase, assistantText);
@@ -195,11 +223,18 @@ export class PhaseWorkflow<Prompts> {
   private async handleAnalysisComplete(ctx: ExtensionContext): Promise<void> {
     this.updateStatus(ctx);
 
-    const choice = await ctx.ui.select(this.options.text.selectTitle, [
-      this.options.text.executeOption,
-      this.options.text.refineOption,
-      this.options.text.cancelOption,
-    ]);
+    let choice: string | undefined;
+    try {
+      choice = await ctx.ui.select(this.options.text.selectTitle, [
+        this.options.text.executeOption,
+        this.options.text.refineOption,
+        this.options.text.cancelOption,
+      ]);
+    } catch {
+      this.finishRun(ctx, this.options.text.cancelled);
+      ctx.ui.notify("Workflow stopped: failed while reading UI selection.", "error");
+      return;
+    }
 
     if (choice?.startsWith(this.options.text.executeOption)) {
       this.state.phase = this.options.executionPhase;
@@ -216,7 +251,15 @@ export class PhaseWorkflow<Prompts> {
         return;
       }
 
-      const refinement = await ctx.ui.editor(this.options.text.refineEditorLabel, "");
+      let refinement: string | undefined;
+      try {
+        refinement = await ctx.ui.editor(this.options.text.refineEditorLabel, "");
+      } catch {
+        this.finishRun(ctx, this.options.text.cancelled);
+        ctx.ui.notify("Workflow stopped: failed while collecting refinement input.", "error");
+        return;
+      }
+
       if (!refinement?.trim()) {
         this.finishRun(ctx, this.options.text.cancelled);
         return;
@@ -248,12 +291,7 @@ export class PhaseWorkflow<Prompts> {
       "warning",
     );
 
-    if (
-      this.isAnalysisPhase(this.state.phase) ||
-      this.state.phase === this.options.executionPhase
-    ) {
-      this.sendPromptForPhase(this.state.phase, ctx);
-    }
+    this.sendPromptForPhase(this.state.phase, ctx);
 
     return { kind: "recoverable_error", reason: "empty_output_retry" };
   }
@@ -267,11 +305,15 @@ export class PhaseWorkflow<Prompts> {
       refinement: phase === this.lastAnalysisPhase ? this.state.pendingRefinement : undefined,
     });
 
-    this.state.pendingPrompt = prompt;
+    const requestId = this.nextRequestId();
+    const promptWithRequestId = `${prompt}\n\n${requestIdMarker(requestId)}`;
+
+    this.state.pendingPrompt = promptWithRequestId;
+    this.state.pendingRequestId = requestId;
     this.state.awaitingResponse = true;
 
     try {
-      this.api.sendUserMessage(prompt);
+      this.api.sendUserMessage(promptWithRequestId);
       return true;
     } catch {
       this.state = this.createIdleState();
@@ -327,8 +369,14 @@ export class PhaseWorkflow<Prompts> {
       pendingRefinement: undefined,
       awaitingResponse: false,
       pendingPrompt: undefined,
+      pendingRequestId: undefined,
       ...overrides,
     };
+  }
+
+  private nextRequestId(): string {
+    this.requestSequence += 1;
+    return `${this.options.id}-${this.requestSequence}`;
   }
 
   private isAnalysisPhase(phase: string): boolean {
@@ -351,4 +399,13 @@ export class PhaseWorkflow<Prompts> {
 
 function normalizeMessage(value: string): string {
   return value.trim().replace(/\r\n/g, "\n");
+}
+
+function requestIdMarker(requestId: string): string {
+  return `<!-- workflow-request-id:${requestId} -->`;
+}
+
+function extractRequestId(message: string): string | undefined {
+  const markerMatch = message.match(/<!--\s*workflow-request-id:([^>]+)\s*-->/i);
+  return markerMatch?.[1]?.trim();
 }
