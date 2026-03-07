@@ -2,6 +2,17 @@
 
 My personal collection of skills.
 
+## Themes
+
+This package also ships Catppuccin themes for Pi under `themes/`:
+
+- `catppuccin-latte`
+- `catppuccin-frappe`
+- `catppuccin-macchiato`
+- `catppuccin-mocha`
+
+These are copied into the default Nix package output so Pi can discover them as package themes.
+
 ## Workflow-style extensions
 
 `extensions/bug-fix`, `extensions/owasp-fix`, and `extensions/test-audit` share the same reusable workflow runtime:

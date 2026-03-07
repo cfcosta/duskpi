@@ -175,9 +175,10 @@
             src = self;
 
             buildPhase = ''
-              mkdir -p $out/{prompts,skills}
+              mkdir -p $out/{prompts,skills,themes}
 
               cp -rf ${./prompts}/* $out/prompts/
+              cp -rf ${./themes}/* $out/themes/
               cp -rf ${./skills}/rust-proptest $out/skills/rust-proptest
 
               mkdir -p $out/skills/humanizer
