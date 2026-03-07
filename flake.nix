@@ -135,7 +135,7 @@
           inherit playwright-cli desloppify;
 
           resources = pkgs.stdenv.mkDerivation (_: {
-            name = "dusk-skills-resources";
+            name = "duskpi-resources";
             src = self;
 
             buildPhase = ''
@@ -173,8 +173,11 @@
           });
 
           default = pkgs.symlinkJoin {
-            name = "pi-with-dusk-skills";
-            paths = [ inputs.llm-agents.packages.${system}.pi resources ];
+            name = "pi";
+            paths = [
+              inputs.llm-agents.packages.${system}.pi
+              resources
+            ];
           };
         }
       );

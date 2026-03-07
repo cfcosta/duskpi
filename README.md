@@ -1,6 +1,6 @@
-# dusk-skills
+# duskpi
 
-My personal collection of skills.
+My personal configuration of the [pi coding agent](https://pi.dev).
 
 ## Home Manager module
 
@@ -15,7 +15,7 @@ Example:
 
 ```nix
 {
-  imports = [ inputs.dusk-skills.homeModules.default ];
+  imports = [ inputs.duskpi.homeModules.default ];
 
   programs.pi = {
     enable = true;

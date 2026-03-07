@@ -33,7 +33,7 @@ let
 in
 {
   options.programs.pi = {
-    enable = mkEnableOption "Pi coding agent and bundled dusk-skills packages";
+    enable = mkEnableOption "Pi coding agent and bundled duskpi packages";
 
     package = mkOption {
       type = types.package;
