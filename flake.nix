@@ -155,7 +155,7 @@
             src = self;
 
             buildPhase = ''
-              mkdir -p $out/{extensions,packages,prompts,skills,themes,share/pi/themes}
+              mkdir -p $out/{extensions,packages,prompts,skills,themes}
 
               cp -rf ${./extensions}/* $out/extensions/
               mkdir -p $out/extensions/pi-plan
@@ -166,7 +166,6 @@
               cp -rf ${./packages}/* $out/packages/
               cp -rf ${./prompts}/* $out/prompts/
               cp -rf ${./themes}/* $out/themes/
-              cp -rf ${./themes}/* $out/share/pi/themes/
               cp -rf ${./skills}/rust-proptest $out/skills/rust-proptest
 
               mkdir -p $out/skills/humanizer

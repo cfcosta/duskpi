@@ -36,6 +36,13 @@ The default package bundles upstream Pi together with repo-owned resources:
 
 It also activates `catppuccin-mocha` automatically at startup through a bundled extension.
 
+Theme loading follows two paths:
+
+- the package manifest advertises bundled themes from `themes/`
+- the wrapped `pi` binary passes `--theme $out/themes` so `nix run .#` can discover them immediately
+
+That keeps theme discovery explicit while still letting the startup extension switch to the package default theme by name.
+
 ## What makes it a distribution
 
 The package is not just a folder of extras.
@@ -164,7 +171,7 @@ The bundled skills cover common high-value tasks:
 
 This package intentionally changes startup from “plain Pi” to “distro Pi”.
 
-When `pi` starts from this package, the wrapper preloads bundled resources so commands and templates are available without needing a separate local Pi setup.
+When `pi` starts from this package, the wrapper preloads bundled resources so commands, templates, and themes are available without needing a separate local Pi setup.
 
 That is why commands like these should be present right away:
 
@@ -176,7 +183,7 @@ That is why commands like these should be present right away:
 - `/todos`
 - `/innovate`
 
-The Catppuccin theme is also activated from package metadata via the bundled `pi-catppuccin` extension.
+The Catppuccin theme is activated by the bundled `pi-catppuccin` extension, which reads the package's `pi.theme` value and calls `setTheme()` after the wrapped binary has already exposed the bundled theme files.
 
 ## Repository layout
 
