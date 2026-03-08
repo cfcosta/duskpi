@@ -266,7 +266,7 @@ test("workflow limits refinement attempts", async () => {
   assert.match(notifications.at(-1)?.message ?? "", /refactor cancelled/i);
 });
 
-test("analysis phases block write-capable tool variants", async () => {
+test("analysis phases block write-capable tool variants but allow bash", async () => {
   const { workflow, ctx } = createHarness();
 
   await workflow.handleCommand("", ctx);
@@ -279,7 +279,7 @@ test("analysis phases block write-capable tool variants", async () => {
   assert.equal(writeResult?.block, true);
   assert.equal(lowerEditResult?.block, true);
   assert.equal(multiEditResult?.block, true);
-  assert.equal(bashResult?.block, true);
+  assert.equal(bashResult, undefined);
 });
 
 test("loadPrompts loads prompt bundle from a valid directory", () => {

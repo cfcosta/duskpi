@@ -46,7 +46,7 @@ test("loadPromptFiles returns discriminated success/failure", () => {
   }
 });
 
-test("PhaseWorkflow handles invalid assistant payload with explicit error", async () => {
+function createPhaseWorkflowHarness(options?: { selectChoice?: string }) {
   const sentMessages: string[] = [];
   const notifications: Array<{ level: string; message: string }> = [];
 
@@ -94,7 +94,7 @@ test("PhaseWorkflow handles invalid assistant payload with explicit error", asyn
       setStatus() {},
       setWidget() {},
       async select() {
-        return "cancel";
+        return options?.selectChoice ?? "cancel";
       },
       async editor() {
         return "";
@@ -102,15 +102,59 @@ test("PhaseWorkflow handles invalid assistant payload with explicit error", asyn
     },
   };
 
-  await workflow.handleCommand(undefined, ctx as never);
+  return { workflow, ctx: ctx as never, sentMessages, notifications };
+}
+
+test("PhaseWorkflow handles invalid assistant payload with explicit error", async () => {
+  const { workflow, ctx, sentMessages, notifications } = createPhaseWorkflowHarness();
+
+  await workflow.handleCommand(undefined, ctx);
   assert.equal(sentMessages.length, 1);
 
   const result = await workflow.handleAgentEnd(
     { messages: [{ role: "assistant", content: "invalid" }] },
-    ctx as never,
+    ctx,
   );
 
   assert.equal(result.kind, "recoverable_error");
   assert.equal(result.reason, "invalid_agent_payload");
   assert.equal(notifications.at(-1)?.level, "error");
+});
+
+test("PhaseWorkflow allows bash during analysis when the tool name is not write-capable", async () => {
+  const { workflow, ctx } = createPhaseWorkflowHarness();
+
+  await workflow.handleCommand(undefined, ctx);
+
+  const result = await workflow.handleToolCall({ toolName: "Bash" });
+
+  assert.equal(result, undefined);
+});
+
+test("PhaseWorkflow allows clearly read-only tools during analysis", async () => {
+  const { workflow, ctx } = createPhaseWorkflowHarness();
+
+  await workflow.handleCommand(undefined, ctx);
+
+  const result = await workflow.handleToolCall({ toolName: "Read" });
+
+  assert.equal(result, undefined);
+});
+
+test("PhaseWorkflow stops blocking write-capable tools after entering execution", async () => {
+  const { workflow, ctx } = createPhaseWorkflowHarness({ selectChoice: "execute" });
+
+  await workflow.handleCommand(undefined, ctx);
+  await workflow.handleAgentEnd(
+    { messages: [{ role: "assistant", content: [{ type: "text", text: "finder-report" }] }] },
+    ctx,
+  );
+  await workflow.handleAgentEnd(
+    { messages: [{ role: "assistant", content: [{ type: "text", text: "arbiter-report" }] }] },
+    ctx,
+  );
+
+  const result = await workflow.handleToolCall({ toolName: "Write" });
+
+  assert.equal(result, undefined);
 });
