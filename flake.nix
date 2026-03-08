@@ -16,10 +16,6 @@
       url = "github:Leonxlnx/taste-skill";
       flake = false;
     };
-    skill-desloppify = {
-      url = "github:peteromallet/desloppify";
-      flake = false;
-    };
     skill-humanizer = {
       url = "github:blader/humanizer";
       flake = false;
@@ -115,24 +111,6 @@
             '';
           };
 
-          desloppify = pkgs.python3Packages.buildPythonApplication {
-            pname = "desloppify";
-            version = inputs.skill-desloppify.shortRev;
-            pyproject = true;
-            src = inputs.skill-desloppify;
-
-            build-system = [ pkgs.python3Packages.setuptools ];
-
-            dependencies = with pkgs.python3Packages; [
-              tree-sitter-language-pack
-              bandit
-              defusedxml
-              pillow
-            ];
-
-            pythonImportsCheck = [ "desloppify" ];
-          };
-
           pi-plan-extension = pkgs.buildNpmPackage {
             pname = "pi-plan";
             version = inputs.pi-plan.shortRev;
@@ -148,7 +126,7 @@
           };
         in
         rec {
-          inherit playwright-cli desloppify pi-plan-extension;
+          inherit playwright-cli pi-plan-extension;
 
           resources = pkgs.stdenv.mkDerivation (_: {
             name = "duskpi-resources";
@@ -183,12 +161,6 @@
 
               substituteInPlace $out/skills/playwright/SKILL.md \
                 --replace-fail '##PLAYWRIGHT-CLI##' '${playwright-cli}/bin/playwright-cli'
-
-              mkdir -p $out/skills/desloppify
-              cp -rf ${./skills}/desloppify/SKILL.md $out/skills/desloppify/
-
-              substituteInPlace $out/skills/desloppify/SKILL.md \
-                --replace-fail '##DESLOPPIFY##' '${desloppify}/bin/desloppify'
 
               cat > $out/package.json <<'EOF'
               {

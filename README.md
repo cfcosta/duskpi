@@ -23,7 +23,6 @@ The default package bundles upstream Pi together with repo-owned resources:
   - `/jj-commit`
 - **Skills**
   - `design-taste-frontend`
-  - `desloppify`
   - `humanizer`
   - `playwright`
   - `rust-proptest`
@@ -161,7 +160,6 @@ These are available immediately because the package preloads them.
 The bundled skills cover common high-value tasks:
 
 - **design-taste-frontend** for stronger UI/UX and frontend design decisions
-- **desloppify** for code health and technical debt review
 - **humanizer** for making generated text sound less AI-written
 - **playwright** for browser automation and UI debugging
 - **rust-proptest** for Rust property testing
