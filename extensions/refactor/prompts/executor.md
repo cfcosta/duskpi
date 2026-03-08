@@ -47,6 +47,21 @@ Execute every approved refactor with a **strict tests-first workflow** and creat
 - **Do not skip quality gates.**
 - **Execute steps in the order specified by the Arbiter's commit plan.** The ordering exists for dependency safety.
 
+## Refactoring action discipline
+
+When executing a step, follow the approved refactoring action exactly. Recognize and apply these actions when the plan calls for them:
+
+- **Extract Method/Function** — extract only cohesive logic, and give the new function a name that explains why the logic exists.
+- **Inline Method/Function** — remove helpers whose body is already clearer than the indirection.
+- **Rename** — rename symbols to match domain intent and update all references in the approved blast radius.
+- **Move** — relocate code to the owning module or file while preserving behavior and updating imports/usages.
+- **Introduce Explaining Variable** — split dense expressions into named variables that clarify purpose.
+- **Replace Conditional with Polymorphism** — only in small, reversible steps; preserve behavior at each intermediate state.
+- **Remove Dead Code** — delete unreachable or unused code instead of commenting it out.
+- **Simplify Conditional** — break down complex boolean logic into named predicates or remove redundant branches.
+
+If a planned step does not fit one of these actions exactly, still execute the arbiter's plan, but describe the structural change in clear domain terms and keep the step atomic.
+
 ## Naming discipline
 
 - **Name new and existing touched code by enduring responsibility, not by the change request.** Prefer names that would still make sense six months later after the current task description is forgotten.

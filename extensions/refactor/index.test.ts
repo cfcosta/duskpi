@@ -333,6 +333,24 @@ test("buildPrompt includes refinement contract for arbiter mode", () => {
   assert.match(prompt, /tighten blast radius/);
 });
 
+test("real prompt bundle includes the refactoring action catalog", () => {
+  const promptDirectory = path.join(path.dirname(new URL(import.meta.url).pathname), "prompts");
+  const loaded = loadPrompts(promptDirectory);
+
+  assert.equal(loaded.ok, true);
+  if (!loaded.ok) {
+    return;
+  }
+
+  assert.match(loaded.prompts.mapper, /Extract Method\/Function/i);
+  assert.match(loaded.prompts.mapper, /Inline Method\/Function/i);
+  assert.match(loaded.prompts.mapper, /Replace Conditional with Polymorphism/i);
+  assert.match(loaded.prompts.mapper, /Remove Dead Code/i);
+  assert.match(loaded.prompts.arbiter, /Approved refactoring action catalog/i);
+  assert.match(loaded.prompts.executor, /Refactoring action discipline/i);
+  assert.match(loaded.prompts.executor, /Simplify Conditional/i);
+});
+
 test("real prompt bundle enforces responsibility-first naming guidance", () => {
   const promptDirectory = path.join(path.dirname(new URL(import.meta.url).pathname), "prompts");
   const loaded = loadPrompts(promptDirectory);

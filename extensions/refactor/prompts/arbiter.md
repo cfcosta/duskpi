@@ -70,6 +70,21 @@ Reject candidates where:
 - The blast radius is larger than the mapper assessed and cannot be safely contained
 - The plan introduces patch-specific, rollout-specific, or semantically weak names instead of stable domain names
 
+## Approved refactoring action catalog
+
+Prefer approved steps that use one or more of these safe refactoring actions when they match the underlying smell:
+
+- **Extract Method/Function** — extract cohesive logic into a well-named helper whose name explains why the logic exists.
+- **Inline Method/Function** — remove indirection when the call site is clearer without the helper.
+- **Rename** — rename misleading symbols to match domain language and current responsibility.
+- **Move** — move code to the module or file that owns the responsibility.
+- **Introduce Explaining Variable** — name complex expressions so intent becomes obvious.
+- **Replace Conditional with Polymorphism** — only approve when behavior selection is type-driven and the plan can be broken into safe intermediate commits.
+- **Remove Dead Code** — delete unreachable or unused code rather than preserving it behind comments.
+- **Simplify Conditional** — replace tangled boolean logic with named predicates or consolidated branches.
+
+Use these labels in verdicts and in the atomic commit plan whenever they describe the actual change. Do not force the plan into these categories if the real problem is broader, but do require the mapper/executor to name the action clearly.
+
 ## Naming quality bar
 
 Approved steps must preserve or improve semantic naming quality.

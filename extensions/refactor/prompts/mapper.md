@@ -30,6 +30,21 @@ Treat naming as a real refactor candidate when it reveals a boundary problem, hi
 
 Also flag existing names that have become inaccurate because the surrounding responsibility already changed. If the code is about to be refactored in that area anyway, treat stale rollout-era, migration-era, or implementation-era names as part of the structural problem rather than as cosmetic cleanup.
 
+## Refactoring action catalog
+
+Apply these patterns when you recognize the code smell they address:
+
+- **Extract Method/Function** — when a block of code has a clear purpose that can be named. Extract it into a function with a descriptive name. The function name should explain **why**, not just **what**.
+- **Inline Method/Function** — when a function body is as clear as its name, or when the extra indirection adds no value. Replace the call with the body.
+- **Rename** — when a name does not communicate intent. Variables, functions, types, modules, and files should match the domain language. Update all references. Check the glossary for canonical terms if one exists.
+- **Move** — when code lives in the wrong module or file. Move it to the module that owns that responsibility based on domain boundaries and cohesion. Update imports.
+- **Introduce Explaining Variable** — when an expression is complex. Extract it into a named variable that explains its purpose.
+- **Replace Conditional with Polymorphism** — when a conditional (`if`/`else`, `switch`, `match`) selects behavior based on type. Prefer polymorphic dispatch. This is a larger refactor: require intermediate safe steps.
+- **Remove Dead Code** — when code is unreachable or unused. Delete it. Do not comment it out.
+- **Simplify Conditional** — when a boolean expression is complex. Decompose it into named predicates or consolidate redundant branches.
+
+When listing candidates, name the refactoring action explicitly when one of these patterns applies. If none apply, describe the structural issue in domain terms instead of forcing a pattern match.
+
 ## Output format
 
 ### 1. Dependency Map

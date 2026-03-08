@@ -40,8 +40,7 @@ export class RefactorWorkflow extends PhaseWorkflow<PromptBundle> {
       text: {
         unavailable: (error) =>
           `Refactor is unavailable: ${error?.message ?? "prompt initialization failed."}`,
-        alreadyRunning:
-          "Refactor is already running. Finish or cancel the current run first.",
+        alreadyRunning: "Refactor is already running. Finish or cancel the current run first.",
         analysisWriteBlocked: "Refactor analysis phase: writes are disabled",
         complete: "Refactor workflow complete!",
         cancelled: "Refactor cancelled.",
@@ -50,8 +49,7 @@ export class RefactorWorkflow extends PhaseWorkflow<PromptBundle> {
         refineOption: "Refine the analysis",
         cancelOption: "Cancel",
         refineEditorLabel: "Refine analysis:",
-        sendFailed: (phase) =>
-          `Refactor stopped: failed to send prompt for phase '${phase}'.`,
+        sendFailed: (phase) => `Refactor stopped: failed to send prompt for phase '${phase}'.`,
         missingOutputRetry: (phase, retry, maxRetries) =>
           `No assistant output captured for phase '${phase}'. Retrying (${retry}/${maxRetries}).`,
         missingOutputStopped: (attempts) =>
