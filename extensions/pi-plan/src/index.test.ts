@@ -191,6 +191,41 @@ test("extractTodoItems ignores the ready-to-execute footer", async () => {
   ).toEqual([{ step: 1, text: "A regression test for prompt leakage", completed: false }]);
 });
 
+test("extractTodoItems handles indented plan steps under the numbered plan section", async () => {
+  const { extractTodoItems } = await import("./utils");
+
+  expect(
+    extractTodoItems(
+      [
+        "1) Goal understanding (brief)",
+        "2) Evidence gathered",
+        "3) Uncertainties / assumptions",
+        "4) Plan:",
+        "   1. Add a regression test for prompt leakage",
+        "      - target files/components: src/index.test.ts",
+        "      - validation method: bun test",
+        "   2. Update the approval action UI to show a compact summary",
+        "      - target files/components: src/plan-action-ui.ts",
+        "      - validation method: bun test",
+        "5) Risks and rollback notes",
+        "6) Ready to execute when approved.",
+      ].join("\n"),
+    ),
+  ).toEqual([
+    { step: 1, text: "A regression test for prompt leakage", completed: false },
+    { step: 2, text: "Approval action UI to show a compact summary", completed: false },
+  ]);
+});
+
+test("one-shot /plan task enables plan mode and immediately sends the task", async () => {
+  const harness = createPlanExtensionHarness();
+
+  await harness.runCommand("plan", "Investigate flaky prompt extraction");
+
+  expect(harness.getActiveTools()).toEqual(["read", "bash", "grep", "find", "ls"]);
+  expect(harness.sentUserMessages).toEqual(["Investigate flaky prompt extraction"]);
+});
+
 test("plan extension harness registers commands and handles agent_end in read-only mode", async () => {
   const harness = createPlanExtensionHarness();
 
@@ -245,6 +280,51 @@ test("critique pass routes orchestration through a hidden custom message after e
     message: "Reviewing the plan with a critique pass before approval.",
     level: "info",
   });
+});
+
+test("indented plan output still reaches the approval UI after critique", async () => {
+  const harness = createPlanExtensionHarness({ hasUI: true });
+
+  await harness.runCommand("plan", "on");
+
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: [
+              "1) Goal understanding (brief)",
+              "2) Evidence gathered",
+              "3) Uncertainties / assumptions",
+              "4) Plan:",
+              "   1. Add a regression test for prompt leakage",
+              "      - target files/components: src/index.test.ts",
+              "      - validation method: bun test",
+              "   2. Update the approval action UI to show a compact summary",
+              "      - target files/components: src/plan-action-ui.ts",
+              "      - validation method: bun test",
+              "5) Risks and rollback notes",
+              "6) Ready to execute when approved.",
+            ].join("\n"),
+          },
+        ],
+      },
+    ],
+  });
+
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "assistant",
+        content:
+          "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+      },
+    ],
+  });
+
+  expect(harness.uiStub.customCalls).toHaveLength(1);
 });
 
 test("after a PASS critique the plan stays tracked without leaking visible follow-up messages", async () => {

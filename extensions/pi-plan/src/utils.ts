@@ -136,32 +136,62 @@ export function cleanStepText(text: string): string {
 
 export function extractTodoItems(message: string): TodoItem[] {
   const items: TodoItem[] = [];
-  const headerMatch = message.match(/\*{0,2}Plan:\*{0,2}\s*\n/i);
-  if (!headerMatch) return items;
+  const lines = message.split(/\r?\n/);
+  const normalizeStructuredLine = (text: string): string => text.replace(/\*+/g, "").trim();
+  const planHeaderIndex = lines.findIndex((line) =>
+    /^(?:\d+[.)]\s*)?Plan:\s*$/i.test(normalizeStructuredLine(line)),
+  );
 
-  const planSection = message.slice(message.indexOf(headerMatch[0]) + headerMatch[0].length);
-  const lines = planSection.split(/\r?\n/);
+  if (planHeaderIndex === -1) {
+    return items;
+  }
 
-  for (const line of lines) {
-    const match = line.match(/^(\d+)[.)]\s+(.*)$/);
+  const isPlanBoundaryLine = (text: string): boolean =>
+    /^(goal understanding(?: \(brief\))?|evidence gathered|uncertainties? \/ assumptions|risks? and rollback notes?|ready to execute when approved\.?|end with: "ready to execute when approved\.?")$/i.test(
+      normalizeStructuredLine(text),
+    );
+
+  let stepIndent: number | undefined;
+
+  for (const line of lines.slice(planHeaderIndex + 1)) {
+    if (line.trim().length === 0) {
+      continue;
+    }
+
+    const match = line.match(/^(\s*)(\d+)[.)]\s+(.*)$/);
     if (!match) {
       continue;
     }
 
-    const indent = line.match(/^\s*/)?.[0].length ?? 0;
-    if (indent > 2) {
-      continue;
-    }
-
-    const text = match[2]
+    const indent = match[1]?.length ?? 0;
+    const text = match[3]
       .trim()
       .replace(/\*{1,2}$/, "")
       .trim();
+
+    if (stepIndent === undefined) {
+      if (isPlanBoundaryLine(text)) {
+        break;
+      }
+      stepIndent = indent;
+    }
+
+    if (indent < stepIndent) {
+      break;
+    }
+
+    if (indent > stepIndent) {
+      continue;
+    }
+
+    if (isPlanBoundaryLine(text)) {
+      break;
+    }
+
     if (
       text.length <= 5 ||
-      !/^\d+[.)]\s+/.test(line.trimStart()) ||
       !/[a-z]/i.test(text) ||
-      /^(target files\/components|validation method|risks? and rollback notes?|evidence gathered|uncertainties? \/ assumptions|ready to execute when approved\.?)$/i.test(
+      /^(step objective|target files\/components|validation method|risks? and rollback notes?|evidence gathered|uncertainties? \/ assumptions|ready to execute when approved\.?)$/i.test(
         text,
       ) ||
       text.startsWith("`") ||
