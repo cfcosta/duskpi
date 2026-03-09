@@ -85,6 +85,30 @@ export interface GuidedWorkflowApprovalOptions {
   onExit?: (args: GuidedWorkflowApprovalPromptArgs, ctx: ExtensionContext) => unknown;
 }
 
+export interface GuidedWorkflowExecutionItem {
+  step: number;
+  text: string;
+  completed: boolean;
+}
+
+export interface GuidedWorkflowExecutionPromptArgs extends GuidedWorkflowApprovalPromptArgs {
+  currentStep: GuidedWorkflowExecutionItem;
+  items: GuidedWorkflowExecutionItem[];
+}
+
+export interface GuidedWorkflowExecutionSnapshot {
+  note?: string;
+  items: GuidedWorkflowExecutionItem[];
+}
+
+export interface GuidedWorkflowExecutionOptions {
+  extractItems: (
+    args: Omit<GuidedWorkflowApprovalPromptArgs, "note">,
+  ) => Array<Omit<GuidedWorkflowExecutionItem, "completed"> | GuidedWorkflowExecutionItem>;
+  buildExecutionPrompt: (args: GuidedWorkflowExecutionPromptArgs) => string;
+  extractDoneStepNumbers?: (text: string) => number[];
+}
+
 export interface GuidedWorkflowOptions {
   id: string;
   parseGoalArg?: (args: unknown) => string | undefined;
@@ -92,6 +116,7 @@ export interface GuidedWorkflowOptions {
   critique?: GuidedWorkflowCritiqueOptions;
   planningPolicy?: GuidedWorkflowPlanningPolicy;
   approval?: GuidedWorkflowApprovalOptions;
+  execution?: GuidedWorkflowExecutionOptions;
   text: GuidedWorkflowText;
 }
 
@@ -101,6 +126,8 @@ export class GuidedWorkflow implements GuidedWorkflowController {
   private pendingResponseKind?: PendingResponseKind;
   private latestPlanText?: string;
   private latestCritiqueText?: string;
+  private executionItems: GuidedWorkflowExecutionItem[] = [];
+  private executionNote?: string;
 
   constructor(
     private readonly api: ExtensionAPI,
@@ -109,6 +136,13 @@ export class GuidedWorkflow implements GuidedWorkflowController {
 
   getStateSnapshot(): GuidedWorkflowState {
     return { ...this.state };
+  }
+
+  getExecutionSnapshot(): GuidedWorkflowExecutionSnapshot {
+    return {
+      note: this.executionNote,
+      items: this.executionItems.map((item) => ({ ...item })),
+    };
   }
 
   async handleCommand(args: unknown, ctx: ExtensionContext): Promise<GuidedWorkflowResult> {
@@ -224,7 +258,17 @@ export class GuidedWorkflow implements GuidedWorkflowController {
     return undefined;
   }
 
-  async handleTurnEnd(_event: TurnEndEvent, _ctx: ExtensionContext): Promise<void> {
+  async handleTurnEnd(event: TurnEndEvent, _ctx: ExtensionContext): Promise<void> {
+    if (this.state.phase !== "executing" || this.executionItems.length === 0) {
+      return undefined;
+    }
+
+    const assistantText = extractTurnMessageText(event.message);
+    if (!assistantText) {
+      return undefined;
+    }
+
+    this.syncExecutionProgress(assistantText);
     return undefined;
   }
 
@@ -351,7 +395,7 @@ export class GuidedWorkflow implements GuidedWorkflowController {
     };
 
     switch (selection.action) {
-      case "approve":
+      case "approve": {
         await this.options.approval.onApprove?.(args, ctx);
         this.state = {
           ...this.state,
@@ -360,7 +404,39 @@ export class GuidedWorkflow implements GuidedWorkflowController {
           awaitingResponse: false,
         };
         this.pendingResponseKind = undefined;
-        return { kind: "ok" };
+        this.executionNote = args.note;
+        this.executionItems = this.createExecutionItems({
+          goal: args.goal,
+          planText: args.planText,
+          critiqueText: args.critiqueText,
+        });
+
+        const currentStep = this.getCurrentExecutionStep();
+        if (!currentStep) {
+          return { kind: "ok" };
+        }
+
+        const prompt = this.options.execution?.buildExecutionPrompt({
+          ...args,
+          currentStep,
+          items: this.executionItems.map((item) => ({ ...item })),
+        });
+        if (!prompt) {
+          return { kind: "ok" };
+        }
+
+        try {
+          this.api.sendUserMessage(prompt);
+          return { kind: "ok" };
+        } catch {
+          ctx.ui.notify(
+            this.options.text.sendFailed ??
+              "Guided workflow stopped: failed to send planning prompt.",
+            "error",
+          );
+          return { kind: "recoverable_error", reason: "prompt_send_failed" };
+        }
+      }
       case "continue":
         return this.sendPlanningFollowUp(
           this.options.approval.buildContinuePrompt?.(args) ?? buildDefaultContinuePrompt(args),
@@ -433,11 +509,43 @@ export class GuidedWorkflow implements GuidedWorkflowController {
       : "Create a concrete implementation plan for the current task.";
   }
 
+  private createExecutionItems(
+    args: Omit<GuidedWorkflowApprovalPromptArgs, "note">,
+  ): GuidedWorkflowExecutionItem[] {
+    const items = this.options.execution?.extractItems(args) ?? [];
+    return items
+      .map((item) => ({
+        step: item.step,
+        text: item.text,
+        completed: "completed" in item ? item.completed : false,
+      }))
+      .sort((left, right) => {
+        return left.step - right.step || left.text.localeCompare(right.text);
+      });
+  }
+
+  private getCurrentExecutionStep(): GuidedWorkflowExecutionItem | undefined {
+    return this.executionItems.find((item) => !item.completed);
+  }
+
+  private syncExecutionProgress(text: string): number {
+    const doneSteps = this.options.execution?.extractDoneStepNumbers?.(text) ?? extractDoneStepNumbers(text);
+    for (const step of doneSteps) {
+      const item = this.executionItems.find((candidate) => candidate.step === step);
+      if (item) {
+        item.completed = true;
+      }
+    }
+    return doneSteps.length;
+  }
+
   private resetWorkflowState() {
     this.state = this.createIdleState();
     this.pendingResponseKind = undefined;
     this.latestPlanText = undefined;
     this.latestCritiqueText = undefined;
+    this.executionItems = [];
+    this.executionNote = undefined;
   }
 
   private isPlanningPhase(phase: GuidedWorkflowPhase): boolean {
@@ -514,6 +622,19 @@ function extractMessageText(content: unknown): string | undefined {
   return text.length > 0 ? text : undefined;
 }
 
+function extractTurnMessageText(message: unknown): string | undefined {
+  if (typeof message !== "object" || message === null) {
+    return undefined;
+  }
+
+  const typedMessage = message as { role?: unknown; content?: unknown };
+  if (typedMessage.role !== "assistant") {
+    return undefined;
+  }
+
+  return extractMessageText(typedMessage.content);
+}
+
 function isBashTool(toolName?: string): boolean {
   return (toolName ?? "").trim().toLowerCase() === "bash";
 }
@@ -551,4 +672,15 @@ function buildDefaultContinuePrompt(args: GuidedWorkflowApprovalPromptArgs): str
 function buildDefaultRegeneratePrompt(args: GuidedWorkflowApprovalPromptArgs): string {
   const note = args.note ? ` User note: ${args.note}.` : "";
   return `Regenerate the full plan from scratch.${note}`;
+}
+
+function extractDoneStepNumbers(text: string): number[] {
+  const steps: number[] = [];
+  for (const match of text.matchAll(/\[DONE:(\d+)\]/gi)) {
+    const step = Number(match[1]);
+    if (Number.isFinite(step)) {
+      steps.push(step);
+    }
+  }
+  return steps;
 }

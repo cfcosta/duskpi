@@ -130,8 +130,8 @@ function createCritiqueOptions() {
 
 function createApprovalOptions(options?: {
   selection?: { cancelled?: boolean; action?: "approve" | "continue" | "regenerate" | "exit"; note?: string };
-  onApprove?: (args: { planText: string; critiqueText?: string; note?: string }) => void;
-  onExit?: (args: { planText: string; critiqueText?: string; note?: string }) => void;
+  onApprove?: (args: { goal?: string; planText: string; critiqueText?: string; note?: string }) => void;
+  onExit?: (args: { goal?: string; planText: string; critiqueText?: string; note?: string }) => void;
 }) {
   const selectCalls: Array<{ planText: string; critiqueText?: string }> = [];
 
@@ -156,6 +156,25 @@ function createApprovalOptions(options?: {
       },
       onExit(args: { planText: string; critiqueText?: string; note?: string }) {
         options?.onExit?.(args);
+      },
+    },
+  };
+}
+
+function createExecutionOptions() {
+  return {
+    execution: {
+      extractItems() {
+        return [
+          { step: 1, text: "First task" },
+          { step: 2, text: "Second task" },
+        ];
+      },
+      buildExecutionPrompt(args: {
+        currentStep: { step: number; text: string };
+        note?: string;
+      }) {
+        return `Execute step ${args.currentStep.step}: ${args.currentStep.text}${args.note ? ` (${args.note})` : ""}`;
       },
     },
   };
@@ -790,6 +809,133 @@ test("GuidedWorkflow clears the active run on exit", async () => {
     goal: undefined,
     pendingRequestId: undefined,
     awaitingResponse: false,
+  });
+});
+
+test("GuidedWorkflow builds the first execution prompt for the current open step", async () => {
+  const { api, sentUserMessages } = createApi();
+  const { approval } = createApprovalOptions({
+    selection: { action: "approve", note: "ship it" },
+  });
+  const { execution } = createExecutionOptions();
+  const workflow = new GuidedWorkflow(api, {
+    id: "guided-test",
+    parseGoalArg: parseTrimmedStringArg,
+    approval,
+    execution,
+    text: { alreadyRunning: "guided running" },
+  });
+  const { ctx } = createContext();
+
+  await workflow.handleCommand("first run", ctx);
+  const result = await workflow.handleAgentEnd(
+    {
+      messages: [
+        { role: "user", content: [{ type: "text", text: sentUserMessages[0]! }] },
+        { role: "assistant", content: [{ type: "text", text: "draft plan" }] },
+      ],
+    },
+    ctx,
+  );
+
+  assert.deepEqual(result, { kind: "ok" });
+  assert.equal(sentUserMessages[1], "Execute step 1: First task (ship it)");
+  assert.deepEqual(workflow.getExecutionSnapshot(), {
+    note: "ship it",
+    items: [
+      { step: 1, text: "First task", completed: false },
+      { step: 2, text: "Second task", completed: false },
+    ],
+  });
+});
+
+test("GuidedWorkflow syncs matching [DONE:n] markers onto execution items", async () => {
+  const { api, sentUserMessages } = createApi();
+  const { approval } = createApprovalOptions({
+    selection: { action: "approve" },
+  });
+  const { execution } = createExecutionOptions();
+  const workflow = new GuidedWorkflow(api, {
+    id: "guided-test",
+    parseGoalArg: parseTrimmedStringArg,
+    approval,
+    execution,
+    text: { alreadyRunning: "guided running" },
+  });
+  const { ctx } = createContext();
+
+  await workflow.handleCommand("first run", ctx);
+  await workflow.handleAgentEnd(
+    {
+      messages: [
+        { role: "user", content: [{ type: "text", text: sentUserMessages[0]! }] },
+        { role: "assistant", content: [{ type: "text", text: "draft plan" }] },
+      ],
+    },
+    ctx,
+  );
+
+  await workflow.handleTurnEnd(
+    {
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Implemented second task [DONE:2]" }],
+      },
+    },
+    ctx,
+  );
+
+  assert.deepEqual(workflow.getExecutionSnapshot(), {
+    note: undefined,
+    items: [
+      { step: 1, text: "First task", completed: false },
+      { step: 2, text: "Second task", completed: true },
+    ],
+  });
+});
+
+test("GuidedWorkflow ignores unrelated execution output when syncing progress", async () => {
+  const { api, sentUserMessages } = createApi();
+  const { approval } = createApprovalOptions({
+    selection: { action: "approve" },
+  });
+  const { execution } = createExecutionOptions();
+  const workflow = new GuidedWorkflow(api, {
+    id: "guided-test",
+    parseGoalArg: parseTrimmedStringArg,
+    approval,
+    execution,
+    text: { alreadyRunning: "guided running" },
+  });
+  const { ctx } = createContext();
+
+  await workflow.handleCommand("first run", ctx);
+  await workflow.handleAgentEnd(
+    {
+      messages: [
+        { role: "user", content: [{ type: "text", text: sentUserMessages[0]! }] },
+        { role: "assistant", content: [{ type: "text", text: "draft plan" }] },
+      ],
+    },
+    ctx,
+  );
+
+  await workflow.handleTurnEnd(
+    {
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Finished validation without markers" }],
+      },
+    },
+    ctx,
+  );
+
+  assert.deepEqual(workflow.getExecutionSnapshot(), {
+    note: undefined,
+    items: [
+      { step: 1, text: "First task", completed: false },
+      { step: 2, text: "Second task", completed: false },
+    ],
   });
 });
 
