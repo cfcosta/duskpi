@@ -3,14 +3,11 @@
   "configVersion": 0,
   "workspaces": {
     "": {
-      "name": "@devkade/pi-plan",
+      "name": "@duskpi/pi-plan",
       "devDependencies": {
         "@mariozechner/pi-coding-agent": "^0.57.1",
         "bun-types": "^1.3.10",
         "typescript": "^5.9.3",
-      },
-      "peerDependencies": {
-        "@mariozechner/pi-coding-agent": "^0.53.0",
       },
     },
   },

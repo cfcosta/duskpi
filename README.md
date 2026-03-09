@@ -196,7 +196,7 @@ Notable entries:
 - `test-audit`
 - `refactor`
 - `pi-catppuccin`
-- `pi-plan` (vendored locally under `extensions/pi-plan`)
+- `pi-plan` (repo-local private extension vendored under `extensions/pi-plan`)
 
 ### `packages/workflow-core/`
 
@@ -232,7 +232,7 @@ The flake:
 - vendors local extensions, skills, prompts, and themes into one output
 - wraps the final `pi` binary so bundled resources are loaded on startup
 
-`pi-plan` is vendored directly into `extensions/pi-plan`, so you can modify it locally like the other bundled extensions.
+`pi-plan` is vendored directly into `extensions/pi-plan` as a repo-local private extension, so you can modify it locally like the other bundled extensions without treating this copy as a separately published package.
 
 ## Why this repo exists
 

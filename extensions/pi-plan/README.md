@@ -1,6 +1,10 @@
-# Pi Plan Extension (`@devkade/pi-plan`)
+# pi-plan extension
 
-An extension for the [Pi coding agent](https://github.com/badlogic/pi-mono/) that adds planning and execution-assist commands:
+Vendored planning extension used by `duskpi`.
+
+This directory is the repo-local copy bundled under `extensions/pi-plan`. It is not treated as a standalone npm/git package in this repo; external install and release instructions from the upstream package do not apply here.
+
+## What it adds
 
 - **Default mode:** execute directly (YOLO)
 - **Plan mode:** read-only investigation + concrete execution plan
@@ -14,8 +18,6 @@ An extension for the [Pi coding agent](https://github.com/badlogic/pi-mono/) tha
 /plan Refactor command parser to support aliases
 ```
 
----
-
 ## Why
 
 Sometimes you want speed, sometimes you want safety.
@@ -27,31 +29,16 @@ This extension gives both:
 - **Read-only guardrails** while planning (tool + shell protections)
 - **Explicit approval handoff** before implementation begins
 
----
+## Repo-local usage
 
-## Install
+`pi-plan` is bundled by this repository and loaded through the `duskpi` package configuration.
 
-### From npm
-
-```bash
-pi install npm:@devkade/pi-plan
-```
-
-### From git
+For local development from this folder:
 
 ```bash
-pi install git:github.com/devkade/pi-plan@main
-# or pin a tag
-pi install git:github.com/devkade/pi-plan@v0.2.1
+bun install
+bun run check
 ```
-
-### Local development run
-
-```bash
-pi -e ./src/index.ts
-```
-
----
 
 ## Quick Start
 
@@ -92,10 +79,8 @@ Choosing **Approve and execute now** automatically:
 1. exits plan mode,
 2. restores normal tools,
 3. triggers implementation for the next open step,
-4. expects one atomic `jj commit` for that step,
+4. expects one atomic `jj` commit for that step,
 5. then automatically prompts the next remaining step until the todo list is complete.
-
----
 
 ## Modes
 
@@ -103,8 +88,6 @@ Choosing **Approve and execute now** automatically:
 | -------------- | -------------------------------------------------------- | ---------------------------------------- |
 | Default (YOLO) | Executes directly unless you explicitly request planning | No extra restrictions                    |
 | Plan (`/plan`) | Gathers evidence and returns an execution plan           | Read-only tools + mutating action blocks |
-
----
 
 ## Plan-Mode Guardrails
 
@@ -122,8 +105,6 @@ In plan mode:
 - ✅ inspection commands (examples): `ls`, `cat`, `grep`, `find`, `git status`, `git log`
 - ❌ mutating commands (examples): `rm`, `mv`, `npm install`, `git commit`, redirection writes (`>`, `>>`)
 
----
-
 ## Plan Output Contract
 
 In plan mode, the system prompt enforces this structure:
@@ -136,8 +117,6 @@ In plan mode, the system prompt enforces this structure:
 6. End with: `Ready to execute when approved.`
 
 Before approval is shown, Pi also critiques the draft plan for atomicity, ordering, specificity, validation quality, executability, and metadata noise. That critique loop runs through hidden extension messages rather than visible user-chat turns. Weak plans are automatically sent back for refinement.
-
----
 
 ## Commands
 
@@ -158,40 +137,11 @@ Before approval is shown, Pi also critiques the draft plan for atomicity, orderi
   - `Continue from proposed plan` _(inline note optional via `Tab`/`E`; without note, Pi prompts for modification input and waits)_
   - `Regenerate plan` _(no additional note required)_
 
-## Development
-
-```bash
-npm install
-npm run check
-```
-
-`npm run check` runs TypeScript type-checking (`tsc --noEmit`).
-
----
-
 ## Project Structure
 
+- `index.ts` - extension entry re-export
 - `src/index.ts` - plan mode orchestration, `/todos`, and command wiring
+- `src/plan-action-ui.ts` - approval action UI
 - `src/utils.ts` - read-only bash checks + plan step extraction/progress helpers
+- `src/index.test.ts` - extension regression coverage
 - `plan.md` - package-level feature plan notes
-- `.github/workflows/ci.yml` - CI checks
-- `.github/workflows/release.yml` - tag-triggered npm publish + GitHub Release
-
----
-
-## Release
-
-The release workflow runs on tags matching `v*.*.*` and performs:
-
-1. `npm ci`
-2. `npm run check`
-3. tag/version consistency check
-4. `npm publish --access public --provenance`
-5. GitHub Release creation
-
-Example:
-
-```bash
-npm version patch
-git push origin main --tags
-```

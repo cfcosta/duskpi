@@ -1,31 +1,9 @@
 {
-  "name": "@devkade/pi-plan",
-  "version": "0.2.2",
-  "description": "Plan command extension for Pi: read-only planning mode with approval-based execution",
-  "keywords": [
-    "pi-extension",
-    "pi-package",
-    "plan-mode",
-    "yolo"
-  ],
-  "homepage": "https://github.com/devkade/pi-plan#readme",
-  "bugs": {
-    "url": "https://github.com/devkade/pi-plan/issues"
-  },
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/devkade/pi-plan.git"
-  },
-  "files": [
-    "src",
-    "plan.md",
-    "README.md"
-  ],
+  "name": "@duskpi/pi-plan",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Vendored pi-plan extension for duskpi: read-only planning mode with approval-based execution",
   "type": "module",
-  "publishConfig": {
-    "access": "public"
-  },
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit",
@@ -35,9 +13,6 @@
     "@mariozechner/pi-coding-agent": "^0.57.1",
     "bun-types": "^1.3.10",
     "typescript": "^5.9.3"
-  },
-  "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "*"
   },
   "pi": {
     "extensions": [
