@@ -4,6 +4,7 @@ import {
   type BeforeAgentStartEvent,
   type ExtensionAPI,
   type ExtensionContext,
+  type GuidedWorkflowExecutionItem,
   type GuidedWorkflowResult,
   type SessionShutdownEvent,
   type SessionStartEvent,
@@ -14,7 +15,6 @@ import { selectPlanNextActionWithInlineNote, type PlanApprovalDetails } from "./
 import {
   extractTodoItems,
   isSafeReadOnlyCommand,
-  markCompletedSteps,
   normalizeArg,
   parseCritiqueVerdict,
   type TodoItem,
@@ -186,6 +186,14 @@ export class PiPlanWorkflow extends GuidedWorkflow {
           return self.handleApprovalExit(ctx);
         },
       },
+      execution: {
+        extractItems({ planText }) {
+          return extractTodoItems(planText).map((item) => ({ ...item }));
+        },
+        buildExecutionPrompt({ currentStep, note }) {
+          return self.buildExecutionPrompt(currentStep, note);
+        },
+      },
       text: {
         alreadyRunning: "Plan mode is already enabled.",
         sendFailed: "Plan mode stopped: failed to send planning prompt.",
@@ -306,16 +314,12 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   }
 
   async handleTurnEnd(event: TurnEndEvent, ctx: ExtensionContext): Promise<void> {
-    if (!this.executionMode || this.todoItems.length === 0) {
-      return;
-    }
+    const beforeState = this.getStateSnapshot();
+    const beforeExecution = this.getExecutionSnapshot();
 
-    const text = getAssistantTextFromMessage(event.message);
-    if (!text) {
-      return;
-    }
+    await super.handleTurnEnd(event, ctx);
 
-    this.syncTrackedExecutionProgress(text, ctx);
+    this.syncExecutionShadowFromGuided(beforeState.phase, beforeExecution, ctx);
   }
 
   async handleAgentEnd(
@@ -328,14 +332,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       .map(getAssistantTextFromMessage)
       .find((text) => text.length > 0);
 
-    if (this.executionMode && this.todoItems.length > 0) {
-      const completedCount = lastAssistantText
-        ? this.syncTrackedExecutionProgress(lastAssistantText, ctx)
-        : 0;
-
-      if (this.executionMode && completedCount > 0) {
-        this.sendNextExecutionStep(ctx);
-      }
+    if (this.getStateSnapshot().phase === "executing") {
       return { kind: "ok" };
     }
 
@@ -377,13 +374,21 @@ export class PiPlanWorkflow extends GuidedWorkflow {
           );
         }
 
-        return super.handleAgentEnd(event, ctx);
+        const beforeExecution = this.getExecutionSnapshot();
+        const beforePhase = this.getStateSnapshot().phase;
+        const result = await super.handleAgentEnd(event, ctx);
+        this.syncExecutionShadowFromGuided(beforePhase, beforeExecution, ctx);
+        return result;
       }
 
+      const beforeExecution = this.getExecutionSnapshot();
+      const beforePhase = this.getStateSnapshot().phase;
       const result = await super.handleAgentEnd(event, ctx);
       if (result.kind !== "ok") {
         return result;
       }
+
+      this.syncExecutionShadowFromGuided(beforePhase, beforeExecution, ctx);
 
       if (pendingResponseKind === "critique" && lastAssistantText) {
         const verdict = parseCritiqueVerdict(lastAssistantText);
@@ -519,7 +524,6 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     this.executionConstraintNote = note?.trim() ?? "";
     this.resetPlanningDraft();
     this.exitPlanMode(ctx, "Plan approved. Entering YOLO mode for execution.");
-    this.sendNextExecutionStep(ctx, "Plan approved. Entering YOLO mode for execution.");
   }
 
   private handleApprovalExit(ctx: ExtensionContext): void {
@@ -626,46 +630,53 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       .join("\n");
   }
 
-  private sendNextExecutionStep(ctx: ExtensionContext, reason?: string): void {
-    const currentStep = this.todoItems.find((item) => !item.completed);
-    if (!currentStep) {
-      this.resetExecutionState();
-      this.setStatus(ctx);
-      if (reason) {
-        notify(this.pi, ctx, reason, "info");
-      }
-      return;
-    }
-
-    const prompt = [
+  private buildExecutionPrompt(
+    currentStep: GuidedWorkflowExecutionItem,
+    note?: string,
+  ): string {
+    return [
       EXECUTION_TRIGGER_PROMPT,
       `Complete only step ${currentStep.step}: ${currentStep.text}`,
-      this.executionConstraintNote
-        ? `Honor this user execution note while implementing the step: ${this.executionConstraintNote}`
-        : undefined,
+      note ? `Honor this user execution note while implementing the step: ${note}` : undefined,
       "Implement it, validate it, and create one atomic jujutsu commit for that step before ending the turn.",
       "Use `jj commit <changed paths> -m <message>`, follow Conventional Commits, include a detailed description, and finish with the matching [DONE:n] marker after the commit succeeds.",
       "Do not start the following step in the same turn.",
     ]
       .filter((line): line is string => typeof line === "string")
       .join(" ");
-
-    this.pi.sendUserMessage(prompt);
   }
 
-  private syncTrackedExecutionProgress(text: string, ctx: ExtensionContext): number {
-    const completedCount = markCompletedSteps(text, this.todoItems);
-    if (completedCount > 0) {
+  private syncExecutionShadowFromGuided(
+    previousPhase: string,
+    previousExecution: { note?: string; items: GuidedWorkflowExecutionItem[] },
+    ctx: ExtensionContext,
+  ): void {
+    const currentPhase = this.getStateSnapshot().phase;
+    const execution = this.getExecutionSnapshot();
+
+    if (currentPhase === "executing") {
+      this.executionMode = execution.items.length > 0;
+      this.executionConstraintNote = execution.note ?? this.executionConstraintNote;
+      this.todoItems = execution.items.map((item) => ({
+        step: item.step,
+        text: item.text,
+        completed: item.completed,
+      }));
       this.setStatus(ctx);
+      return;
     }
 
-    if (this.todoItems.length > 0 && this.todoItems.every((item) => item.completed)) {
-      this.resetExecutionState();
+    if (previousPhase === "executing" && previousExecution.items.length > 0) {
+      this.executionMode = false;
+      this.executionConstraintNote = "";
+      this.todoItems = previousExecution.items.map((item) => ({
+        step: item.step,
+        text: item.text,
+        completed: true,
+      }));
       this.setStatus(ctx);
       notify(this.pi, ctx, "All tracked plan steps are complete.", "info");
     }
-
-    return completedCount;
   }
 
   private getPlanTools(): string[] {

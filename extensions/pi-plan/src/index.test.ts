@@ -633,6 +633,91 @@ test("approve action can include an execution note and restores normal tools", a
   );
 });
 
+test("execution DONE markers advance to the next guided step", async () => {
+  const harness = createPlanExtensionHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+  });
+
+  await harness.runCommand("plan", "on");
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  await harness.emit("turn_end", {
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "Implemented step one [DONE:1]" }],
+    },
+  });
+
+  expect(harness.sentUserMessages).toHaveLength(2);
+  expect(harness.sentUserMessages[1]).toContain("Complete only step 2: Approval action UI to show a compact summary");
+
+  await harness.runCommand("todos");
+  expect(harness.uiStub.notifications).toContainEqual({
+    message:
+      "Plan progress 1/2\n1. ✓ A regression test for prompt leakage\n2. ○ Approval action UI to show a compact summary",
+    level: "info",
+  });
+});
+
+test("final guided execution completion stops prompting and marks tracked progress done", async () => {
+  const harness = createPlanExtensionHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+  });
+
+  await harness.runCommand("plan", "on");
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  await harness.emit("turn_end", {
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "Implemented step one [DONE:1]" }],
+    },
+  });
+  await harness.emit("turn_end", {
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "Implemented step two [DONE:2]" }],
+    },
+  });
+
+  expect(harness.sentUserMessages).toHaveLength(2);
+  expect(harness.uiStub.notifications).toContainEqual({
+    message: "All tracked plan steps are complete.",
+    level: "info",
+  });
+
+  await harness.runCommand("todos");
+  expect(harness.uiStub.notifications).toContainEqual({
+    message:
+      "Plan progress 2/2\n1. ✓ A regression test for prompt leakage\n2. ✓ Approval action UI to show a compact summary",
+    level: "info",
+  });
+});
+
 test("exit selection restores normal tools and clears tracked progress", async () => {
   const harness = createPlanExtensionHarness({
     hasUI: true,
