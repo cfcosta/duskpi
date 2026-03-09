@@ -1,10 +1,10 @@
 import {
   PhaseWorkflow,
   type ExtensionAPI,
-  type PromptSnapshot,
+  type PromptLoadResult,
 } from "../../packages/workflow-core/src/index";
 import { parseScopeArg } from "./messages";
-import { buildPrompt, type PromptBundle, type PromptLoadResult } from "./prompting";
+import { buildPrompt, type PromptBundle } from "./prompting";
 
 const ANALYSIS_PHASES = ["finder", "skeptic", "arbiter"] as const;
 const EXECUTION_PHASE = "fixer" as const;
@@ -17,13 +17,13 @@ const PHASE_LABELS: Record<(typeof ANALYSIS_PHASES)[number] | typeof EXECUTION_P
 };
 
 export class OwaspWorkflow extends PhaseWorkflow<PromptBundle> {
-  constructor(api: ExtensionAPI, promptProvider: () => PromptLoadResult) {
+  constructor(api: ExtensionAPI, promptProvider: () => PromptLoadResult<PromptBundle>) {
     super(api, {
       id: "owasp-fix",
       analysisPhases: ANALYSIS_PHASES,
       executionPhase: EXECUTION_PHASE,
       phaseLabels: PHASE_LABELS,
-      promptProvider: () => mapPromptResult(promptProvider()),
+      promptProvider,
       parseScopeArg,
       buildPrompt: ({ phase, prompts, reports, scope, refinement }) =>
         buildPrompt({
@@ -59,12 +59,4 @@ export class OwaspWorkflow extends PhaseWorkflow<PromptBundle> {
       maxRefinementAttempts: 3,
     });
   }
-}
-
-function mapPromptResult(result: PromptLoadResult): PromptSnapshot<PromptBundle> {
-  if (result.ok) {
-    return { prompts: result.prompts };
-  }
-
-  return { error: result.error };
 }

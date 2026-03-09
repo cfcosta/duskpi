@@ -1,4 +1,8 @@
-import { PromptLoadError, loadPromptFiles } from "../../packages/workflow-core/src/index";
+import {
+  PromptLoadError,
+  loadPromptFiles,
+  type PromptLoadResult,
+} from "../../packages/workflow-core/src/index";
 
 export const PROMPT_FILE_NAMES = {
   mapper: "mapper.md",
@@ -16,17 +20,7 @@ export interface WorkflowReports {
   arbiter?: string;
 }
 
-export type PromptLoadResult =
-  | {
-      ok: true;
-      prompts: PromptBundle;
-    }
-  | {
-      ok: false;
-      error: PromptLoadError;
-    };
-
-export function loadPrompts(promptDirectory: string): PromptLoadResult {
+export function loadPrompts(promptDirectory: string): PromptLoadResult<PromptBundle> {
   const result = loadPromptFiles(promptDirectory, PROMPT_FILE_NAMES);
   if (!result.ok) {
     return { ok: false, error: result.error };
