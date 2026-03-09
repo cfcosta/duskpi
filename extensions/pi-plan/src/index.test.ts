@@ -217,6 +217,20 @@ test("extractTodoItems handles indented plan steps under the numbered plan secti
   ]);
 });
 
+test("plan extension registers the guided workflow listener surface plus todos", () => {
+  const harness = createPlanExtensionHarness();
+
+  expect([...harness.commands.keys()].sort()).toEqual(["plan", "todos"]);
+  expect([...harness.eventHandlers.keys()].sort()).toEqual([
+    "agent_end",
+    "before_agent_start",
+    "session_shutdown",
+    "session_start",
+    "tool_call",
+    "turn_end",
+  ]);
+});
+
 test("one-shot /plan task enables plan mode and immediately sends the task", async () => {
   const harness = createPlanExtensionHarness();
 
