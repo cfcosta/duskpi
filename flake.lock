@@ -136,22 +136,6 @@
         "type": "github"
       }
     },
-    "pi-plan": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1771924695,
-        "narHash": "sha256-m4zyK0LiBj8nYHe+hADmmsSHqnBqIUq2c50yiv7CVf0=",
-        "owner": "devkade",
-        "repo": "pi-plan",
-        "rev": "da5226a18b182641cfbfbae7912ff52638cccc67",
-        "type": "github"
-      },
-      "original": {
-        "owner": "devkade",
-        "repo": "pi-plan",
-        "type": "github"
-      }
-    },
     "playwright-cli": {
       "flake": false,
       "locked": {
@@ -172,7 +156,6 @@
       "inputs": {
         "llm-agents": "llm-agents",
         "nixpkgs": "nixpkgs",
-        "pi-plan": "pi-plan",
         "playwright-cli": "playwright-cli",
         "skill-design-taste-frontend": "skill-design-taste-frontend",
         "skill-humanizer": "skill-humanizer",

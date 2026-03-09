@@ -196,7 +196,7 @@ Notable entries:
 - `test-audit`
 - `refactor`
 - `pi-catppuccin`
-- `pi-plan` (vendored from `devkade/pi-plan` and built in Nix)
+- `pi-plan` (vendored locally under `extensions/pi-plan`)
 
 ### `packages/workflow-core/`
 
@@ -232,7 +232,7 @@ The flake:
 - vendors local extensions, skills, prompts, and themes into one output
 - wraps the final `pi` binary so bundled resources are loaded on startup
 
-`pi-plan` is included as a flake input and built inside Nix, then re-exported as part of this distribution's bundled extensions.
+`pi-plan` is vendored directly into `extensions/pi-plan`, so you can modify it locally like the other bundled extensions.
 
 ## Why this repo exists
 

@@ -7,11 +7,6 @@
       flake = false;
     };
 
-    pi-plan = {
-      url = "github:devkade/pi-plan";
-      flake = false;
-    };
-
     skill-design-taste-frontend = {
       url = "github:Leonxlnx/taste-skill";
       flake = false;
@@ -111,22 +106,9 @@
             '';
           };
 
-          pi-plan-extension = pkgs.buildNpmPackage {
-            pname = "pi-plan";
-            version = inputs.pi-plan.shortRev;
-            src = inputs.pi-plan;
-            npmDepsHash = "sha256-Ht1vEL2dJDXzKhDPn1Vvv6d3zZ0YLeDQVtP0l2fz0NQ=";
-            dontNpmBuild = true;
-            installPhase = ''
-              runHook preInstall
-              mkdir -p $out
-              cp -r package.json package-lock.json README.md plan.md tsconfig.json src $out/
-              runHook postInstall
-            '';
-          };
         in
         rec {
-          inherit playwright-cli pi-plan-extension;
+          inherit playwright-cli;
 
           resources = pkgs.stdenv.mkDerivation (_: {
             name = "duskpi-resources";
@@ -136,11 +118,6 @@
               mkdir -p $out/{extensions,packages,prompts,skills,themes}
 
               cp -rf ${./extensions}/* $out/extensions/
-              mkdir -p $out/extensions/pi-plan
-              cp -rf ${pi-plan-extension}/* $out/extensions/pi-plan/
-              cat > $out/extensions/pi-plan/index.ts <<'EOF'
-              export { default } from "./src/index.ts";
-              EOF
               cp -rf ${./packages}/* $out/packages/
               cp -rf ${./prompts}/* $out/prompts/
               cp -rf ${./themes}/* $out/themes/
