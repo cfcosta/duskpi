@@ -169,17 +169,31 @@ export default function planExtension(pi: ExtensionAPI): void {
     latestPlanDraft = "";
   };
 
+  const sendHiddenPlanningMessage = (content: string): void => {
+    pi.sendMessage(
+      {
+        customType: "pi-plan-internal",
+        content,
+        display: false,
+      },
+      {
+        triggerTurn: true,
+        deliverAs: "followUp",
+      },
+    );
+  };
+
   const requestPlanCritique = (ctx: ExtensionContext, planText: string): void => {
     latestPlanDraft = planText;
     critiqueState = "awaiting_critique";
     notify(pi, ctx, "Reviewing the plan with a critique pass before approval.", "info");
-    pi.sendUserMessage(`${PLAN_CRITIQUE_PROMPT}\n\nPlan to critique:\n\n${planText}`);
+    sendHiddenPlanningMessage(`${PLAN_CRITIQUE_PROMPT}\n\nPlan to critique:\n\n${planText}`);
   };
 
   const requestPlanRevision = (ctx: ExtensionContext, critiqueText: string): void => {
     critiqueState = "awaiting_revision";
     notify(pi, ctx, "The critique requested plan refinement. Regenerating the plan.", "warning");
-    pi.sendUserMessage(
+    sendHiddenPlanningMessage(
       [
         "Revise the latest plan using the critique below.",
         "Keep plan mode read-only and return the full plan again using the required plan output contract.",

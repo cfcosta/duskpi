@@ -175,7 +175,7 @@ test("plan extension harness registers commands and handles agent_end in read-on
   expect(String(harness.sentMessages[0]?.content)).toContain("Plan mode enabled");
 });
 
-test("critique pass currently leaks a visible user message after extracting a plan", async () => {
+test("critique pass routes orchestration through a hidden custom message after extracting a plan", async () => {
   const harness = createPlanExtensionHarness({ hasUI: true });
 
   await harness.runCommand("plan", "on");
@@ -202,8 +202,13 @@ test("critique pass currently leaks a visible user message after extracting a pl
     ],
   });
 
-  expect(harness.sentUserMessages).toHaveLength(1);
-  expect(harness.sentUserMessages[0]).toContain(
+  expect(harness.sentUserMessages).toHaveLength(0);
+  expect(harness.sentMessages).toHaveLength(1);
+  expect(harness.sentMessages[0]).toMatchObject({
+    customType: "pi-plan-internal",
+    display: false,
+  });
+  expect(String(harness.sentMessages[0]?.content)).toContain(
     "Critique the latest proposed implementation plan for execution quality.",
   );
   expect(harness.uiStub.notifications).toContainEqual({
