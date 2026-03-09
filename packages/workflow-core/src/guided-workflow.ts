@@ -295,6 +295,7 @@ export class GuidedWorkflow implements GuidedWorkflowController {
     _event: SessionShutdownEvent,
     _ctx: ExtensionContext,
   ): Promise<void> {
+    this.resetWorkflowState();
     return undefined;
   }
 

@@ -1101,7 +1101,49 @@ test("GuidedWorkflow does not send extra prompts after execution is complete", a
   assert.equal(sentUserMessages.length, sentMessageCount);
 });
 
-test("GuidedWorkflow non-correlation lifecycle hooks are currently no-ops", async () => {
+test("GuidedWorkflow resets active execution state on session shutdown", async () => {
+  const { api, sentUserMessages } = createApi();
+  const { approval } = createApprovalOptions({
+    selection: { action: "approve", note: "ship it" },
+  });
+  const { execution } = createExecutionOptions();
+  const workflow = new GuidedWorkflow(api, {
+    id: "guided-test",
+    parseGoalArg: parseTrimmedStringArg,
+    approval,
+    execution,
+    text: { alreadyRunning: "guided running" },
+  });
+  const { ctx } = createContext();
+
+  await workflow.handleCommand("first run", ctx);
+  await workflow.handleAgentEnd(
+    {
+      messages: [
+        { role: "user", content: [{ type: "text", text: sentUserMessages[0]! }] },
+        { role: "assistant", content: [{ type: "text", text: "draft plan" }] },
+      ],
+    },
+    ctx,
+  );
+
+  assert.equal(await workflow.handleSessionShutdown({ reason: "exit" }, ctx), undefined);
+  assert.deepEqual(workflow.getStateSnapshot(), {
+    phase: "idle",
+    goal: undefined,
+    pendingRequestId: undefined,
+    awaitingResponse: false,
+  });
+  assert.deepEqual(workflow.getExecutionSnapshot(), {
+    note: undefined,
+    items: [],
+  });
+
+  const restart = await workflow.handleCommand("second run", ctx);
+  assert.deepEqual(restart, { kind: "ok" });
+});
+
+test("GuidedWorkflow non-correlation lifecycle hooks remain no-ops outside shutdown", async () => {
   const { api } = createApi();
   const workflow = new GuidedWorkflow(api, {
     id: "guided-test",
@@ -1116,7 +1158,6 @@ test("GuidedWorkflow non-correlation lifecycle hooks are currently no-ops", asyn
   assert.equal(await workflow.handleBeforeAgentStart({ systemPrompt: "base" }, ctx), undefined);
   assert.equal(await workflow.handleTurnEnd({ message: { role: "assistant" } }, ctx), undefined);
   assert.equal(await workflow.handleSessionStart({ restored: true }, ctx), undefined);
-  assert.equal(await workflow.handleSessionShutdown({ reason: "exit" }, ctx), undefined);
   assert.deepEqual(workflow.getStateSnapshot(), {
     phase: "planning",
     goal: "first run",
