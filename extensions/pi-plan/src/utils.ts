@@ -125,29 +125,47 @@ export function extractTodoItems(message: string): TodoItem[] {
   if (!headerMatch) return items;
 
   const planSection = message.slice(message.indexOf(headerMatch[0]) + headerMatch[0].length);
-  const numberedPattern = /^\s*(\d+)[.)]\s+\*{0,2}([^*\n]+)/gm;
+  const lines = planSection.split(/\r?\n/);
 
-  for (const match of planSection.matchAll(numberedPattern)) {
+  for (const line of lines) {
+    const match = line.match(/^(\d+)[.)]\s+(.*)$/);
+    if (!match) {
+      continue;
+    }
+
+    const indent = line.match(/^\s*/)?.[0].length ?? 0;
+    if (indent > 2) {
+      continue;
+    }
+
     const text = match[2]
       .trim()
       .replace(/\*{1,2}$/, "")
       .trim();
     if (
-      text.length > 5 &&
-      !text.startsWith("`") &&
-      !text.startsWith("/") &&
-      !text.startsWith("-")
+      text.length <= 5 ||
+      !/^\d+[.)]\s+/.test(line.trimStart()) ||
+      !/[a-z]/i.test(text) ||
+      /^(target files\/components|validation method|risks? and rollback notes?|evidence gathered|uncertainties? \/ assumptions)$/i.test(
+        text,
+      ) ||
+      text.startsWith("`") ||
+      text.startsWith("/") ||
+      text.startsWith("-")
     ) {
-      const cleaned = cleanStepText(text);
-      if (cleaned.length > 3) {
-        items.push({
-          step: items.length + 1,
-          text: cleaned,
-          completed: false,
-        });
-      }
+      continue;
+    }
+
+    const cleaned = cleanStepText(text);
+    if (cleaned.length > 3) {
+      items.push({
+        step: items.length + 1,
+        text: cleaned,
+        completed: false,
+      });
     }
   }
+
   return items;
 }
 
