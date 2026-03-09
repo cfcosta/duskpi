@@ -9,6 +9,16 @@ import { loadPrompts } from "./prompting";
 
 type NotifyLevel = "info" | "warning" | "error";
 
+function assertPhaseWorkflowListenerSurface(
+  listeners: Record<string, (...args: unknown[]) => Promise<unknown>>,
+) {
+  assert.deepEqual(Object.keys(listeners).sort(), ["agent_end", "tool_call"]);
+  assert.equal(listeners.before_agent_start, undefined);
+  assert.equal(listeners.turn_end, undefined);
+  assert.equal(listeners.session_start, undefined);
+  assert.equal(listeners.session_shutdown, undefined);
+}
+
 function createHarness(options?: {
   selectChoice?: string;
   editorValue?: string;
@@ -267,7 +277,54 @@ test("loadPrompts returns structured error when files are missing", () => {
   }
 });
 
-test("owaspFix registers command and event handlers", () => {
+test("owaspFix command wiring uses real prompt files end-to-end", async () => {
+  const commands: Record<string, { handler: (args: unknown, ctx: unknown) => Promise<unknown> }> =
+    {};
+  const listeners: Record<string, (...args: unknown[]) => Promise<unknown>> = {};
+  const sentMessages: string[] = [];
+
+  const api = {
+    registerCommand(
+      name: string,
+      config: { handler: (args: unknown, ctx: unknown) => Promise<unknown> },
+    ) {
+      commands[name] = config;
+    },
+    on(name: string, handler: (...args: unknown[]) => Promise<unknown>) {
+      listeners[name] = handler;
+    },
+    sendUserMessage(message: string) {
+      sentMessages.push(message);
+    },
+  };
+
+  const ctx = {
+    ui: {
+      notify() {},
+      setStatus() {},
+      setWidget() {},
+      async select() {
+        return "Cancel";
+      },
+      async editor() {
+        return "";
+      },
+    },
+  };
+
+  owaspFix(api as never);
+
+  await commands["owasp-fix"]?.handler("", ctx as never);
+  assert.match(sentMessages[0] ?? "", /You are a security-finding agent focused on OWASP Top 10 risks/);
+
+  await listeners.agent_end?.(
+    { messages: [{ role: "assistant", content: [{ type: "text", text: "finder-report" }] }] },
+    ctx,
+  );
+  assert.match(sentMessages[1] ?? "", /You are an adversarial security reviewer/);
+});
+
+test("owaspFix registers only phase-workflow command and event handlers", () => {
   const commands: Record<string, { handler: (args: unknown, ctx: unknown) => Promise<unknown> }> =
     {};
   const listeners: Record<string, (...args: unknown[]) => Promise<unknown>> = {};
@@ -288,6 +345,5 @@ test("owaspFix registers command and event handlers", () => {
   owaspFix(api as never);
 
   assert.ok(commands["owasp-fix"]);
-  assert.ok(listeners.tool_call);
-  assert.ok(listeners.agent_end);
+  assertPhaseWorkflowListenerSurface(listeners);
 });

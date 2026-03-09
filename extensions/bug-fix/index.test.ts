@@ -9,6 +9,16 @@ import { buildPrompt, loadPrompts } from "./prompting";
 
 type NotifyLevel = "info" | "warning" | "error";
 
+function assertPhaseWorkflowListenerSurface(
+  listeners: Record<string, (...args: unknown[]) => Promise<unknown>>,
+) {
+  assert.deepEqual(Object.keys(listeners).sort(), ["agent_end", "tool_call"]);
+  assert.equal(listeners.before_agent_start, undefined);
+  assert.equal(listeners.turn_end, undefined);
+  assert.equal(listeners.session_start, undefined);
+  assert.equal(listeners.session_shutdown, undefined);
+}
+
 function createHarness(options?: {
   selectChoice?: string;
   editorValue?: string;
@@ -375,6 +385,5 @@ test("bugFinder registers command and event handlers", () => {
   bugFinder(api as never);
 
   assert.ok(commands["bug-fix"]);
-  assert.ok(listeners.tool_call);
-  assert.ok(listeners.agent_end);
+  assertPhaseWorkflowListenerSurface(listeners);
 });
