@@ -5,7 +5,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 import testAudit from "./index";
 import { TestAuditWorkflow } from "./workflow";
-import { extractAssistantText, parseScopeArg } from "./messages";
 import { loadPrompts } from "./prompting";
 
 type NotifyLevel = "info" | "warning" | "error";
@@ -64,48 +63,6 @@ function createHarness(options?: {
 
   return { workflow, ctx: ctx as never, sentMessages, notifications, statuses, widgets };
 }
-
-test("parseScopeArg trims text arguments", () => {
-  assert.equal(parseScopeArg("  src/lib  "), "src/lib");
-});
-
-test("parseScopeArg ignores empty and non-string arguments", () => {
-  assert.equal(parseScopeArg("   "), undefined);
-  assert.equal(parseScopeArg(undefined), undefined);
-  assert.equal(parseScopeArg({}), undefined);
-});
-
-test("extractAssistantText returns last assistant text block content", () => {
-  const result = extractAssistantText([
-    { role: "assistant", content: [{ type: "text", text: "first" }] },
-    {
-      role: "assistant",
-      content: [
-        { type: "text", text: "second" },
-        { type: "text", text: "third" },
-      ],
-    },
-  ]);
-
-  assert.equal(result, "second\nthird");
-});
-
-test("extractAssistantText returns undefined when no text is present", () => {
-  const result = extractAssistantText([
-    { role: "assistant", content: [{ type: "tool_result", text: "ignored" }] },
-  ]);
-
-  assert.equal(result, undefined);
-});
-
-test("extractAssistantText does not reuse stale assistant output", () => {
-  const result = extractAssistantText([
-    { role: "assistant", content: [{ type: "text", text: "stale" }] },
-    { role: "user", content: [{ type: "text", text: "new prompt" }] },
-  ]);
-
-  assert.equal(result, undefined);
-});
 
 test("workflow advances through finder and skeptic phases", async () => {
   const { workflow, ctx, sentMessages } = createHarness();

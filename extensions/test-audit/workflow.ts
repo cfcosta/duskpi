@@ -1,9 +1,9 @@
 import {
   PhaseWorkflow,
+  parseTrimmedStringArg as parseScopeArg,
   type ExtensionAPI,
   type PromptLoadResult,
 } from "../../packages/workflow-core/src/index";
-import { parseScopeArg } from "./messages";
 import { buildPrompt, type PromptBundle } from "./prompting";
 
 const ANALYSIS_PHASES = ["finder", "skeptic", "arbiter"] as const;
