@@ -82,6 +82,29 @@ Execution rules:
 - Do not start the next step until the extension prompts you again.
 `.trim();
 
+const PLAN_CRITIQUE_PROMPT = `
+Critique the latest proposed implementation plan for execution quality.
+
+Check for:
+- atomicity: each step should be small enough for one commit
+- ordering: dependency-safe step order
+- specificity: likely files/components are concrete enough
+- validation: each step has a concrete validation method
+- executability: the agent can perform the step without ambiguity
+- noise: metadata-only or duplicate steps should not appear as executable work
+
+Return this exact structure:
+1) Verdict: PASS, REFINE, or REJECT
+2) Issues:
+   - concise bullets
+3) Required fixes:
+   - concise bullets
+4) Summary:
+   - one short paragraph
+
+Use PASS only if the plan is executable as-is. Use REFINE if the plan is salvageable with targeted improvements. Use REJECT if the plan is too vague or unsafe and should be replaced.
+`.trim();
+
 function notify(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
@@ -130,13 +153,50 @@ function getAssistantTextFromMessage(message: unknown): string {
     .join("\n");
 }
 
+function parseCritiqueVerdict(text: string): "PASS" | "REFINE" | "REJECT" | undefined {
+  const match = text.match(/Verdict:\s*(PASS|REFINE|REJECT)/i);
+  return match?.[1]?.toUpperCase() as "PASS" | "REFINE" | "REJECT" | undefined;
+}
+
 export default function planExtension(pi: ExtensionAPI): void {
   let planModeEnabled = false;
   let executionMode = false;
   let restoreTools: string[] | null = null;
   let todoItems: TodoItem[] = [];
+  let critiqueState: "idle" | "awaiting_critique" | "awaiting_revision" = "idle";
+  let latestPlanDraft = "";
 
   const getAllToolNames = (): string[] => pi.getAllTools().map((tool) => tool.name);
+
+  const resetPlanningDraft = (): void => {
+    critiqueState = "idle";
+    latestPlanDraft = "";
+  };
+
+  const requestPlanCritique = (ctx: ExtensionContext, planText: string): void => {
+    latestPlanDraft = planText;
+    critiqueState = "awaiting_critique";
+    notify(pi, ctx, "Reviewing the plan with a critique pass before approval.", "info");
+    pi.sendUserMessage(`${PLAN_CRITIQUE_PROMPT}\n\nPlan to critique:\n\n${planText}`);
+  };
+
+  const requestPlanRevision = (ctx: ExtensionContext, critiqueText: string): void => {
+    critiqueState = "awaiting_revision";
+    notify(pi, ctx, "The critique requested plan refinement. Regenerating the plan.", "warning");
+    pi.sendUserMessage(
+      [
+        "Revise the latest plan using the critique below.",
+        "Keep plan mode read-only and return the full plan again using the required plan output contract.",
+        "Make each step atomic, executable, validation-backed, and suitable for one jujutsu commit.",
+        "",
+        "Original plan:",
+        latestPlanDraft,
+        "",
+        "Critique:",
+        critiqueText,
+      ].join("\n"),
+    );
+  };
 
   const getExecutionPrompt = (): string => {
     const remaining = todoItems.filter((item) => !item.completed);
@@ -277,6 +337,7 @@ export default function planExtension(pi: ExtensionAPI): void {
 
     todoItems = [];
     executionMode = false;
+    resetPlanningDraft();
     pi.setActiveTools(planTools);
     planModeEnabled = true;
     setStatus(ctx);
@@ -295,6 +356,7 @@ export default function planExtension(pi: ExtensionAPI): void {
       if (options.resetProgress) {
         executionMode = false;
         todoItems = [];
+        resetPlanningDraft();
         setStatus(ctx);
       }
       return;
@@ -305,6 +367,7 @@ export default function planExtension(pi: ExtensionAPI): void {
     if (options.resetProgress) {
       executionMode = false;
       todoItems = [];
+      resetPlanningDraft();
     }
     setStatus(ctx);
     if (reason) {
@@ -451,16 +514,31 @@ export default function planExtension(pi: ExtensionAPI): void {
       return;
     }
 
-    if (!planModeEnabled || !ctx.hasUI) {
+    if (!planModeEnabled || !ctx.hasUI || !lastAssistantText) {
       return;
     }
 
-    if (lastAssistantText) {
-      const extracted = extractTodoItems(lastAssistantText);
-      if (extracted.length > 0) {
-        todoItems = extracted;
+    if (critiqueState === "awaiting_critique") {
+      const verdict = parseCritiqueVerdict(lastAssistantText);
+      if (verdict === "PASS") {
+        critiqueState = "idle";
+        notify(pi, ctx, "Plan critique passed. Review and approve when ready.", "info");
+      } else {
+        requestPlanRevision(ctx, lastAssistantText);
+        return;
       }
+    } else {
+      const extracted = extractTodoItems(lastAssistantText);
+      if (extracted.length === 0) {
+        return;
+      }
+
+      todoItems = extracted;
+      setStatus(ctx);
+      requestPlanCritique(ctx, lastAssistantText);
+      return;
     }
+
     setStatus(ctx);
 
     const selection = await selectPlanNextActionWithInlineNote(ctx.ui);
@@ -470,6 +548,7 @@ export default function planExtension(pi: ExtensionAPI): void {
 
     if (selection.action === "approve") {
       executionMode = todoItems.length > 0;
+      resetPlanningDraft();
       exitPlanMode(ctx, "Plan approved. Entering YOLO mode for execution.");
 
       sendNextExecutionStep(ctx, "Plan approved. Entering YOLO mode for execution.");
@@ -478,6 +557,7 @@ export default function planExtension(pi: ExtensionAPI): void {
 
     if (selection.action === "regenerate") {
       todoItems = [];
+      resetPlanningDraft();
       setStatus(ctx);
       pi.sendUserMessage(
         "Regenerate the full plan from scratch. Re-check context and provide a refreshed Plan: section.",
@@ -486,6 +566,7 @@ export default function planExtension(pi: ExtensionAPI): void {
     }
 
     if (selection.action === "continue") {
+      resetPlanningDraft();
       const continueNote = selection.continueNote?.trim() ?? "";
       if (continueNote.length === 0) {
         notify(
