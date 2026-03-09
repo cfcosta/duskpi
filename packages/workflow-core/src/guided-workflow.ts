@@ -258,7 +258,7 @@ export class GuidedWorkflow implements GuidedWorkflowController {
     return undefined;
   }
 
-  async handleTurnEnd(event: TurnEndEvent, _ctx: ExtensionContext): Promise<void> {
+  async handleTurnEnd(event: TurnEndEvent, ctx: ExtensionContext): Promise<void> {
     if (this.state.phase !== "executing" || this.executionItems.length === 0) {
       return undefined;
     }
@@ -268,7 +268,22 @@ export class GuidedWorkflow implements GuidedWorkflowController {
       return undefined;
     }
 
-    this.syncExecutionProgress(assistantText);
+    const currentStepBefore = this.getCurrentExecutionStep();
+    const progress = this.syncExecutionProgress(assistantText, currentStepBefore?.step);
+    if (progress.completedCount === 0) {
+      return undefined;
+    }
+
+    if (this.executionItems.length > 0 && this.executionItems.every((item) => item.completed)) {
+      this.resetWorkflowState();
+      return undefined;
+    }
+
+    if (!progress.currentStepCompleted) {
+      return undefined;
+    }
+
+    this.sendExecutionPromptForCurrentStep(ctx);
     return undefined;
   }
 
@@ -411,31 +426,11 @@ export class GuidedWorkflow implements GuidedWorkflowController {
           critiqueText: args.critiqueText,
         });
 
-        const currentStep = this.getCurrentExecutionStep();
-        if (!currentStep) {
+        if (!this.getCurrentExecutionStep()) {
           return { kind: "ok" };
         }
 
-        const prompt = this.options.execution?.buildExecutionPrompt({
-          ...args,
-          currentStep,
-          items: this.executionItems.map((item) => ({ ...item })),
-        });
-        if (!prompt) {
-          return { kind: "ok" };
-        }
-
-        try {
-          this.api.sendUserMessage(prompt);
-          return { kind: "ok" };
-        } catch {
-          ctx.ui.notify(
-            this.options.text.sendFailed ??
-              "Guided workflow stopped: failed to send planning prompt.",
-            "error",
-          );
-          return { kind: "recoverable_error", reason: "prompt_send_failed" };
-        }
+        return this.sendExecutionPromptForCurrentStep(ctx);
       }
       case "continue":
         return this.sendPlanningFollowUp(
@@ -528,15 +523,60 @@ export class GuidedWorkflow implements GuidedWorkflowController {
     return this.executionItems.find((item) => !item.completed);
   }
 
-  private syncExecutionProgress(text: string): number {
+  private sendExecutionPromptForCurrentStep(ctx: ExtensionContext): GuidedWorkflowResult {
+    const currentStep = this.getCurrentExecutionStep();
+    const planText = this.latestPlanText;
+    if (!currentStep || !planText || !this.options.execution) {
+      return { kind: "ok" };
+    }
+
+    const prompt = this.options.execution.buildExecutionPrompt({
+      goal: this.state.goal,
+      planText,
+      critiqueText: this.latestCritiqueText,
+      note: this.executionNote,
+      currentStep,
+      items: this.executionItems.map((item) => ({ ...item })),
+    });
+
+    if (!prompt) {
+      return { kind: "ok" };
+    }
+
+    try {
+      this.api.sendUserMessage(prompt);
+      return { kind: "ok" };
+    } catch {
+      ctx.ui.notify(
+        this.options.text.sendFailed ?? "Guided workflow stopped: failed to send planning prompt.",
+        "error",
+      );
+      return { kind: "recoverable_error", reason: "prompt_send_failed" };
+    }
+  }
+
+  private syncExecutionProgress(
+    text: string,
+    currentStepNumber?: number,
+  ): { completedCount: number; currentStepCompleted: boolean } {
     const doneSteps = this.options.execution?.extractDoneStepNumbers?.(text) ?? extractDoneStepNumbers(text);
+    let completedCount = 0;
+    let currentStepCompleted = false;
+
     for (const step of doneSteps) {
       const item = this.executionItems.find((candidate) => candidate.step === step);
-      if (item) {
-        item.completed = true;
+      if (!item || item.completed) {
+        continue;
+      }
+
+      item.completed = true;
+      completedCount += 1;
+      if (step === currentStepNumber) {
+        currentStepCompleted = true;
       }
     }
-    return doneSteps.length;
+
+    return { completedCount, currentStepCompleted };
   }
 
   private resetWorkflowState() {

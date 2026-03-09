@@ -939,6 +939,168 @@ test("GuidedWorkflow ignores unrelated execution output when syncing progress", 
   });
 });
 
+test("GuidedWorkflow sends the next execution prompt after completing the current step", async () => {
+  const { api, sentUserMessages } = createApi();
+  const { approval } = createApprovalOptions({
+    selection: { action: "approve" },
+  });
+  const { execution } = createExecutionOptions();
+  const workflow = new GuidedWorkflow(api, {
+    id: "guided-test",
+    parseGoalArg: parseTrimmedStringArg,
+    approval,
+    execution,
+    text: { alreadyRunning: "guided running" },
+  });
+  const { ctx } = createContext();
+
+  await workflow.handleCommand("first run", ctx);
+  await workflow.handleAgentEnd(
+    {
+      messages: [
+        { role: "user", content: [{ type: "text", text: sentUserMessages[0]! }] },
+        { role: "assistant", content: [{ type: "text", text: "draft plan" }] },
+      ],
+    },
+    ctx,
+  );
+
+  await workflow.handleTurnEnd(
+    {
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Completed first task [DONE:1]" }],
+      },
+    },
+    ctx,
+  );
+
+  assert.equal(sentUserMessages[2], "Execute step 2: Second task");
+  assert.deepEqual(workflow.getExecutionSnapshot(), {
+    note: undefined,
+    items: [
+      { step: 1, text: "First task", completed: true },
+      { step: 2, text: "Second task", completed: false },
+    ],
+  });
+});
+
+test("GuidedWorkflow clears execution state after the final step is done", async () => {
+  const { api, sentUserMessages } = createApi();
+  const { approval } = createApprovalOptions({
+    selection: { action: "approve" },
+  });
+  const { execution } = createExecutionOptions();
+  const workflow = new GuidedWorkflow(api, {
+    id: "guided-test",
+    parseGoalArg: parseTrimmedStringArg,
+    approval,
+    execution,
+    text: { alreadyRunning: "guided running" },
+  });
+  const { ctx } = createContext();
+
+  await workflow.handleCommand("first run", ctx);
+  await workflow.handleAgentEnd(
+    {
+      messages: [
+        { role: "user", content: [{ type: "text", text: sentUserMessages[0]! }] },
+        { role: "assistant", content: [{ type: "text", text: "draft plan" }] },
+      ],
+    },
+    ctx,
+  );
+
+  await workflow.handleTurnEnd(
+    {
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Completed first task [DONE:1]" }],
+      },
+    },
+    ctx,
+  );
+  await workflow.handleTurnEnd(
+    {
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Completed second task [DONE:2]" }],
+      },
+    },
+    ctx,
+  );
+
+  assert.deepEqual(workflow.getStateSnapshot(), {
+    phase: "idle",
+    goal: undefined,
+    pendingRequestId: undefined,
+    awaitingResponse: false,
+  });
+  assert.deepEqual(workflow.getExecutionSnapshot(), {
+    note: undefined,
+    items: [],
+  });
+});
+
+test("GuidedWorkflow does not send extra prompts after execution is complete", async () => {
+  const { api, sentUserMessages } = createApi();
+  const { approval } = createApprovalOptions({
+    selection: { action: "approve" },
+  });
+  const { execution } = createExecutionOptions();
+  const workflow = new GuidedWorkflow(api, {
+    id: "guided-test",
+    parseGoalArg: parseTrimmedStringArg,
+    approval,
+    execution,
+    text: { alreadyRunning: "guided running" },
+  });
+  const { ctx } = createContext();
+
+  await workflow.handleCommand("first run", ctx);
+  await workflow.handleAgentEnd(
+    {
+      messages: [
+        { role: "user", content: [{ type: "text", text: sentUserMessages[0]! }] },
+        { role: "assistant", content: [{ type: "text", text: "draft plan" }] },
+      ],
+    },
+    ctx,
+  );
+
+  await workflow.handleTurnEnd(
+    {
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Completed first task [DONE:1]" }],
+      },
+    },
+    ctx,
+  );
+  await workflow.handleTurnEnd(
+    {
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Completed second task [DONE:2]" }],
+      },
+    },
+    ctx,
+  );
+
+  const sentMessageCount = sentUserMessages.length;
+  await workflow.handleTurnEnd(
+    {
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Repeated marker [DONE:2]" }],
+      },
+    },
+    ctx,
+  );
+
+  assert.equal(sentUserMessages.length, sentMessageCount);
+});
+
 test("GuidedWorkflow non-correlation lifecycle hooks are currently no-ops", async () => {
   const { api } = createApi();
   const workflow = new GuidedWorkflow(api, {
