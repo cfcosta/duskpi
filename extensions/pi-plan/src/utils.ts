@@ -93,6 +93,21 @@ export function normalizeArg(input: string): string {
   return input.trim().toLowerCase();
 }
 
+export function parseCritiqueVerdict(text: string): "PASS" | "REFINE" | "REJECT" | undefined {
+  const lines = text.split(/\r?\n/);
+  for (const line of lines) {
+    const normalizedLine = line.replace(/\*+/g, "").trim();
+    const match = normalizedLine.match(
+      /(?:^\d+[.)]\s*)?Verdict\s*(?::|-|–|—)?\s*(PASS|REFINE|REJECT)\b/i,
+    );
+    if (match) {
+      return match[1]?.toUpperCase() as "PASS" | "REFINE" | "REJECT";
+    }
+  }
+
+  return undefined;
+}
+
 export interface TodoItem {
   step: number;
   text: string;

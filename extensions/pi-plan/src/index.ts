@@ -5,6 +5,7 @@ import {
   isSafeReadOnlyCommand,
   markCompletedSteps,
   normalizeArg,
+  parseCritiqueVerdict,
   type TodoItem,
 } from "./utils";
 
@@ -151,11 +152,6 @@ function getAssistantTextFromMessage(message: unknown): string {
     )
     .map((block) => block.text ?? "")
     .join("\n");
-}
-
-function parseCritiqueVerdict(text: string): "PASS" | "REFINE" | "REJECT" | undefined {
-  const match = text.match(/Verdict:\s*(PASS|REFINE|REJECT)/i);
-  return match?.[1]?.toUpperCase() as "PASS" | "REFINE" | "REJECT" | undefined;
 }
 
 export default function planExtension(pi: ExtensionAPI): void {
