@@ -69,6 +69,19 @@ const YOLO_MODE_SYSTEM_PROMPT = `
 const EXECUTION_TRIGGER_PROMPT =
   "Plan approved. Switch to implementation mode and execute the latest plan now.";
 
+const EXECUTION_COMMIT_RULES = `
+Execution rules:
+- Execute exactly one todo step per agent turn.
+- Work only on the next incomplete step.
+- After implementing and validating that step, create one atomic jujutsu commit before ending the turn.
+- Use \`jj commit <changed paths> -m <message>\`.
+- Use Conventional Commits.
+- Include a detailed commit description covering what changed, why, and the intended outcome.
+- Never batch multiple plan steps into one commit.
+- After the commit succeeds, include a [DONE:n] marker for the completed step and stop.
+- Do not start the next step until the extension prompts you again.
+`.trim();
+
 function notify(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
@@ -124,6 +137,63 @@ export default function planExtension(pi: ExtensionAPI): void {
   let todoItems: TodoItem[] = [];
 
   const getAllToolNames = (): string[] => pi.getAllTools().map((tool) => tool.name);
+
+  const getExecutionPrompt = (): string => {
+    const remaining = todoItems.filter((item) => !item.completed);
+    const currentStep = remaining[0];
+
+    if (!currentStep) {
+      return "[APPROVED PLAN EXECUTION]\nFinish implementation and verification.";
+    }
+
+    const backlog = remaining.map((item) => `${item.step}. ${item.text}`).join("\n");
+    return [
+      "[APPROVED PLAN EXECUTION]",
+      `Current step: ${currentStep.step}. ${currentStep.text}`,
+      "",
+      "Remaining plan backlog (for context only):",
+      backlog,
+      "",
+      EXECUTION_COMMIT_RULES,
+    ].join("\n");
+  };
+
+  const sendNextExecutionStep = (ctx: ExtensionContext, reason?: string): void => {
+    const currentStep = todoItems.find((item) => !item.completed);
+    if (!currentStep) {
+      executionMode = false;
+      setStatus(ctx);
+      if (reason) {
+        notify(pi, ctx, reason, "info");
+      }
+      return;
+    }
+
+    const prompt = [
+      EXECUTION_TRIGGER_PROMPT,
+      `Complete only step ${currentStep.step}: ${currentStep.text}`,
+      "Implement it, validate it, and create one atomic jujutsu commit for that step before ending the turn.",
+      "Use `jj commit <changed paths> -m <message>`, follow Conventional Commits, include a detailed description, and finish with the matching [DONE:n] marker after the commit succeeds.",
+      "Do not start the following step in the same turn.",
+    ].join(" ");
+
+    pi.sendUserMessage(prompt);
+  };
+
+  const syncExecutionProgress = (text: string, ctx: ExtensionContext): number => {
+    const completedCount = markCompletedSteps(text, todoItems);
+    if (completedCount > 0) {
+      setStatus(ctx);
+    }
+
+    if (todoItems.length > 0 && todoItems.every((item) => item.completed)) {
+      executionMode = false;
+      setStatus(ctx);
+      notify(pi, ctx, "All tracked plan steps are complete.", "info");
+    }
+
+    return completedCount;
+  };
 
   const getPlanTools = (): string[] => {
     const available = new Set(getAllToolNames());
@@ -343,16 +413,8 @@ export default function planExtension(pi: ExtensionAPI): void {
     }
 
     if (executionMode && todoItems.length > 0) {
-      const remaining = todoItems
-        .filter((item) => !item.completed)
-        .map((item) => `${item.step}. ${item.text}`)
-        .join("\n");
-      const executionPrompt = remaining
-        ? `[APPROVED PLAN EXECUTION]\nComplete the remaining steps in order:\n${remaining}\n\nAfter each completed step, include a [DONE:n] marker.`
-        : "[APPROVED PLAN EXECUTION]\nFinish implementation and verify results.";
-
       return {
-        systemPrompt: `${event.systemPrompt}\n\n${YOLO_MODE_SYSTEM_PROMPT}\n\n${executionPrompt}`,
+        systemPrompt: `${event.systemPrompt}\n\n${YOLO_MODE_SYSTEM_PROMPT}\n\n${getExecutionPrompt()}`,
       };
     }
 
@@ -371,27 +433,27 @@ export default function planExtension(pi: ExtensionAPI): void {
       return;
     }
 
-    const completedCount = markCompletedSteps(text, todoItems);
-    if (completedCount > 0) {
-      setStatus(ctx);
-    }
-
-    if (todoItems.every((item) => item.completed)) {
-      executionMode = false;
-      setStatus(ctx);
-      notify(pi, ctx, "All tracked plan steps are complete.", "info");
-    }
+    syncExecutionProgress(text, ctx);
   });
 
   pi.on("agent_end", async (event, ctx) => {
-    if (!planModeEnabled || !ctx.hasUI) {
-      return;
-    }
-
     const lastAssistantText = [...event.messages]
       .reverse()
       .map(getAssistantTextFromMessage)
       .find((text) => text.length > 0);
+
+    if (executionMode && todoItems.length > 0) {
+      const completedCount = lastAssistantText ? syncExecutionProgress(lastAssistantText, ctx) : 0;
+
+      if (executionMode && completedCount > 0) {
+        sendNextExecutionStep(ctx);
+      }
+      return;
+    }
+
+    if (!planModeEnabled || !ctx.hasUI) {
+      return;
+    }
 
     if (lastAssistantText) {
       const extracted = extractTodoItems(lastAssistantText);
@@ -410,14 +472,7 @@ export default function planExtension(pi: ExtensionAPI): void {
       executionMode = todoItems.length > 0;
       exitPlanMode(ctx, "Plan approved. Entering YOLO mode for execution.");
 
-      const firstOpenStep = todoItems.find((item) => !item.completed);
-      if (firstOpenStep) {
-        pi.sendUserMessage(
-          `${EXECUTION_TRIGGER_PROMPT} Start with step ${firstOpenStep.step}: ${firstOpenStep.text}`,
-        );
-      } else {
-        pi.sendUserMessage(EXECUTION_TRIGGER_PROMPT);
-      }
+      sendNextExecutionStep(ctx, "Plan approved. Entering YOLO mode for execution.");
       return;
     }
 

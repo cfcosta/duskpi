@@ -6,6 +6,7 @@ An extension for the [Pi coding agent](https://github.com/badlogic/pi-mono/) tha
 - **Plan mode:** read-only investigation + concrete execution plan
 - **/todos:** check current tracked plan progress
 - **Execution starts only after approval** from the plan-mode UI prompt
+- **Approved execution auto-advances step-by-step** with one `jj` commit per plan step
 
 ```txt
 /plan on
@@ -86,7 +87,9 @@ Choosing **Approve and execute now** automatically:
 
 1. exits plan mode,
 2. restores normal tools,
-3. triggers implementation.
+3. triggers implementation for the next open step,
+4. expects one atomic `jj commit` for that step,
+5. then automatically prompts the next remaining step until the todo list is complete.
 
 ---
 
@@ -140,6 +143,7 @@ In plan mode, the system prompt enforces this structure:
 - `/plan status` — show current status
 - `/plan <task>` — enable mode if needed and start planning for `<task>`
 - `/todos` — show tracked plan progress (`✓`/`○`) from extracted `Plan:` steps and `[DONE:n]` markers
+- approved execution runs one step per turn, requires an atomic `jj commit` for that step, then auto-continues to the next remaining todo
 - after each planning turn, the plan-mode action menu includes:
   - `Continue from proposed plan` _(inline note optional via `Tab`; without note, Pi prompts for modification input and waits)_
   - `Regenerate plan` _(no additional note required)_
