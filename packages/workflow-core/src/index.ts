@@ -34,6 +34,8 @@ export { PromptLoadError, loadPromptFiles } from "./prompt-loader";
 export type { PromptLoadResult } from "./prompt-loader";
 export { GuidedWorkflow } from "./guided-workflow";
 export type {
+  GuidedCritiqueVerdict,
+  GuidedWorkflowCritiqueOptions,
   GuidedWorkflowOptions,
   GuidedWorkflowPhase,
   GuidedWorkflowResult,

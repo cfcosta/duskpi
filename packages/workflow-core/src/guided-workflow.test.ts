@@ -53,9 +53,24 @@ function createContext() {
 
 function createApi() {
   const sentUserMessages: string[] = [];
+  const sentCustomMessages: Array<{
+    customType?: string;
+    content?: unknown;
+    display?: boolean;
+    triggerTurn?: boolean;
+    deliverAs?: string;
+  }> = [];
 
   const api: ExtensionAPI = {
-    sendMessage() {},
+    sendMessage(message, options) {
+      sentCustomMessages.push({
+        customType: message.customType,
+        content: message.content,
+        display: message.display,
+        triggerTurn: options?.triggerTurn,
+        deliverAs: options?.deliverAs,
+      });
+    },
     sendUserMessage(message) {
       if (typeof message !== "string") {
         throw new Error("GuidedWorkflow tests expect string prompts");
@@ -76,7 +91,41 @@ function createApi() {
     on() {},
   };
 
-  return { api, sentUserMessages };
+  return { api, sentUserMessages, sentCustomMessages };
+}
+
+function createCritiqueOptions() {
+  return {
+    buildCritiquePrompt({ planText }: { goal?: string; planText: string }) {
+      return `Critique the plan:\n\n${planText}`;
+    },
+    buildRevisionPrompt(args: {
+      goal?: string;
+      planText: string;
+      critiqueText: string;
+      verdict: "PASS" | "REFINE" | "REJECT";
+    }) {
+      return [
+        `Revise the plan after ${args.verdict}:`,
+        args.planText,
+        "Critique:",
+        args.critiqueText,
+      ].join("\n\n");
+    },
+    parseCritiqueVerdict(text: string) {
+      if (text.includes("PASS")) {
+        return "PASS" as const;
+      }
+      if (text.includes("REFINE")) {
+        return "REFINE" as const;
+      }
+      if (text.includes("REJECT")) {
+        return "REJECT" as const;
+      }
+      return undefined;
+    },
+    customMessageType: "guided-test-internal",
+  };
 }
 
 function extractRequestId(prompt: string): string | undefined {
@@ -204,6 +253,163 @@ test("GuidedWorkflow advances to approval after a matched planning response", as
   );
 
   assert.deepEqual(result, { kind: "ok" });
+  assert.deepEqual(workflow.getStateSnapshot(), {
+    phase: "approval",
+    goal: "first run",
+    pendingRequestId: undefined,
+    awaitingResponse: false,
+  });
+});
+
+test("GuidedWorkflow sends hidden critique follow-ups after a planning response", async () => {
+  const { api, sentUserMessages, sentCustomMessages } = createApi();
+  const workflow = new GuidedWorkflow(api, {
+    id: "guided-test",
+    parseGoalArg: parseTrimmedStringArg,
+    critique: createCritiqueOptions(),
+    text: { alreadyRunning: "guided running" },
+  });
+  const { ctx } = createContext();
+
+  await workflow.handleCommand("first run", ctx);
+  const result = await workflow.handleAgentEnd(
+    {
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "text", text: sentUserMessages[0]! }],
+        },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "draft plan" }],
+        },
+      ],
+    },
+    ctx,
+  );
+
+  assert.deepEqual(result, { kind: "ok" });
+  assert.equal(sentCustomMessages.length, 1);
+  assert.deepEqual(sentCustomMessages[0], {
+    customType: "guided-test-internal",
+    content: `Critique the plan:\n\ndraft plan\n\n<!-- workflow-request-id:guided-test-2 -->`,
+    display: false,
+    triggerTurn: true,
+    deliverAs: "followUp",
+  });
+  assert.deepEqual(workflow.getStateSnapshot(), {
+    phase: "planning",
+    goal: "first run",
+    pendingRequestId: "guided-test-2",
+    awaitingResponse: true,
+  });
+});
+
+test("GuidedWorkflow sends a hidden revision follow-up after a REFINE critique", async () => {
+  const { api, sentUserMessages, sentCustomMessages } = createApi();
+  const workflow = new GuidedWorkflow(api, {
+    id: "guided-test",
+    parseGoalArg: parseTrimmedStringArg,
+    critique: createCritiqueOptions(),
+    text: { alreadyRunning: "guided running" },
+  });
+  const { ctx } = createContext();
+
+  await workflow.handleCommand("first run", ctx);
+  await workflow.handleAgentEnd(
+    {
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "text", text: sentUserMessages[0]! }],
+        },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "draft plan" }],
+        },
+      ],
+    },
+    ctx,
+  );
+
+  const critiqueResult = await workflow.handleAgentEnd(
+    {
+      messages: [
+        {
+          role: "custom",
+          content: String(sentCustomMessages[0]?.content),
+        },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "1) Verdict: REFINE\n2) Issues:\n- split a step" }],
+        },
+      ],
+    },
+    ctx,
+  );
+
+  assert.deepEqual(critiqueResult, { kind: "ok" });
+  assert.equal(sentCustomMessages.length, 2);
+  assert.deepEqual(sentCustomMessages[1], {
+    customType: "guided-test-internal",
+    content:
+      "Revise the plan after REFINE:\n\ndraft plan\n\nCritique:\n\n1) Verdict: REFINE\n2) Issues:\n- split a step\n\n<!-- workflow-request-id:guided-test-3 -->",
+    display: false,
+    triggerTurn: true,
+    deliverAs: "followUp",
+  });
+  assert.deepEqual(workflow.getStateSnapshot(), {
+    phase: "planning",
+    goal: "first run",
+    pendingRequestId: "guided-test-3",
+    awaitingResponse: true,
+  });
+});
+
+test("GuidedWorkflow marks critique PASS responses as approval-ready", async () => {
+  const { api, sentUserMessages, sentCustomMessages } = createApi();
+  const workflow = new GuidedWorkflow(api, {
+    id: "guided-test",
+    parseGoalArg: parseTrimmedStringArg,
+    critique: createCritiqueOptions(),
+    text: { alreadyRunning: "guided running" },
+  });
+  const { ctx } = createContext();
+
+  await workflow.handleCommand("first run", ctx);
+  await workflow.handleAgentEnd(
+    {
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "text", text: sentUserMessages[0]! }],
+        },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "draft plan" }],
+        },
+      ],
+    },
+    ctx,
+  );
+
+  const critiqueResult = await workflow.handleAgentEnd(
+    {
+      messages: [
+        {
+          role: "custom",
+          content: String(sentCustomMessages[0]?.content),
+        },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "1) Verdict: PASS\n2) Issues:\n- none" }],
+        },
+      ],
+    },
+    ctx,
+  );
+
+  assert.deepEqual(critiqueResult, { kind: "ok" });
   assert.deepEqual(workflow.getStateSnapshot(), {
     phase: "approval",
     goal: "first run",
