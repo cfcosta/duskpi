@@ -154,6 +154,22 @@ test("parseCritiqueVerdict ignores unrelated PASS mentions", () => {
   expect(parseCritiqueVerdict(`Summary: This looks passable.`)).toBeUndefined();
 });
 
+test("extractTodoItems ignores the ready-to-execute footer", async () => {
+  const { extractTodoItems } = await import("./utils");
+
+  expect(
+    extractTodoItems([
+      "1) Goal understanding (brief)",
+      "2) Evidence gathered",
+      "3) Uncertainties / assumptions",
+      "4) Plan:",
+      "1. Add a regression test for prompt leakage",
+      "5) Risks and rollback notes",
+      "6) Ready to execute when approved.",
+    ].join("\n")),
+  ).toEqual([{ step: 1, text: "A regression test for prompt leakage", completed: false }]);
+});
+
 test("plan extension harness registers commands and handles agent_end in read-only mode", async () => {
   const harness = createPlanExtensionHarness();
 
@@ -264,8 +280,7 @@ test("after a PASS critique the plan stays tracked without leaking visible follo
   await harness.runCommand("todos");
 
   expect(harness.uiStub.notifications).toContainEqual({
-    message:
-      "Plan progress 0/2\n1. ○ A regression test for prompt leakage\n2. ○ Ready to execute when approved.",
+    message: "Plan progress 0/1\n1. ○ A regression test for prompt leakage",
     level: "info",
   });
 });

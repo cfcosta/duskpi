@@ -161,7 +161,7 @@ export function extractTodoItems(message: string): TodoItem[] {
       text.length <= 5 ||
       !/^\d+[.)]\s+/.test(line.trimStart()) ||
       !/[a-z]/i.test(text) ||
-      /^(target files\/components|validation method|risks? and rollback notes?|evidence gathered|uncertainties? \/ assumptions)$/i.test(
+      /^(target files\/components|validation method|risks? and rollback notes?|evidence gathered|uncertainties? \/ assumptions|ready to execute when approved\.?)$/i.test(
         text,
       ) ||
       text.startsWith("`") ||
