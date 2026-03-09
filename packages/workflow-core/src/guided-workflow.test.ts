@@ -51,10 +51,17 @@ function createContext() {
   return { ctx, notifications };
 }
 
-function createApi(): ExtensionAPI {
-  return {
+function createApi() {
+  const sentUserMessages: string[] = [];
+
+  const api: ExtensionAPI = {
     sendMessage() {},
-    sendUserMessage() {},
+    sendUserMessage(message) {
+      if (typeof message !== "string") {
+        throw new Error("GuidedWorkflow tests expect string prompts");
+      }
+      sentUserMessages.push(message);
+    },
     registerCommand() {},
     getActiveTools() {
       return ["read", "bash"];
@@ -68,10 +75,18 @@ function createApi(): ExtensionAPI {
     setActiveTools() {},
     on() {},
   };
+
+  return { api, sentUserMessages };
+}
+
+function extractRequestId(prompt: string): string | undefined {
+  const match = prompt.match(/<!--\s*workflow-request-id:([^>]+)\s*-->/i);
+  return match?.[1]?.trim();
 }
 
 test("GuidedWorkflow starts idle", () => {
-  const workflow = new GuidedWorkflow(createApi(), {
+  const { api } = createApi();
+  const workflow = new GuidedWorkflow(api, {
     id: "guided-test",
     parseGoalArg: parseTrimmedStringArg,
     text: { alreadyRunning: "guided running" },
@@ -85,8 +100,9 @@ test("GuidedWorkflow starts idle", () => {
   });
 });
 
-test("GuidedWorkflow start command enters planning with parsed goal", async () => {
-  const workflow = new GuidedWorkflow(createApi(), {
+test("GuidedWorkflow start command sends a planning prompt and records a request id", async () => {
+  const { api, sentUserMessages } = createApi();
+  const workflow = new GuidedWorkflow(api, {
     id: "guided-test",
     parseGoalArg: parseTrimmedStringArg,
     text: { alreadyRunning: "guided running" },
@@ -96,16 +112,22 @@ test("GuidedWorkflow start command enters planning with parsed goal", async () =
   const result = await workflow.handleCommand("  investigate workflow reuse  ", ctx);
 
   assert.deepEqual(result, { kind: "ok" });
+  assert.equal(sentUserMessages.length, 1);
+  assert.ok(sentUserMessages[0]?.includes("investigate workflow reuse"));
+
+  const requestId = extractRequestId(sentUserMessages[0]!);
+  assert.equal(requestId, "guided-test-1");
   assert.deepEqual(workflow.getStateSnapshot(), {
     phase: "planning",
     goal: "investigate workflow reuse",
-    pendingRequestId: undefined,
-    awaitingResponse: false,
+    pendingRequestId: requestId,
+    awaitingResponse: true,
   });
 });
 
 test("GuidedWorkflow blocks duplicate runs while active", async () => {
-  const workflow = new GuidedWorkflow(createApi(), {
+  const { api } = createApi();
+  const workflow = new GuidedWorkflow(api, {
     id: "guided-test",
     parseGoalArg: parseTrimmedStringArg,
     text: { alreadyRunning: "guided running" },
@@ -120,8 +142,79 @@ test("GuidedWorkflow blocks duplicate runs while active", async () => {
   assert.equal(workflow.getStateSnapshot().goal, "first run");
 });
 
-test("GuidedWorkflow scaffold lifecycle hooks are currently no-ops", async () => {
-  const workflow = new GuidedWorkflow(createApi(), {
+test("GuidedWorkflow ignores unmatched agent_end payloads while awaiting the active request", async () => {
+  const { api } = createApi();
+  const workflow = new GuidedWorkflow(api, {
+    id: "guided-test",
+    parseGoalArg: parseTrimmedStringArg,
+    text: { alreadyRunning: "guided running" },
+  });
+  const { ctx } = createContext();
+
+  await workflow.handleCommand("first run", ctx);
+  const result = await workflow.handleAgentEnd(
+    {
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "text", text: "plan prompt\n\n<!-- workflow-request-id:guided-test-99 -->" }],
+        },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "draft plan" }],
+        },
+      ],
+    },
+    ctx,
+  );
+
+  assert.deepEqual(result, { kind: "blocked", reason: "unmatched_agent_end" });
+  assert.deepEqual(workflow.getStateSnapshot(), {
+    phase: "planning",
+    goal: "first run",
+    pendingRequestId: "guided-test-1",
+    awaitingResponse: true,
+  });
+});
+
+test("GuidedWorkflow advances to approval after a matched planning response", async () => {
+  const { api, sentUserMessages } = createApi();
+  const workflow = new GuidedWorkflow(api, {
+    id: "guided-test",
+    parseGoalArg: parseTrimmedStringArg,
+    text: { alreadyRunning: "guided running" },
+  });
+  const { ctx } = createContext();
+
+  await workflow.handleCommand("first run", ctx);
+  const result = await workflow.handleAgentEnd(
+    {
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "text", text: sentUserMessages[0]! }],
+        },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "draft plan" }],
+        },
+      ],
+    },
+    ctx,
+  );
+
+  assert.deepEqual(result, { kind: "ok" });
+  assert.deepEqual(workflow.getStateSnapshot(), {
+    phase: "approval",
+    goal: "first run",
+    pendingRequestId: undefined,
+    awaitingResponse: false,
+  });
+});
+
+test("GuidedWorkflow non-correlation lifecycle hooks are currently no-ops", async () => {
+  const { api } = createApi();
+  const workflow = new GuidedWorkflow(api, {
     id: "guided-test",
     parseGoalArg: parseTrimmedStringArg,
     text: { alreadyRunning: "guided running" },
@@ -131,7 +224,6 @@ test("GuidedWorkflow scaffold lifecycle hooks are currently no-ops", async () =>
   await workflow.handleCommand("first run", ctx);
 
   assert.equal(await workflow.handleToolCall({ toolName: "Read" }, ctx), undefined);
-  assert.equal(await workflow.handleAgentEnd({ messages: [] }, ctx), undefined);
   assert.equal(await workflow.handleBeforeAgentStart({ systemPrompt: "base" }, ctx), undefined);
   assert.equal(await workflow.handleTurnEnd({ message: { role: "assistant" } }, ctx), undefined);
   assert.equal(await workflow.handleSessionStart({ restored: true }, ctx), undefined);
@@ -139,7 +231,7 @@ test("GuidedWorkflow scaffold lifecycle hooks are currently no-ops", async () =>
   assert.deepEqual(workflow.getStateSnapshot(), {
     phase: "planning",
     goal: "first run",
-    pendingRequestId: undefined,
-    awaitingResponse: false,
+    pendingRequestId: "guided-test-1",
+    awaitingResponse: true,
   });
 });
