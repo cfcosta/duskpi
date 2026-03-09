@@ -611,6 +611,8 @@ test("approve action can include an execution note and restores normal tools", a
   });
 
   await harness.runCommand("plan", "on");
+  expect(harness.uiStub.statuses.get("pi-plan")).toBe("⏸ plan");
+  expect(harness.uiStub.widgets.get("pi-plan-todos")).toBeUndefined();
 
   await harness.emit("agent_end", {
     messages: [
@@ -631,6 +633,11 @@ test("approve action can include an execution note and restores normal tools", a
   expect(harness.sentUserMessages[0]).toContain(
     "Honor this user execution note while implementing the step: keep keyboard flow fast",
   );
+  expect(harness.uiStub.statuses.get("pi-plan")).toBe("📋 0/2");
+  expect(harness.uiStub.widgets.get("pi-plan-todos")).toEqual([
+    "☐ A regression test for prompt leakage",
+    "☐ Approval action UI to show a compact summary",
+  ]);
 });
 
 test("execution DONE markers advance to the next guided step", async () => {
@@ -662,6 +669,11 @@ test("execution DONE markers advance to the next guided step", async () => {
 
   expect(harness.sentUserMessages).toHaveLength(2);
   expect(harness.sentUserMessages[1]).toContain("Complete only step 2: Approval action UI to show a compact summary");
+  expect(harness.uiStub.statuses.get("pi-plan")).toBe("📋 1/2");
+  expect(harness.uiStub.widgets.get("pi-plan-todos")).toEqual([
+    "☑ A regression test for prompt leakage",
+    "☐ Approval action UI to show a compact summary",
+  ]);
 
   await harness.runCommand("todos");
   expect(harness.uiStub.notifications).toContainEqual({
@@ -709,6 +721,8 @@ test("final guided execution completion stops prompting and clears /todos state"
     message: "All tracked plan steps are complete.",
     level: "info",
   });
+  expect(harness.uiStub.statuses.get("pi-plan")).toBeUndefined();
+  expect(harness.uiStub.widgets.get("pi-plan-todos")).toBeUndefined();
 
   await harness.runCommand("todos");
   expect(harness.uiStub.notifications).toContainEqual({

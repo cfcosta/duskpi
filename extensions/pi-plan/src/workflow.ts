@@ -684,11 +684,6 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     if (previousPhase === "executing" && previousExecution.items.length > 0) {
       this.executionMode = false;
       this.executionConstraintNote = "";
-      this.todoItems = previousExecution.items.map((item) => ({
-        step: item.step,
-        text: item.text,
-        completed: true,
-      }));
       this.setStatus(ctx);
       notify(this.pi, ctx, "All tracked plan steps are complete.", "info");
     }
@@ -721,12 +716,13 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       return;
     }
 
-    if (!this.executionMode || this.todoItems.length === 0) {
+    const executionItems = this.getExecutionSnapshot().items;
+    if (executionItems.length === 0) {
       ctx.ui.setWidget(TODO_WIDGET_KEY, undefined);
       return;
     }
 
-    const lines = this.todoItems.map((item) => {
+    const lines = executionItems.map((item) => {
       if (item.completed) {
         return (
           ctx.ui.theme.fg("success", "☑ ") +
@@ -744,11 +740,12 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       return;
     }
 
-    if (this.executionMode && this.todoItems.length > 0) {
-      const completed = this.todoItems.filter((item) => item.completed).length;
+    const executionItems = this.getExecutionSnapshot().items;
+    if (executionItems.length > 0) {
+      const completed = executionItems.filter((item) => item.completed).length;
       ctx.ui.setStatus(
         STATUS_KEY,
-        ctx.ui.theme.fg("accent", `📋 ${completed}/${this.todoItems.length}`),
+        ctx.ui.theme.fg("accent", `📋 ${completed}/${executionItems.length}`),
       );
       this.updateTodoWidget(ctx);
       return;
