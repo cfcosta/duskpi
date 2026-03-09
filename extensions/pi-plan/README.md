@@ -6,7 +6,7 @@ An extension for the [Pi coding agent](https://github.com/badlogic/pi-mono/) tha
 - **Plan mode:** read-only investigation + concrete execution plan
 - **/todos:** check current tracked plan progress
 - **Execution starts only after approval** from the plan-mode UI prompt
-- **Every draft plan gets an internal critique pass** before approval is offered
+- **Every draft plan gets an internal hidden critique pass** before approval is offered
 - **Approved execution auto-advances step-by-step** with one `jj` commit per plan step
 
 ```txt
@@ -77,7 +77,7 @@ This enables plan mode (if needed) and immediately sends the task.
 
 ### 3) Approve or continue planning
 
-After a plan is generated, Pi first runs an internal critique pass. Once the plan passes critique, you’ll get:
+After a plan is generated, Pi first runs an internal hidden critique pass. The critique/revision prompts stay out of the visible chat, while plan-status notifications still appear normally. Once the plan passes critique, you’ll get:
 
 - **Approve and execute now**
 - **Continue from proposed plan** _(inline note optional; press `Tab` to add/edit. If omitted, Pi asks for modification input and waits.)_
@@ -132,7 +132,7 @@ In plan mode, the system prompt enforces this structure:
 5. Risks and rollback notes
 6. End with: `Ready to execute when approved.`
 
-Before approval is shown, Pi also critiques the draft plan for atomicity, ordering, specificity, validation quality, executability, and metadata noise. Weak plans are automatically sent back for refinement.
+Before approval is shown, Pi also critiques the draft plan for atomicity, ordering, specificity, validation quality, executability, and metadata noise. That critique loop runs through hidden extension messages rather than visible user-chat turns. Weak plans are automatically sent back for refinement.
 
 ---
 
