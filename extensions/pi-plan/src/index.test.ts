@@ -174,3 +174,40 @@ test("plan extension harness registers commands and handles agent_end in read-on
   expect(harness.sentMessages[0]?.customType).toBe("plan-mode-status");
   expect(String(harness.sentMessages[0]?.content)).toContain("Plan mode enabled");
 });
+
+test("critique pass currently leaks a visible user message after extracting a plan", async () => {
+  const harness = createPlanExtensionHarness({ hasUI: true });
+
+  await harness.runCommand("plan", "on");
+
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: [
+              "1) Goal understanding (brief)",
+              "2) Evidence gathered",
+              "3) Uncertainties / assumptions",
+              "4) Plan:",
+              "1. Add a regression test for prompt leakage",
+              "5) Risks and rollback notes",
+              '6) Ready to execute when approved.',
+            ].join("\n"),
+          },
+        ],
+      },
+    ],
+  });
+
+  expect(harness.sentUserMessages).toHaveLength(1);
+  expect(harness.sentUserMessages[0]).toContain(
+    "Critique the latest proposed implementation plan for execution quality.",
+  );
+  expect(harness.uiStub.notifications).toContainEqual({
+    message: "Reviewing the plan with a critique pass before approval.",
+    level: "info",
+  });
+});
