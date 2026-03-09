@@ -21,3 +21,8 @@ export type {
   PromptSnapshot,
   WorkflowResult,
 } from "./phase-workflow";
+export { registerPhaseWorkflowExtension } from "./register-phase-workflow-extension";
+export type {
+  PhaseWorkflowController,
+  RegisterPhaseWorkflowExtensionOptions,
+} from "./register-phase-workflow-extension";

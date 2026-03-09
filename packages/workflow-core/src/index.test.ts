@@ -9,6 +9,7 @@ import {
   getLastAssistantTextResult,
   loadPromptFiles,
   parseTrimmedStringArg,
+  registerPhaseWorkflowExtension,
   type PromptLoadResult,
   type PromptSnapshot,
 } from "./index";
@@ -120,6 +121,83 @@ function createPhaseWorkflowHarness(options?: {
 
   return { workflow, ctx: ctx as never, sentMessages, notifications };
 }
+
+test("registerPhaseWorkflowExtension resolves prompts and wires workflow handlers", async () => {
+  const commands: Record<
+    string,
+    { description: string; handler: (args: unknown, ctx: unknown) => unknown }
+  > = {};
+  const listeners: Record<string, (event: unknown, ctx: unknown) => unknown> = {};
+  const forwarded: Array<{ type: string; args?: unknown; event?: unknown; ctx?: unknown }> = [];
+  const loadPromptCalls: string[] = [];
+
+  let capturedPromptProvider: (() => PromptLoadResult<typeof DEFAULT_PROMPTS>) | undefined;
+  let createWorkflowCalls = 0;
+
+  const workflow = {
+    handleCommand(args: unknown, ctx: unknown) {
+      forwarded.push({ type: "command", args, ctx });
+      return "command-result";
+    },
+    handleToolCall(event: { toolName?: string }) {
+      forwarded.push({ type: "tool_call", event });
+      return "tool-result";
+    },
+    handleAgentEnd(event: { messages?: unknown[] }, ctx: unknown) {
+      forwarded.push({ type: "agent_end", event, ctx });
+      return "agent-end-result";
+    },
+  };
+
+  const api = {
+    sendUserMessage() {},
+    registerCommand(
+      name: string,
+      command: { description: string; handler: (args: unknown, ctx: unknown) => unknown },
+    ) {
+      commands[name] = command;
+    },
+    on(name: string, handler: (event: unknown, ctx: unknown) => unknown) {
+      listeners[name] = handler;
+    },
+  };
+
+  const returnedWorkflow = registerPhaseWorkflowExtension(api as never, {
+    moduleUrl: "file:///tmp/duskpi/extensions/bug-fix/index.ts",
+    commandName: "bug-fix",
+    description: "Bug fix",
+    loadPrompts(promptDirectory: string) {
+      loadPromptCalls.push(promptDirectory);
+      return { ok: true, prompts: DEFAULT_PROMPTS };
+    },
+    createWorkflow(apiArg, promptProvider) {
+      createWorkflowCalls += 1;
+      capturedPromptProvider = promptProvider;
+      assert.equal(apiArg, api);
+      return workflow;
+    },
+  });
+
+  const ctx = { ui: {} };
+
+  assert.equal(returnedWorkflow, workflow);
+  assert.equal(createWorkflowCalls, 1);
+  assert.ok(capturedPromptProvider);
+  assert.equal(loadPromptCalls.length, 0);
+  assert.deepEqual(capturedPromptProvider!(), { ok: true, prompts: DEFAULT_PROMPTS });
+  assert.deepEqual(loadPromptCalls, [path.resolve("/tmp/duskpi/extensions/bug-fix", "prompts")]);
+  assert.equal(commands["bug-fix"]?.description, "Bug fix");
+  assert.ok(listeners.tool_call);
+  assert.ok(listeners.agent_end);
+  assert.equal(commands["bug-fix"]?.handler("scope", ctx as never), "command-result");
+  assert.equal(listeners.tool_call?.({ toolName: "Read" }, undefined as never), "tool-result");
+  assert.equal(listeners.agent_end?.({ messages: ["report"] }, ctx as never), "agent-end-result");
+  assert.deepEqual(forwarded, [
+    { type: "command", args: "scope", ctx },
+    { type: "tool_call", event: { toolName: "Read" } },
+    { type: "agent_end", event: { messages: ["report"] }, ctx },
+  ]);
+});
 
 test("PhaseWorkflow accepts prompt snapshots with prompts", async () => {
   const { workflow, ctx, sentMessages } = createPhaseWorkflowHarness({
