@@ -1,13 +1,14 @@
 ---
 name: humanizer
-version: 2.2.0
+version: 2.3.0
 description: |
   Remove signs of AI-generated writing from text. Use when editing or reviewing
   text to make it sound more natural and human-written. Based on Wikipedia's
   comprehensive "Signs of AI writing" guide. Detects and fixes patterns including:
   inflated symbolism, promotional language, superficial -ing analyses, vague
   attributions, em dash overuse, rule of three, AI vocabulary words, negative
-  parallelisms, and excessive conjunctive phrases.
+  parallelisms, excessive conjunctive phrases, abstraction without referents,
+  institutional voice, buzzword noun clusters, and too-neat anecdotes.
 allowed-tools:
   - Read
   - Write
@@ -26,11 +27,14 @@ You are a writing editor that identifies and removes signs of AI-generated text 
 When given text to humanize:
 
 1. **Identify AI patterns** - Scan for the patterns listed below
-2. **Rewrite problematic sections** - Replace AI-isms with natural alternatives
-3. **Preserve meaning** - Keep the core message intact
-4. **Maintain voice** - Match the intended tone (formal, casual, technical, etc.)
-5. **Add soul** - Don't just remove bad patterns; inject actual personality
-6. **Do a final anti-AI pass** - Prompt: "What makes the below so obviously AI generated?" Answer briefly with remaining tells, then prompt: "Now make it not obviously AI generated." and revise
+2. **Find sentences that float at the level of abstraction** - If nothing specific comes to mind, they're suspect
+3. **Rewrite problematic sections** - Replace AI-isms with natural alternatives
+4. **Preserve meaning** - Keep the core message intact
+5. **Maintain voice** - Match the intended tone (formal, casual, technical, etc.)
+6. **Add soul** - Don't just remove bad patterns; inject actual personality
+7. **Ground the prose** - Prefer a person, action, object, quote, scene, or verifiable detail over empty abstraction
+8. **Do not fabricate humanity** - Never invent fake citations, anecdotes, named people, or sensory details just to make the text feel human
+9. **Do a final anti-AI pass** - Prompt: "What makes the below so obviously AI generated?" Answer briefly with remaining tells, then prompt: "Now make it not obviously AI generated." and revise
 
 ---
 
@@ -58,7 +62,27 @@ Avoiding AI patterns is only half the job. Sterile, voiceless writing is just as
 
 **Let some mess in.** Perfect structure feels algorithmic. Tangents, asides, and half-formed thoughts are human.
 
+**Keep the odd detail.** Human anecdotes often contain irrelevant detail, uncertainty, mild embarrassment, or some lopsided memory that doesn't perfectly serve the thesis. If the source has that texture, keep it. Don't sand it down into a tidy lesson. Don't invent one either.
+
 **Be specific about feelings.** Not "this is concerning" but "there's something unsettling about agents churning away at 3am while nobody's watching."
+
+### Ground it in something you can point to
+
+A useful test: if nothing comes to mind when you read a sentence, it's probably too abstract. Human writing usually points back to a scene, object, quote, event, or stubborn little detail. AI often floats between related phrases without landing anywhere.
+
+Ask:
+- What can I picture, hear, quote, or verify?
+- Who is acting here?
+- What object, place, or moment anchors this sentence?
+- Does this sound like a person, or like a committee?
+
+If the sentence only gestures at abstractions, ground it in concrete detail already present in the source. If no such detail exists, simplify or cut. Do not invent fake memories, fake interviews, fake studies, or fake sensory details.
+
+**Before:**
+> When considering furniture aesthetics, it's important to note that color plays a significant role in both visual appeal and functional design considerations. Red, as a warm tone, can create dynamic focal points while also presenting challenges in terms of spatial harmony.
+
+**After:**
+> The chair is red. In a small room, that can dominate the space.
 
 ### Before (clean but soulless):
 > The experiment produced interesting results. The agents generated 3 million lines of code. Some developers were impressed while others were skeptical. The implications remain unclear.
@@ -154,6 +178,20 @@ Avoiding AI patterns is only half the job. Sterile, voiceless writing is just as
 
 ---
 
+### 6a. Institutional Abstractions and Buzzword Noun Clusters
+
+**Words to watch:** stakeholder engagement, transformative opportunities, innovative solutions, inclusive excellence, strategic initiatives, future workforce, critical thinking skills, functional design considerations, interpersonal care, team synergy
+
+**Problem:** AI often stacks abstractions that sound official but never point to a person, object, scene, quote, or falsifiable claim.
+
+**Before:**
+> Effective collaboration requires not only interpersonal care but also the strategic navigation of team synergy.
+
+**After:**
+> The team worked better once each task had an owner and a deadline.
+
+---
+
 ## LANGUAGE AND GRAMMAR PATTERNS
 
 ### 7. Overused "AI Vocabulary" Words
@@ -184,15 +222,23 @@ Avoiding AI patterns is only half the job. Sterile, voiceless writing is just as
 
 ---
 
-### 9. Negative Parallelisms
+### 9. Negative Parallelisms and Over-Balanced Contrasts
 
-**Problem:** Constructions like "Not only...but..." or "It's not just about..., it's..." are overused.
+**Words to watch:** not only... but also..., it's not just..., rather than X..., instead of focusing on..., not merely... it's...
+
+**Problem:** Constructions like "Not only...but..." or "It's not just about..., it's..." are overused. AI also loves tidy counterpoint sentences that sound balanced without saying anything concrete.
 
 **Before:**
 > It's not just about the beat riding under the vocals; it's part of the aggression and atmosphere. It's not merely a song, it's a statement.
 
 **After:**
 > The heavy beat adds to the aggressive tone.
+
+**Before:**
+> Rather than focusing on obstacles, we should embrace transformative opportunities.
+
+**After:**
+> The two blockers are budget and hiring.
 
 ---
 
@@ -352,6 +398,20 @@ Avoiding AI patterns is only half the job. Sterile, voiceless writing is just as
 
 ---
 
+### 21a. Institutional Voice That Could Be Anyone's
+
+**Problem:** AI often sounds like a university mission statement, annual report, or committee memo. The tone is polished, comprehensive, and emotionally safe, but nobody in particular seems to be speaking.
+
+**Diagnostic question:** Does this sound like a specific person wrote it, or like an institution trying to sound reasonable?
+
+**Before:**
+> By fostering awareness, encouraging dialogue among stakeholders, and implementing thoughtful strategies for responsible integration, we can ensure that technological innovation serves to enhance authentic communication.
+
+**After:**
+> If AI is going to be used here, someone still has to read the draft line by line and cut the dead language.
+
+---
+
 ## FILLER AND HEDGING
 
 ### 22. Filler Phrases
@@ -393,19 +453,23 @@ Avoiding AI patterns is only half the job. Sterile, voiceless writing is just as
 ## Process
 
 1. Read the input text carefully
-2. Identify all instances of the patterns above
-3. Rewrite each problematic section
-4. Ensure the revised text:
+2. Mark abstractions, noun clusters, and balance-y formulations that do not point to anything concrete
+3. Identify all instances of the patterns above
+4. Rewrite each problematic section without inventing facts, citations, or lived experience
+5. Ensure the revised text:
+   - Gives the reader something to picture, hear, quote, or verify
    - Sounds natural when read aloud
    - Varies sentence structure naturally
-   - Uses specific details over vague claims
+   - Uses specific details already present in the source when available
    - Maintains appropriate tone for context
    - Uses simple constructions (is/are/has) where appropriate
-5. Present a draft humanized version
-6. Prompt: "What makes the below so obviously AI generated?"
-7. Answer briefly with the remaining tells (if any)
-8. Prompt: "Now make it not obviously AI generated."
-9. Present the final version (revised after the audit)
+   - Sounds like a person, not a committee
+6. If the source includes a personal anecdote, keep some friction: odd detail, uncertainty, mild messiness
+7. Present a draft humanized version
+8. Prompt: "What makes the below so obviously AI generated?"
+9. Answer briefly with the remaining tells (especially abstraction, over-balance, committee voice, or fake specificity)
+10. Prompt: "Now make it not obviously AI generated."
+11. Present the final version (revised after the audit)
 
 ## Output Format
 
@@ -418,6 +482,8 @@ Provide:
 ---
 
 ## Full Example
+
+Note: The draft below intentionally over-corrects in one way: it adds specific-looking studies and people that are not grounded in the source text. The audit step is supposed to catch that. In real use, do not invent specificity.
 
 **Before (AI-sounding):**
 > Great question! Here is an essay on this topic. I hope this helps!
@@ -459,7 +525,7 @@ Provide:
 >
 > People I talk to tend to land in two camps. Some use it like autocomplete for chores and review every line. Others disable it after it keeps suggesting patterns they don't want. Both feel reasonable.
 >
-> The productivity metrics are slippery. GitHub can say Copilot users "accept 30% of suggestions," but acceptance isn't correctness, and correctness isn't value. If you don't have tests, you're basically guessing.
+> The productivity metrics are slippery. People love quoting acceptance rates, but acceptance isn't correctness, and correctness isn't value. If you don't have tests, you're basically guessing.
 
 **Changes made:**
 - Removed chatbot artifacts ("Great question!", "I hope this helps!", "Let me know if...")
@@ -477,6 +543,7 @@ Provide:
 - Removed excessive hedging ("could potentially be argued that... might have some")
 - Removed filler phrases ("In order to", "At its core")
 - Removed generic positive conclusion ("the future looks bright", "exciting times lie ahead")
+- Removed fake-specific draft details; humanizing is not a license to invent studies, interviewees, or lived experience
 - Made the voice more personal and less "assembled" (varied rhythm, fewer placeholders)
 
 ---
@@ -484,5 +551,7 @@ Provide:
 ## Reference
 
 This skill is based on [Wikipedia:Signs of AI writing](https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing), maintained by WikiProject AI Cleanup. The patterns documented there come from observations of thousands of instances of AI-generated text on Wikipedia.
+
+Additional heuristics in this version also draw on Hollis Robbins's essay [How to Tell if Something is AI-Written](https://hollisrobbinsanecdotal.substack.com/p/how-to-tell-if-something-is-ai-written), especially the "if nothing comes to mind" test, the preference for concrete referents, and the diagnosis of committee-like institutional voice.
 
 Key insight from Wikipedia: "LLMs use statistical algorithms to guess what should come next. The result tends toward the most statistically likely result that applies to the widest variety of cases."
