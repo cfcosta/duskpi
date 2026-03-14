@@ -136,30 +136,12 @@
         "type": "github"
       }
     },
-    "playwright-cli": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1772067144,
-        "narHash": "sha256-XjYib26oVoTEmjD5wHMlauEdtXkaC60OBitb1mj/Xnk=",
-        "owner": "microsoft",
-        "repo": "playwright-cli",
-        "rev": "fa6f6bcca9c3eeb4ac71051f83ebd623ac51d765",
-        "type": "github"
-      },
-      "original": {
-        "owner": "microsoft",
-        "repo": "playwright-cli",
-        "type": "github"
-      }
-    },
     "root": {
       "inputs": {
         "llm-agents": "llm-agents",
         "nixpkgs": "nixpkgs",
-        "playwright-cli": "playwright-cli",
         "skill-design-taste-frontend": "skill-design-taste-frontend",
-        "skill-visual-explainer": "skill-visual-explainer",
-        "skillset-openai": "skillset-openai"
+        "skill-visual-explainer": "skill-visual-explainer"
       }
     },
     "skill-design-taste-frontend": {
@@ -191,22 +173,6 @@
       "original": {
         "owner": "nicobailon",
         "repo": "visual-explainer",
-        "type": "github"
-      }
-    },
-    "skillset-openai": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1771646863,
-        "narHash": "sha256-E3U4ZGJh0CsEZbPj9r0g8KhFOepu3fSPjUroLhCVwns=",
-        "owner": "openai",
-        "repo": "skills",
-        "rev": "2c9ebb321958f64aa9414b46e4240901e2b9e1a9",
-        "type": "github"
-      },
-      "original": {
-        "owner": "openai",
-        "repo": "skills",
         "type": "github"
       }
     },
