@@ -1,13 +1,13 @@
 ---
 name: chrome-cdp
-description: Interact with the user's local Chrome session via a Bun-backed `chrome-cdp` CLI at a fixed install path, but only after the user explicitly asks to inspect, debug, or interact with a page in Chrome
+description: Interact with the user's local Chromium-based browser sessions (Chrome, Chromium, Brave, Edge, Arc, Dia) via a Bun-backed `chrome-cdp` CLI at a fixed install path, but only after the user explicitly asks to inspect, debug, or interact with a page in a browser. Supports multiple browsers with `--browser` and `--port` flags.
 ---
 
 # Chrome CDP
 
-Use Chrome DevTools Protocol commands through a fixed `chrome-cdp` CLI path. This connects to the user's live Chrome session, including tabs they already have open and accounts they are already logged into.
+Use Chrome DevTools Protocol commands through a fixed `chrome-cdp` CLI path. This connects to the user's live Chromium-based browser session, including tabs they already have open and accounts they are already logged into.
 
-It talks directly to Chrome over CDP WebSocket, not through Puppeteer or a separate browser instance. The CLI keeps a per-tab daemon alive once a tab is approved, which makes repeat commands fast and reliable even when many tabs are open.
+It talks directly to the browser over CDP WebSocket, not through Puppeteer or a separate browser instance. The CLI now runs a master daemon per browser port, so Chrome's "Allow debugging" prompt should fire once per session instead of once per tab.
 
 ## Chrome CDP CLI path (required)
 
@@ -32,20 +32,36 @@ export CDPCLI="##CHROME-CDP##"
 
 If it is not executable, pause and ask the user to install/configure Chrome CDP at the configured path, then retry.
 
-## Chrome setup (required)
+## Browser setup (required)
 
-Chrome remote debugging must be enabled first:
+Enable remote debugging in a Chromium-based browser first.
 
-1. Open `chrome://inspect/#remote-debugging`
-2. Toggle remote debugging on
+### Common setups
 
-Without that, the CLI cannot connect.
+| Browser | How to enable | Default port |
+| --- | --- | --- |
+| **Chrome** | Toggle at `chrome://inspect/#remote-debugging` | 9222 |
+| **Chromium** | Launch with `--remote-debugging-port=9226` or enable remote debugging in its inspect page if available | 9226 |
+| **Brave** | Launch with `--remote-debugging-port=9224` | 9224 |
+| **Edge** | Launch with `--remote-debugging-port=9225` | 9225 |
+| **Arc** | Launch with `--remote-debugging-port=9227` | 9227 |
+| **Dia** | Launch with `--remote-debugging-port=9223` | 9223 |
+
+Notes:
+- Chrome's inspect-page toggle is preferred for the user's real profile.
+- Chrome may show an "Allow remote debugging" prompt the first time the master daemon connects.
+- Other Chromium-based browsers launched with `--remote-debugging-port` typically do not show that popup.
+- On newer Chromium-based builds, launch-flag setups may also need `--remote-allow-origins=*`.
+- Without remote debugging, the CLI cannot connect.
 
 ## Quick start
 
 ```bash
 export CDPCLI="##CHROME-CDP##"
 "$CDPCLI" list
+"$CDPCLI" --browser chromium list
+"$CDPCLI" --browser brave list
+"$CDPCLI" --port 9224 list
 "$CDPCLI" snap 6BE827FA
 "$CDPCLI" shot 6BE827FA
 "$CDPCLI" click 6BE827FA "button[type=submit]"
@@ -54,23 +70,64 @@ export CDPCLI="##CHROME-CDP##"
 
 `<target>` is a unique targetId prefix from `list`. The CLI rejects ambiguous prefixes.
 
+## Architecture
+
+A master daemon is created per browser port.
+
+That means:
+- Chrome's "Allow debugging" prompt should fire once per browser session, not once per tab
+- multiple commands can reuse the same browser connection
+- multiple agents can connect to the same master daemon socket
+- idle daemons auto-exit after about 20 minutes
+- the daemon socket path is `/tmp/cdp-master-<port>.sock`
+
+## Selecting a browser
+
+Use one of these approaches:
+
+```bash
+export CDPCLI="##CHROME-CDP##"
+
+# Target by browser name
+"$CDPCLI" --browser chrome list
+"$CDPCLI" --browser chromium list
+"$CDPCLI" --browser brave list
+
+# Target by debug port
+"$CDPCLI" --port 9222 list
+"$CDPCLI" --port 9224 list
+
+# Persist a default target for later commands
+"$CDPCLI" use chromium
+"$CDPCLI" use 9224
+"$CDPCLI" use auto
+```
+
+You can also use environment variables:
+
+```bash
+export CDPCLI="##CHROME-CDP##"
+CDP_BROWSER=chromium "$CDPCLI" list
+CDP_PORT=9224 "$CDPCLI" list
+```
+
+Prefer `--port` for multi-agent workflows, since the saved session is shared.
+
 ## Core workflow
 
 1. Run `list` to find the page.
 2. Pick the unique target prefix.
 3. Use `snap` to inspect page structure.
-4. On first access to a tab, ask the user to approve Chrome's "Allow debugging" prompt if it appears.
+4. On first access to a Chrome-backed session, ask the user to approve Chrome's "Allow debugging" prompt if it appears.
 5. Use `click`, `type`, `eval`, `html`, or `nav` to interact.
 6. Capture artifacts with `shot` when useful.
 7. Run `stop` when you're done if you want to tear down daemons immediately.
-
-After first approval, the daemon keeps the tab session open, so follow-up commands usually do not prompt again. Idle daemons auto-exit after about 20 minutes.
 
 Minimal loop:
 
 ```bash
 export CDPCLI="##CHROME-CDP##"
-"$CDPCLI" list
+"$CDPCLI" --browser chromium list
 "$CDPCLI" snap 6BE827FA
 "$CDPCLI" click 6BE827FA "a[href='/settings']"
 "$CDPCLI" snap 6BE827FA
@@ -83,6 +140,14 @@ export CDPCLI="##CHROME-CDP##"
 ```bash
 export CDPCLI="##CHROME-CDP##"
 "$CDPCLI" list
+"$CDPCLI" --browser brave list
+```
+
+### Open a new tab
+
+```bash
+export CDPCLI="##CHROME-CDP##"
+"$CDPCLI" open https://example.com
 ```
 
 ### Accessibility tree snapshot
@@ -139,15 +204,17 @@ CSS px = screenshot image px / DPR
 - Use `type`, not `eval`, for text entry in cross-origin iframes.
 - Use `click` or `clickxy` to focus an input before `type` when needed.
 - If you need repeated DOM extraction, prefer one stable `eval` over multiple index-based `eval` calls.
+- Only loaded tabs appear in `list`; suspended tabs may not appear until the user activates them.
+- For multi-browser or multi-agent work, prefer explicit `--browser` or `--port` flags.
 
 ## Guardrails
 
-- Only use this skill after the user has explicitly asked you to inspect, debug, or interact with Chrome.
+- Only use this skill after the user has explicitly asked you to inspect, debug, or interact with a browser.
 - Start with `list`, then use the shortest unambiguous target prefix it shows.
 - Prefer `snap` before `eval`, and prefer `snap` over `html`, when you need to understand page structure.
 - Avoid index-based DOM selection across multiple `eval` calls when the page can change between calls.
 - Use `type` rather than `eval` for text entry, especially with cross-origin iframes.
-- The first access to a tab may trigger Chrome's "Allow debugging" modal. Ask the user to approve it.
-- Remember that approved tabs keep a daemon alive for a while; use `stop` if you want to tear it down immediately.
-- This tool operates on the user's real Chrome profile. Be cautious with destructive actions.
+- The first access to a Chrome-backed session may trigger Chrome's "Allow debugging" modal. Ask the user to approve it.
+- Remember that approved sessions keep a master daemon alive for a while; use `stop` if you want to tear it down immediately.
+- This tool operates on the user's real browser profile. Be cautious with destructive actions.
 - When capturing artifacts in this repo, use `output/chrome-cdp/` and avoid introducing new top-level artifact folders.

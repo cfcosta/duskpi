@@ -162,7 +162,7 @@ These are available immediately because the package preloads them.
 
 The bundled skills cover common high-value tasks:
 
-- **chrome-cdp** for inspecting and interacting with your live Chrome session
+- **chrome-cdp** for inspecting and interacting with your live Chrome, Chromium, or Brave session
 - **design-taste-frontend** for stronger UI/UX and frontend design decisions
 - **humanizer** for making generated text sound less AI-written
 - **rust-proptest** for Rust property testing
