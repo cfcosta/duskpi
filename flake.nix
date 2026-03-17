@@ -48,6 +48,7 @@
               self.formatter.${system}
 
               pkgs.bun
+              pkgs.tmux
             ];
           };
         }

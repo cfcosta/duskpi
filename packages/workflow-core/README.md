@@ -7,7 +7,7 @@ This package exists so the extension logic that really is shared stays shared. I
 | Runtime          | Used by                                              | Best fit                                                                                           |
 | ---------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
 | `PhaseWorkflow`  | `/bug-fix`, `/owasp-fix`, `/test-audit`, `/refactor` | fixed multi-phase analysis, skepticism, arbitration, and execution flows                           |
-| `GuidedWorkflow` | vendored `/plan` in `extensions/plan`             | read-only planning, hidden critique/revision turns, approval callbacks, and step-by-step execution |
+| `GuidedWorkflow` | vendored `/plan` in `extensions/plan`                | read-only planning, hidden critique/revision turns, approval callbacks, and step-by-step execution |
 
 ## Main exports
 
