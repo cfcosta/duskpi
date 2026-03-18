@@ -10,9 +10,10 @@ import {
   matchesKey,
   type TUI,
   truncateToWidth,
+  Markdown,
+  type MarkdownTheme,
+  wrapTextWithAnsi,
 } from "@mariozechner/pi-tui";
-import { Markdown, type MarkdownTheme } from "@mariozechner/pi-tui/dist/components/markdown.js";
-import { wrapTextWithAnsi } from "@mariozechner/pi-tui/dist/utils.js";
 import { Type } from "@sinclair/typebox";
 
 interface AskUserQuestionOption {

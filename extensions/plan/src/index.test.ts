@@ -15,6 +15,19 @@ mock.module("@mariozechner/pi-tui", () => ({
     }
 
     handleInput(_data: string) {}
+
+    render(_width: number) {
+      return [""];
+    }
+  },
+  Markdown: class {
+    constructor(..._args: unknown[]) {}
+
+    setText(_value: string) {}
+
+    render(_width: number) {
+      return [""];
+    }
   },
   Key: {
     tab: "tab",
@@ -25,6 +38,7 @@ mock.module("@mariozechner/pi-tui", () => ({
   },
   matchesKey: () => false,
   truncateToWidth: (text: string) => text,
+  wrapTextWithAnsi: (text: string) => [text],
 }));
 
 const { default: planExtension } = await import("./index");
