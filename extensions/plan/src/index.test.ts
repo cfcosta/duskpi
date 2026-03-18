@@ -310,6 +310,69 @@ test("extractPlanSteps handles indented plan steps with metadata", async () => {
   ]);
 });
 
+test("buildApprovalReviewState summarizes structured plan previews for the approval UI", async () => {
+  const { buildApprovalReviewState } = await import("./workflow");
+
+  expect(
+    buildApprovalReviewState(
+      [
+        "1) Task understanding",
+        "2) Codebase findings",
+        "3) Approach options / trade-offs",
+        "4) Open questions / assumptions",
+        "5) Plan:",
+        "1. Add a regression test for prompt leakage",
+        "   - target files/components: src/index.test.ts",
+        "   - validation method: bun test ./src/index.test.ts",
+        "2. Update the approval action UI to show a compact summary",
+        "   - target files/components:",
+        "     - src/plan-action-ui.ts",
+        "     - src/workflow.ts",
+        "     - review summary preview",
+        "   - validation method:",
+        "     - bun test ./src/index.test.ts",
+        "     - bun run typecheck",
+        "   - risks and rollback notes: revert the preview layout if it gets noisy",
+        "3. Update the todo widget labels to stay compact",
+        "   - validation method: bun test ./src/index.test.ts",
+        "4. Document the richer approval summary",
+        "   - target files/components: README.md",
+        "   - validation method: review the docs copy",
+        "6) Ready to execute when approved.",
+      ].join("\n"),
+      {
+        critiqueSummary: "ready",
+        wasRevised: true,
+      },
+    ),
+  ).toEqual({
+    stepCount: 4,
+    previewSteps: [
+      {
+        step: 1,
+        label: "A regression test for prompt leakage",
+        targetsSummary: "src/index.test.ts",
+        validationSummary: "bun test ./src/index.test.ts",
+      },
+      {
+        step: 2,
+        label: "Approval action UI to show a compact summary",
+        targetsSummary: "src/plan-action-ui.ts, src/workflow.ts (+1 more)",
+        validationSummary: "bun test ./src/index.test.ts, bun run typecheck",
+      },
+      {
+        step: 3,
+        label: "Todo widget labels to stay compact",
+        targetsSummary: undefined,
+        validationSummary: "bun test ./src/index.test.ts",
+      },
+    ],
+    critiqueSummary: "ready",
+    badges: ["compact steps", "validation noted", "rollback noted", "assumptions listed"],
+    wasRevised: true,
+  });
+});
+
 test("extractTodoItems ignores the ready-to-execute footer", async () => {
   const { extractTodoItems } = await import("./utils");
 

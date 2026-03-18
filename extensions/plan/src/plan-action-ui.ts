@@ -3,9 +3,16 @@ import { Editor, type EditorTheme, Key, matchesKey, truncateToWidth } from "@mar
 
 export type PlanNextAction = "approve" | "continue" | "regenerate" | "exit";
 
+export interface PlanApprovalPreviewStep {
+  step: number;
+  label: string;
+  targetsSummary?: string;
+  validationSummary?: string;
+}
+
 export interface PlanApprovalDetails {
   stepCount: number;
-  previewSteps: string[];
+  previewSteps: PlanApprovalPreviewStep[];
   critiqueSummary?: string;
   badges?: string[];
   wasRevised?: boolean;
@@ -161,7 +168,13 @@ export async function selectPlanNextActionWithInlineNote(
           ),
         );
         for (const step of details.previewSteps.slice(0, 3)) {
-          addLine(theme.fg("text", `  • ${step}`));
+          addLine(theme.fg("text", `  • ${step.step}. ${step.label}`));
+          if (step.targetsSummary) {
+            addLine(theme.fg("dim", `    files: ${step.targetsSummary}`));
+          }
+          if (step.validationSummary) {
+            addLine(theme.fg("dim", `    validate: ${step.validationSummary}`));
+          }
         }
         if (details.previewSteps.length === 0) {
           addLine(theme.fg("dim", "  • No extracted steps available"));

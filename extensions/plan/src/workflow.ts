@@ -11,12 +11,18 @@ import {
   type ToolCallEvent,
   type TurnEndEvent,
 } from "../../../packages/workflow-core/src/index";
-import { selectPlanNextActionWithInlineNote, type PlanApprovalDetails } from "./plan-action-ui";
 import {
+  selectPlanNextActionWithInlineNote,
+  type PlanApprovalDetails,
+  type PlanApprovalPreviewStep,
+} from "./plan-action-ui";
+import {
+  extractPlanSteps,
   extractTodoItems,
   isSafeReadOnlyCommand,
   normalizeArg,
   parseCritiqueVerdict,
+  type PlanStep,
   type TodoItem,
 } from "./utils";
 
@@ -129,13 +135,7 @@ export const PLAN_COMMAND_DESCRIPTION =
   "Enable read-only planning mode. Usage: /plan, /plan on, /plan off, /plan status, /plan <task>";
 export const TODOS_COMMAND_DESCRIPTION = "Show current plan execution progress";
 
-interface ApprovalReviewState {
-  stepCount: number;
-  previewSteps: string[];
-  critiqueSummary?: string;
-  badges: string[];
-  wasRevised: boolean;
-}
+type ApprovalReviewState = PlanApprovalDetails;
 
 type PendingPiPlanResponseKind = "planning" | "critique" | "revision";
 
@@ -477,7 +477,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     this.latestCritiqueSummary = args.critiqueText
       ? (extractCritiqueSummary(args.critiqueText) ?? "ready")
       : this.latestCritiqueSummary;
-    this.approvalReview = buildApprovalReviewState(args.planText, this.todoItems, {
+    this.approvalReview = buildApprovalReviewState(args.planText, {
       critiqueSummary: this.latestCritiqueSummary || undefined,
       wasRevised: this.planWasRevised,
     });
@@ -491,13 +491,10 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     const selection = await selectPlanNextActionWithInlineNote(
       ctx.ui as never,
       this.approvalReview ??
-        ({
-          stepCount: this.todoItems.length,
-          previewSteps: this.todoItems.slice(0, 3).map((item) => `${item.step}. ${item.text}`),
+        buildApprovalReviewState(args.planText, {
           critiqueSummary: this.latestCritiqueSummary || undefined,
-          badges: [],
           wasRevised: this.planWasRevised,
-        } satisfies PlanApprovalDetails),
+        }),
     );
 
     if (selection.action === "continue") {
@@ -559,7 +556,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
 
     this.latestPlanDraft = planText;
     this.todoItems = extracted;
-    this.approvalReview = buildApprovalReviewState(planText, extracted, {
+    this.approvalReview = buildApprovalReviewState(planText, {
       critiqueSummary: this.latestCritiqueSummary || undefined,
       wasRevised: this.planWasRevised,
     });
@@ -952,11 +949,11 @@ function extractCritiqueSummary(text: string): string | undefined {
   return undefined;
 }
 
-function buildReviewBadges(planText: string, items: TodoItem[]): string[] {
+function buildReviewBadges(planText: string, steps: PlanStep[]): string[] {
   const badges: string[] = [];
   const normalized = planText.toLowerCase();
 
-  if (items.length > 0 && items.length <= 5) {
+  if (steps.length > 0 && steps.length <= 5) {
     badges.push("compact steps");
   }
   if (/validation/i.test(planText) || /test/i.test(planText)) {
@@ -972,16 +969,38 @@ function buildReviewBadges(planText: string, items: TodoItem[]): string[] {
   return badges;
 }
 
-function buildApprovalReviewState(
+function summarizePreviewValues(values: string[], limit = 2): string | undefined {
+  const normalized = values.map((value) => value.trim()).filter((value) => value.length > 0);
+  if (normalized.length === 0) {
+    return undefined;
+  }
+
+  const visible = normalized.slice(0, limit);
+  const remaining = normalized.length - visible.length;
+  const summary = visible.join(", ");
+  return remaining > 0 ? `${summary} (+${remaining} more)` : summary;
+}
+
+function buildApprovalPreviewStep(step: PlanStep): PlanApprovalPreviewStep {
+  return {
+    step: step.step,
+    label: step.label,
+    targetsSummary: summarizePreviewValues(step.targets),
+    validationSummary: summarizePreviewValues(step.validation),
+  };
+}
+
+export function buildApprovalReviewState(
   planText: string,
-  items: TodoItem[],
   options: { critiqueSummary?: string; wasRevised?: boolean } = {},
 ): ApprovalReviewState {
+  const steps = extractPlanSteps(planText);
+
   return {
-    stepCount: items.length,
-    previewSteps: items.slice(0, 3).map((item) => `${item.step}. ${item.text}`),
+    stepCount: steps.length,
+    previewSteps: steps.slice(0, 3).map(buildApprovalPreviewStep),
     critiqueSummary: options.critiqueSummary,
-    badges: buildReviewBadges(planText, items),
+    badges: buildReviewBadges(planText, steps),
     wasRevised: options.wasRevised ?? false,
   };
 }
