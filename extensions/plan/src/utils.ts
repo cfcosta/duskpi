@@ -114,15 +114,90 @@ export interface TodoItem {
   completed: boolean;
 }
 
-export function cleanStepText(text: string): string {
-  let cleaned = text
+export interface PlanStep {
+  step: number;
+  objective: string;
+  label: string;
+  targets: string[];
+  validation: string[];
+  risks: string[];
+}
+
+type PlanStepMetadataField = keyof Pick<PlanStep, "targets" | "validation" | "risks">;
+
+function normalizeStructuredLine(text: string): string {
+  return text.replace(/\*+/g, "").trim();
+}
+
+function normalizePlanFieldText(text: string): string {
+  return text
     .replace(/\*{1,2}([^*]+)\*{1,2}/g, "$1")
     .replace(/`([^`]+)`/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isPlanBoundaryLine(text: string): boolean {
+  return /^(goal understanding(?: \(brief\))?|task understanding|evidence gathered|codebase findings|approach options \/ trade-offs|uncertainties? \/ assumptions|open questions? \/ assumptions|risks? and rollback notes?|ready to execute when approved\.?|end with: "ready to execute when approved\.?")$/i.test(
+    normalizeStructuredLine(text),
+  );
+}
+
+function isPlanHeaderLine(line: string): boolean {
+  return /^(?:\d+[.)]\s*)?Plan:\s*$/i.test(normalizeStructuredLine(line));
+}
+
+function isSkippablePlanStepText(text: string): boolean {
+  return (
+    text.length <= 5 ||
+    !/[a-z]/i.test(text) ||
+    /^(step objective|target files\/components|validation method|risks? and rollback notes?|evidence gathered|uncertainties? \/ assumptions|ready to execute when approved\.?)$/i.test(
+      text,
+    ) ||
+    text.startsWith("`") ||
+    text.startsWith("/") ||
+    text.startsWith("-")
+  );
+}
+
+function parsePlanMetadataField(
+  text: string,
+): { field: PlanStepMetadataField; value?: string } | undefined {
+  const normalized = text.replace(/^\s*[-*]\s*/, "").trim();
+  const match = normalized.match(
+    /^(target files\/components|validation method|risks? and rollback notes?)\s*(?::\s*(.*))?$/i,
+  );
+  if (!match) {
+    return undefined;
+  }
+
+  const field = /^target/i.test(match[1] ?? "")
+    ? "targets"
+    : /^validation/i.test(match[1] ?? "")
+      ? "validation"
+      : "risks";
+
+  return {
+    field,
+    value: match[2]?.trim(),
+  };
+}
+
+function appendPlanMetadata(step: PlanStep, field: PlanStepMetadataField, value: string): void {
+  const cleaned = normalizePlanFieldText(value.replace(/^\s*[-*]\s*/, ""));
+  if (cleaned.length === 0) {
+    return;
+  }
+
+  step[field].push(cleaned);
+}
+
+export function cleanStepText(text: string): string {
+  let cleaned = normalizePlanFieldText(text)
     .replace(
       /^(Use|Run|Execute|Create|Write|Read|Check|Verify|Update|Modify|Add|Remove|Delete|Install)\s+(the\s+)?/i,
       "",
     )
-    .replace(/\s+/g, " ")
     .trim();
 
   if (cleaned.length > 0) {
@@ -134,84 +209,127 @@ export function cleanStepText(text: string): string {
   return cleaned;
 }
 
-export function extractTodoItems(message: string): TodoItem[] {
-  const items: TodoItem[] = [];
+export function extractPlanSteps(message: string): PlanStep[] {
+  const steps: PlanStep[] = [];
   const lines = message.split(/\r?\n/);
-  const normalizeStructuredLine = (text: string): string => text.replace(/\*+/g, "").trim();
-  const planHeaderIndex = lines.findIndex((line) =>
-    /^(?:\d+[.)]\s*)?Plan:\s*$/i.test(normalizeStructuredLine(line)),
-  );
+  const planHeaderIndex = lines.findIndex((line) => isPlanHeaderLine(line));
 
   if (planHeaderIndex === -1) {
-    return items;
+    return steps;
   }
 
-  const isPlanBoundaryLine = (text: string): boolean =>
-    /^(goal understanding(?: \(brief\))?|task understanding|evidence gathered|codebase findings|approach options \/ trade-offs|uncertainties? \/ assumptions|open questions? \/ assumptions|risks? and rollback notes?|ready to execute when approved\.?|end with: "ready to execute when approved\.?")$/i.test(
-      normalizeStructuredLine(text),
-    );
-
   let stepIndent: number | undefined;
+  let currentStep: PlanStep | undefined;
+  let activeField: PlanStepMetadataField | undefined;
+
+  const finalizeCurrentStep = () => {
+    if (!currentStep) {
+      return;
+    }
+
+    if (currentStep.label.length > 3) {
+      steps.push(currentStep);
+    }
+
+    currentStep = undefined;
+    activeField = undefined;
+  };
 
   for (const line of lines.slice(planHeaderIndex + 1)) {
     if (line.trim().length === 0) {
+      activeField = undefined;
       continue;
     }
 
-    const match = line.match(/^(\s*)(\d+)[.)]\s+(.*)$/);
-    if (!match) {
-      continue;
-    }
+    const numberedMatch = line.match(/^(\s*)(\d+)[.)]\s+(.*)$/);
+    if (numberedMatch) {
+      const indent = numberedMatch[1]?.length ?? 0;
+      const text = normalizePlanFieldText(numberedMatch[3] ?? "");
 
-    const indent = match[1]?.length ?? 0;
-    const text = match[3]
-      .trim()
-      .replace(/\*{1,2}$/, "")
-      .trim();
+      if (stepIndent === undefined) {
+        if (isPlanBoundaryLine(text)) {
+          break;
+        }
+        if (isSkippablePlanStepText(text)) {
+          continue;
+        }
+        stepIndent = indent;
+      }
 
-    if (stepIndent === undefined) {
-      if (isPlanBoundaryLine(text)) {
+      if (indent < stepIndent) {
         break;
       }
-      stepIndent = indent;
-    }
 
-    if (indent < stepIndent) {
-      break;
-    }
+      if (indent === stepIndent) {
+        if (isPlanBoundaryLine(text)) {
+          break;
+        }
+        if (isSkippablePlanStepText(text)) {
+          continue;
+        }
 
-    if (indent > stepIndent) {
+        finalizeCurrentStep();
+        currentStep = {
+          step: Number(numberedMatch[2]),
+          objective: text,
+          label: cleanStepText(text),
+          targets: [],
+          validation: [],
+          risks: [],
+        };
+        activeField = undefined;
+        continue;
+      }
+
+      if (currentStep && activeField) {
+        appendPlanMetadata(currentStep, activeField, numberedMatch[3] ?? "");
+      }
       continue;
     }
 
-    if (isPlanBoundaryLine(text)) {
-      break;
-    }
-
-    if (
-      text.length <= 5 ||
-      !/[a-z]/i.test(text) ||
-      /^(step objective|target files\/components|validation method|risks? and rollback notes?|evidence gathered|uncertainties? \/ assumptions|ready to execute when approved\.?)$/i.test(
-        text,
-      ) ||
-      text.startsWith("`") ||
-      text.startsWith("/") ||
-      text.startsWith("-")
-    ) {
+    if (!currentStep) {
       continue;
     }
 
-    const cleaned = cleanStepText(text);
-    if (cleaned.length > 3) {
-      items.push({
-        step: items.length + 1,
-        text: cleaned,
-        completed: false,
-      });
+    const indent = line.match(/^(\s*)/)?.[1]?.length ?? 0;
+    if (stepIndent !== undefined && indent <= stepIndent) {
+      if (isPlanBoundaryLine(line)) {
+        break;
+      }
+      activeField = undefined;
+      continue;
+    }
+
+    const metadata = parsePlanMetadataField(line);
+    if (metadata) {
+      activeField = metadata.field;
+      if (metadata.value) {
+        appendPlanMetadata(currentStep, metadata.field, metadata.value);
+      }
+      continue;
+    }
+
+    const listItemMatch = line.match(/^\s*[-*]\s+(.*)$/);
+    if (listItemMatch && activeField) {
+      appendPlanMetadata(currentStep, activeField, listItemMatch[1] ?? "");
+      continue;
+    }
+
+    if (activeField) {
+      appendPlanMetadata(currentStep, activeField, line);
     }
   }
 
-  return items;
+  finalizeCurrentStep();
+  return steps;
+}
+
+export function extractTodoItems(message: string): TodoItem[] {
+  return extractPlanSteps(message).map((step) => ({
+    step: step.step,
+    text: step.label,
+    completed: false,
+  }));
 }
 
 export function extractDoneSteps(message: string): number[] {

@@ -224,6 +224,92 @@ test("parseCritiqueVerdict ignores unrelated PASS mentions", () => {
   expect(parseCritiqueVerdict(`Summary: This looks passable.`)).toBeUndefined();
 });
 
+test("extractPlanSteps preserves objective text and metadata for flat plan sections", async () => {
+  const { extractPlanSteps } = await import("./utils");
+
+  expect(
+    extractPlanSteps(
+      [
+        "1) Task understanding",
+        "2) Codebase findings",
+        "3) Approach options / trade-offs",
+        "4) Open questions / assumptions",
+        "5) Plan:",
+        "1. Add a regression test for prompt leakage",
+        "   - target files/components: src/index.test.ts",
+        "   - validation method: bun test ./src/index.test.ts",
+        "2. Update the approval action UI to show a compact summary",
+        "   - target files/components:",
+        "     - src/plan-action-ui.ts",
+        "     - review summary preview",
+        "   - validation method:",
+        "     - bun test ./src/index.test.ts",
+        "     - bun run typecheck",
+        "   - risks and rollback notes: revert the preview rendering if truncation regresses",
+        "6) Ready to execute when approved.",
+      ].join("\n"),
+    ),
+  ).toEqual([
+    {
+      step: 1,
+      objective: "Add a regression test for prompt leakage",
+      label: "A regression test for prompt leakage",
+      targets: ["src/index.test.ts"],
+      validation: ["bun test ./src/index.test.ts"],
+      risks: [],
+    },
+    {
+      step: 2,
+      objective: "Update the approval action UI to show a compact summary",
+      label: "Approval action UI to show a compact summary",
+      targets: ["src/plan-action-ui.ts", "review summary preview"],
+      validation: ["bun test ./src/index.test.ts", "bun run typecheck"],
+      risks: ["revert the preview rendering if truncation regresses"],
+    },
+  ]);
+});
+
+test("extractPlanSteps handles indented plan steps with metadata", async () => {
+  const { extractPlanSteps } = await import("./utils");
+
+  expect(
+    extractPlanSteps(
+      [
+        "1) Task understanding",
+        "2) Codebase findings",
+        "3) Approach options / trade-offs",
+        "4) Open questions / assumptions",
+        "5) Plan:",
+        "   1. Add a regression test for prompt leakage",
+        "      - target files/components: src/index.test.ts",
+        "      - validation method: bun test",
+        "   2. Update the approval action UI to show a compact summary",
+        "      - target files/components: src/plan-action-ui.ts",
+        "      - validation method: bun test",
+        "      - risks and rollback notes: revert the summary preview wiring if it breaks",
+        "6) Ready to execute when approved.",
+      ].join("\n"),
+    ),
+  ).toEqual([
+    {
+      step: 1,
+      objective: "Add a regression test for prompt leakage",
+      label: "A regression test for prompt leakage",
+      targets: ["src/index.test.ts"],
+      validation: ["bun test"],
+      risks: [],
+    },
+    {
+      step: 2,
+      objective: "Update the approval action UI to show a compact summary",
+      label: "Approval action UI to show a compact summary",
+      targets: ["src/plan-action-ui.ts"],
+      validation: ["bun test"],
+      risks: ["revert the summary preview wiring if it breaks"],
+    },
+  ]);
+});
+
 test("extractTodoItems ignores the ready-to-execute footer", async () => {
   const { extractTodoItems } = await import("./utils");
 
