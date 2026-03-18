@@ -123,6 +123,8 @@ If plan mode hits a real ambiguity that would change the design, the agent can u
 - 2-4 suggested options per question
 - automatic free-text fallback via `Type something.`
 - tabbed navigation when there is more than one question
+- a dedicated preview pane for the focused option, with markdown-style rendering for richer previews
+- side-by-side choices/preview layout on wide terminals, with a stacked fallback on narrow terminals
 
 ## Plan output contract
 

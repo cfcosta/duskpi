@@ -11,6 +11,8 @@ import {
   type TUI,
   truncateToWidth,
 } from "@mariozechner/pi-tui";
+import { Markdown, type MarkdownTheme } from "@mariozechner/pi-tui/dist/components/markdown.js";
+import { wrapTextWithAnsi } from "@mariozechner/pi-tui/dist/utils.js";
 import { Type } from "@sinclair/typebox";
 
 interface AskUserQuestionOption {
@@ -67,6 +69,100 @@ interface SelectionState {
 }
 
 const MAX_HEADER_LENGTH = 12;
+const SPLIT_PREVIEW_MIN_WIDTH = 96;
+const PREVIEW_PANEL_GAP = 2;
+const PANEL_HORIZONTAL_PADDING = 1;
+
+function repeat(char: string, count: number): string {
+  return count > 0 ? char.repeat(count) : "";
+}
+
+function wrapLines(text: string, width: number): string[] {
+  if (width <= 0) {
+    return [""];
+  }
+  const wrapped = wrapTextWithAnsi(text, width);
+  return wrapped.length > 0 ? wrapped.map((line) => truncateToWidth(line, width)) : [""];
+}
+
+function createMarkdownTheme(theme: {
+  fg(color: string, text: string): string;
+  strikethrough(text: string): string;
+}): MarkdownTheme {
+  return {
+    heading: (text) => theme.fg("mdHeading", text),
+    link: (text) => theme.fg("mdLink", text),
+    linkUrl: (text) => theme.fg("mdLinkUrl", text),
+    code: (text) => theme.fg("mdCode", text),
+    codeBlock: (text) => theme.fg("mdCodeBlock", text),
+    codeBlockBorder: (text) => theme.fg("mdCodeBlockBorder", text),
+    quote: (text) => theme.fg("mdQuote", text),
+    quoteBorder: (text) => theme.fg("mdQuoteBorder", text),
+    hr: (text) => theme.fg("mdHr", text),
+    listBullet: (text) => theme.fg("mdListBullet", text),
+    bold: (text) => `\x1b[1m${text}\x1b[22m`,
+    italic: (text) => `\x1b[3m${text}\x1b[23m`,
+    underline: (text) => `\x1b[4m${text}\x1b[24m`,
+    strikethrough: (text) => theme.strikethrough(text),
+  };
+}
+
+function renderPanel(
+  width: number,
+  title: string,
+  bodyLines: string[],
+  theme: {
+    fg(color: string, text: string): string;
+  },
+  borderColor: string = "borderMuted",
+): string[] {
+  if (width <= 2) {
+    return [truncateToWidth(bodyLines[0] ?? "", Math.max(1, width))];
+  }
+
+  const innerWidth = Math.max(1, width - 2);
+  const contentWidth = Math.max(1, innerWidth - PANEL_HORIZONTAL_PADDING * 2);
+  const lines: string[] = [];
+
+  const topBorder = theme.fg(borderColor, `┌${repeat("─", innerWidth)}┐`);
+  const bottomBorder = theme.fg(borderColor, `└${repeat("─", innerWidth)}┘`);
+  const titleText = truncateToWidth(theme.fg("muted", title), contentWidth);
+  const titleLine = `${theme.fg(borderColor, "│")}${repeat(" ", PANEL_HORIZONTAL_PADDING)}${truncateToWidth(titleText, contentWidth, "...", true)}${repeat(" ", PANEL_HORIZONTAL_PADDING)}${theme.fg(borderColor, "│")}`;
+
+  lines.push(topBorder);
+  lines.push(titleLine);
+
+  if (bodyLines.length > 0) {
+    lines.push(
+      `${theme.fg(borderColor, "│")}${repeat(" ", PANEL_HORIZONTAL_PADDING)}${repeat(" ", contentWidth)}${repeat(" ", PANEL_HORIZONTAL_PADDING)}${theme.fg(borderColor, "│")}`,
+    );
+    for (const line of bodyLines) {
+      lines.push(
+        `${theme.fg(borderColor, "│")}${repeat(" ", PANEL_HORIZONTAL_PADDING)}${truncateToWidth(line, contentWidth, "...", true)}${repeat(" ", PANEL_HORIZONTAL_PADDING)}${theme.fg(borderColor, "│")}`,
+      );
+    }
+  }
+
+  lines.push(bottomBorder);
+  return lines;
+}
+
+function joinColumns(
+  leftLines: string[],
+  rightLines: string[],
+  leftWidth: number,
+  rightWidth: number,
+  gap: number,
+): string[] {
+  const lines: string[] = [];
+  const rowCount = Math.max(leftLines.length, rightLines.length);
+  for (let index = 0; index < rowCount; index += 1) {
+    const left = truncateToWidth(leftLines[index] ?? "", leftWidth, "...", true);
+    const right = truncateToWidth(rightLines[index] ?? "", rightWidth, "...", true);
+    lines.push(`${left}${repeat(" ", gap)}${right}`);
+  }
+  return lines;
+}
 
 const AskUserQuestionOptionSchema = Type.Object({
   label: Type.String({
@@ -384,9 +480,11 @@ export function registerAskUserQuestionTool(pi: ExtensionAPI): void {
           option: NormalizedOption,
           index: number,
         ) => {
+          const previous = getSelectionState(selections, question.id);
           selections.set(question.id, {
             optionLabels: option.isOther ? [] : [option.label],
             optionIndexes: option.isOther ? [] : [index + 1],
+            ...(option.isOther && previous.customText ? { customText: previous.customText } : {}),
             previews: option.preview ? { [option.label]: option.preview } : {},
           });
         };
@@ -418,10 +516,10 @@ export function registerAskUserQuestionTool(pi: ExtensionAPI): void {
           selections.set(question.id, selection);
         };
 
-        const removeCustomAnswer = (question: NormalizedQuestion) => {
-          const selection = getSelectionState(selections, question.id);
-          delete selection.customText;
-          selections.set(question.id, selection);
+        const enterInputMode = (question: NormalizedQuestion) => {
+          inputMode = true;
+          inputQuestionId = question.id;
+          editor.setText(getSelectionState(selections, question.id).customText ?? "");
         };
 
         editor.onSubmit = (value) => {
@@ -450,45 +548,187 @@ export function registerAskUserQuestionTool(pi: ExtensionAPI): void {
           refresh();
         };
 
-        const renderPreview = (
-          width: number,
-          option: NormalizedOption | undefined,
-          lines: string[],
-        ) => {
-          if (!option?.preview) {
-            return;
-          }
+        const previewMarkdown = new Markdown("", 0, 0, createMarkdownTheme(theme), {
+          color: (text: string) => theme.fg("text", text),
+        });
 
-          lines.push("");
-          lines.push(truncateToWidth(theme.fg("muted", " Preview:"), width));
-          for (const line of option.preview.split(/\r?\n/)) {
-            lines.push(truncateToWidth(` ${theme.fg("dim", line)}`, width));
-          }
-        };
-
-        const renderOptions = (width: number, question: NormalizedQuestion, lines: string[]) => {
+        const renderOptionsLines = (width: number, question: NormalizedQuestion): string[] => {
+          const lines: string[] = [];
           const selection = getSelectionState(selections, question.id);
+
           for (const [index, option] of question.options.entries()) {
             const selected = index === optionIndex;
             const prefix = selected ? theme.fg("accent", "> ") : "  ";
-            const multiMarker = question.multiSelect
-              ? selection.optionLabels.includes(option.label) ||
-                (option.isOther && selection.customText)
-                ? "[x] "
-                : "[ ] "
-              : "";
-            const color = selected ? "accent" : "text";
+            const checked =
+              selection.optionLabels.includes(option.label) ||
+              (option.isOther && Boolean(selection.customText?.trim()));
+            const multiMarker = question.multiSelect ? (checked ? "[x] " : "[ ] ") : "";
             const optionLabel = option.isOther && inputMode ? `${option.label} ✎` : option.label;
+            const color = selected ? "accent" : checked ? "success" : "text";
+
             lines.push(
-              truncateToWidth(
+              ...wrapLines(
                 prefix + theme.fg(color, `${index + 1}. ${multiMarker}${optionLabel}`),
                 width,
               ),
             );
             if (option.description) {
-              lines.push(truncateToWidth(`     ${theme.fg("muted", option.description)}`, width));
+              lines.push(...wrapLines(`   ${theme.fg("muted", option.description)}`, width));
+            }
+            if (selected && option.preview && width >= 24) {
+              lines.push(...wrapLines(`   ${theme.fg("dim", "Preview available →")}`, width));
+            }
+            if (index < question.options.length - 1) {
+              lines.push("");
             }
           }
+
+          return lines;
+        };
+
+        const buildSelectionSummaryLines = (
+          question: NormalizedQuestion,
+          width: number,
+        ): string[] => {
+          const selection = getSelectionState(selections, question.id);
+          const values = [...selection.optionLabels];
+          if (selection.customText?.trim()) {
+            values.push(`(wrote) ${selection.customText.trim()}`);
+          }
+          if (values.length === 0) {
+            return wrapLines(theme.fg("dim", "No answer selected yet."), width);
+          }
+          return [
+            ...wrapLines(
+              theme.fg("muted", question.multiSelect ? "Current answer" : "Selected answer"),
+              width,
+            ),
+            ...wrapLines(theme.fg("text", values.join(", ")), width),
+          ];
+        };
+
+        const renderPreviewBody = (
+          width: number,
+          question: NormalizedQuestion,
+          option: NormalizedOption | undefined,
+        ): string[] => {
+          const lines: string[] = [];
+          const addWrapped = (text: string) => {
+            lines.push(...wrapLines(text, width));
+          };
+
+          if (inputMode) {
+            addWrapped(theme.fg("muted", "Write your own answer"));
+            lines.push("");
+            addWrapped(theme.fg("dim", "Press Enter to save the answer for this question."));
+            lines.push("");
+            for (const line of editor.render(Math.max(1, width))) {
+              lines.push(truncateToWidth(line, width));
+            }
+            return lines;
+          }
+
+          if (!option) {
+            return wrapLines(
+              theme.fg("dim", "Move through the options to inspect a preview."),
+              width,
+            );
+          }
+
+          addWrapped(theme.fg(option.isOther ? "warning" : "accent", option.label));
+          if (option.description) {
+            lines.push("");
+            addWrapped(theme.fg("muted", option.description));
+          }
+
+          const summary = buildSelectionSummaryLines(question, width);
+          if (summary.length > 0) {
+            lines.push("");
+            lines.push(...summary);
+          }
+
+          if (option.preview) {
+            lines.push("");
+            addWrapped(theme.fg("muted", "Preview"));
+            lines.push("");
+            previewMarkdown.setText(option.preview);
+            lines.push(
+              ...previewMarkdown
+                .render(Math.max(1, width))
+                .map((line) => truncateToWidth(line, width)),
+            );
+            return lines;
+          }
+
+          lines.push("");
+          if (option.isOther) {
+            addWrapped(
+              theme.fg(
+                "dim",
+                "Use this when none of the suggested options fit and you need to describe your own approach.",
+              ),
+            );
+          } else {
+            addWrapped(theme.fg("dim", "No structured preview was provided for this option."));
+          }
+          return lines;
+        };
+
+        const renderQuestionView = (
+          width: number,
+          question: NormalizedQuestion,
+          option: NormalizedOption | undefined,
+          lines: string[],
+        ) => {
+          lines.push(...wrapLines(theme.fg("text", ` ${question.question}`), width));
+          lines.push("");
+
+          const canSplit = width >= SPLIT_PREVIEW_MIN_WIDTH;
+          if (canSplit) {
+            const leftWidth = Math.max(34, Math.floor((width - PREVIEW_PANEL_GAP) * 0.46));
+            const rightWidth = Math.max(34, width - PREVIEW_PANEL_GAP - leftWidth);
+            const leftBodyWidth = Math.max(1, leftWidth - 2 - PANEL_HORIZONTAL_PADDING * 2);
+            const rightBodyWidth = Math.max(1, rightWidth - 2 - PANEL_HORIZONTAL_PADDING * 2);
+            const leftPanel = renderPanel(
+              leftWidth,
+              "Choices",
+              renderOptionsLines(leftBodyWidth, question),
+              theme,
+              "accent",
+            );
+            const rightPanel = renderPanel(
+              rightWidth,
+              inputMode ? "Custom answer" : "Preview",
+              renderPreviewBody(rightBodyWidth, question, option),
+              theme,
+              inputMode ? "warning" : "borderMuted",
+            );
+            lines.push(
+              ...joinColumns(leftPanel, rightPanel, leftWidth, rightWidth, PREVIEW_PANEL_GAP),
+            );
+            return;
+          }
+
+          const stackedBodyWidth = Math.max(1, width - 2 - PANEL_HORIZONTAL_PADDING * 2);
+          lines.push(
+            ...renderPanel(
+              width,
+              "Choices",
+              renderOptionsLines(stackedBodyWidth, question),
+              theme,
+              "accent",
+            ),
+          );
+          lines.push("");
+          lines.push(
+            ...renderPanel(
+              width,
+              inputMode ? "Custom answer" : "Preview",
+              renderPreviewBody(stackedBodyWidth, question, option),
+              theme,
+              inputMode ? "warning" : "borderMuted",
+            ),
+          );
         };
 
         const handleInput = (data: string) => {
@@ -555,9 +795,7 @@ export function registerAskUserQuestionTool(pi: ExtensionAPI): void {
 
           if (question.multiSelect && data === " ") {
             if (option.isOther) {
-              inputMode = true;
-              inputQuestionId = question.id;
-              editor.setText("");
+              enterInputMode(question);
             } else {
               toggleMultiSelection(question, option, optionIndex);
             }
@@ -571,9 +809,7 @@ export function registerAskUserQuestionTool(pi: ExtensionAPI): void {
                 if (getSelectionState(selections, question.id).customText?.trim()) {
                   advanceAfterAnswer();
                 } else {
-                  inputMode = true;
-                  inputQuestionId = question.id;
-                  editor.setText("");
+                  enterInputMode(question);
                   refresh();
                 }
                 return;
@@ -588,11 +824,8 @@ export function registerAskUserQuestionTool(pi: ExtensionAPI): void {
             }
 
             if (option.isOther) {
-              removeCustomAnswer(question);
               setSingleSelection(question, option, optionIndex);
-              inputMode = true;
-              inputQuestionId = question.id;
-              editor.setText("");
+              enterInputMode(question);
               refresh();
               return;
             }
@@ -673,37 +906,20 @@ export function registerAskUserQuestionTool(pi: ExtensionAPI): void {
             const question = currentQuestion();
             const option = question?.options[optionIndex];
             if (question) {
-              addLine(theme.fg("text", ` ${question.question}`));
-              lines.push("");
-              renderOptions(width, question, lines);
-              if (inputMode) {
-                lines.push("");
-                addLine(theme.fg("muted", " Your answer:"));
-                for (const line of editor.render(width - 2)) {
-                  addLine(` ${line}`);
-                }
-                lines.push("");
-              } else {
-                renderPreview(width, option, lines);
-              }
+              renderQuestionView(width, question, option, lines);
             }
           }
 
           lines.push("");
           if (inputMode) {
-            addLine(theme.fg("dim", " Enter to submit • Esc to cancel"));
+            addLine(theme.fg("dim", " Enter to save • Esc to close the editor"));
           } else if (currentTab !== questions.length) {
             const question = currentQuestion();
-            addLine(
-              theme.fg(
-                "dim",
-                question?.multiSelect
-                  ? " ↑↓ navigate • Space toggle • Enter continue • Esc cancel"
-                  : isMultiQuestion
-                    ? " Tab/←→ switch • ↑↓ navigate • Enter select • Esc cancel"
-                    : " ↑↓ navigate • Enter select • Esc cancel",
-              ),
-            );
+            const baseHelp = question?.multiSelect
+              ? " ↑↓ navigate • Space toggle • Enter continue • Esc cancel"
+              : " ↑↓ navigate • Enter select • Esc cancel";
+            const fullHelp = isMultiQuestion ? ` Tab/←→ switch •${baseHelp.slice(1)}` : baseHelp;
+            addLine(theme.fg("dim", fullHelp));
           }
           addLine(theme.fg("accent", "─".repeat(width)));
 
