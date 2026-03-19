@@ -168,6 +168,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   private latestCritiqueSummary = "";
   private planWasRevised = false;
   private executionConstraintNote = "";
+  private parseRecoveryAttempted = false;
 
   constructor(private readonly pi: ExtensionAPI) {
     let self!: PiPlanWorkflow;
@@ -261,7 +262,12 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     const list = progress.todoItems
       .map((item) => `${item.step}. ${item.completed ? "✓" : "○"} ${item.text}`)
       .join("\n");
-    notify(this.pi, ctx, `Plan progress ${progress.completedSteps}/${progress.totalSteps}\n${list}`, "info");
+    notify(
+      this.pi,
+      ctx,
+      `Plan progress ${progress.completedSteps}/${progress.totalSteps}\n${list}`,
+      "info",
+    );
   }
 
   async handleCommand(args: unknown, ctx: ExtensionContext): Promise<GuidedWorkflowResult> {
@@ -300,6 +306,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       this.enterPlanMode(ctx);
     }
 
+    this.resetParseRecoveryState();
     return this.startPlanningRequest(raw, ctx);
   }
 
@@ -391,7 +398,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
         const captured = this.capturePlanDraft(lastAssistantText, ctx);
         await this.resetPlanningRequestState(ctx);
         if (!captured) {
-          return { kind: "ok" };
+          return this.handleUnparseablePlanningDraft(lastAssistantText, ctx);
         }
 
         notify(this.pi, ctx, "Reviewing the plan with a critique pass before approval.", "info");
@@ -448,7 +455,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
 
     const captured = this.capturePlanDraft(lastAssistantText, ctx);
     if (!captured) {
-      return { kind: "ok" };
+      return this.handleUnparseablePlanningDraft(lastAssistantText, ctx);
     }
 
     notify(this.pi, ctx, "Reviewing the plan with a critique pass before approval.", "info");
@@ -524,6 +531,45 @@ export class PiPlanWorkflow extends GuidedWorkflow {
 
   private async resetPlanningRequestState(ctx: ExtensionContext): Promise<void> {
     await super.handleSessionShutdown({ reason: "plan-consumed-planning-response" }, ctx);
+  }
+
+  private async handleUnparseablePlanningDraft(
+    draftText: string,
+    ctx: ExtensionContext,
+  ): Promise<GuidedWorkflowResult> {
+    if (!this.parseRecoveryAttempted) {
+      this.parseRecoveryAttempted = true;
+      notify(
+        this.pi,
+        ctx,
+        "Couldn't extract plan steps. Asking Pi to restate the same draft with an explicit Plan: section.",
+        "warning",
+      );
+      return this.startPlanningRequest(this.buildParseRecoveryPrompt(draftText), ctx);
+    }
+
+    this.resetParseRecoveryState();
+    this.setStatus(ctx);
+    notify(
+      this.pi,
+      ctx,
+      "Couldn't extract plan steps after one automatic retry. Still in read-only plan mode.",
+      "error",
+    );
+    return { kind: "ok" };
+  }
+
+  private buildParseRecoveryPrompt(draftText: string): string {
+    return [
+      "The previous response did not include a parseable plan.",
+      "Restate the same proposed implementation plan using the required plan output contract.",
+      "Keep the same scope and intent.",
+      "Include an explicit Plan: section with numbered executable steps.",
+      "End with: Ready to execute when approved.",
+      "",
+      "Previous draft:",
+      draftText,
+    ].join("\n");
   }
 
   private async selectApprovalAction(
@@ -615,6 +661,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       return false;
     }
 
+    this.resetParseRecoveryState();
     this.latestPlanDraft = planText;
     this.todoItems = extracted;
     this.approvalReview = buildApprovalReviewState(planText, {
@@ -735,6 +782,11 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   private resetPlanningDraft(): void {
     this.latestPlanDraft = "";
     this.resetApprovalReview();
+    this.resetParseRecoveryState();
+  }
+
+  private resetParseRecoveryState(): void {
+    this.parseRecoveryAttempted = false;
   }
 
   private resetExecutionState(): void {

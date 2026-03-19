@@ -206,6 +206,17 @@ function buildRichPlanText(): string {
   ].join("\n");
 }
 
+function buildUnparseablePlanText(): string {
+  return [
+    "1) Task understanding",
+    "2) Codebase findings",
+    "3) Approach options / trade-offs",
+    "4) Open questions / assumptions",
+    "The work should be split into a couple of safe implementation steps.",
+    "Ready to execute when approved.",
+  ].join("\n");
+}
+
 function extractRequestId(prompt: string): string | undefined {
   const match = prompt.match(/<!--\s*workflow-request-id:([^>]+)\s*-->/i);
   return match?.[1]?.trim();
@@ -566,6 +577,95 @@ test("one-shot /plan task enables plan mode and starts a correlated planning req
   expect(extractRequestId(harness.sentUserMessages[0] ?? "")).toBeTruthy();
 });
 
+test("unparseable planning drafts trigger one automatic retry with a new request id", async () => {
+  const harness = createPlanExtensionHarness({ hasUI: true });
+
+  await harness.runCommand("plan", "Investigate flaky prompt extraction");
+
+  const firstPrompt = harness.sentUserMessages[0] ?? "";
+  const firstRequestId = extractRequestId(firstPrompt);
+  expect(firstRequestId).toBeTruthy();
+
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: firstPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildUnparseablePlanText() }],
+      },
+    ],
+  });
+
+  expect(harness.sentUserMessages).toHaveLength(2);
+  const retryPrompt = harness.sentUserMessages[1] ?? "";
+  const retryRequestId = extractRequestId(retryPrompt);
+  expect(retryRequestId).toBeTruthy();
+  expect(retryRequestId).not.toBe(firstRequestId);
+  expect(retryPrompt).toContain("Include an explicit Plan: section with numbered executable steps.");
+  expect(harness.uiStub.notifications).toContainEqual({
+    message:
+      "Couldn't extract plan steps. Asking Pi to restate the same draft with an explicit Plan: section.",
+    level: "warning",
+  });
+});
+
+test("a second unparseable planning draft stays read-only and fails visibly without opening approval", async () => {
+  const harness = createPlanExtensionHarness({ hasUI: true });
+
+  await harness.runCommand("plan", "Investigate flaky prompt extraction");
+
+  const firstPrompt = harness.sentUserMessages[0] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: firstPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildUnparseablePlanText() }],
+      },
+    ],
+  });
+
+  const retryPrompt = harness.sentUserMessages[1] ?? "";
+  const retryRequestId = extractRequestId(retryPrompt);
+  expect(retryRequestId).toBeTruthy();
+
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: retryPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildUnparseablePlanText() }],
+      },
+    ],
+  });
+
+  expect(harness.sentUserMessages).toHaveLength(2);
+  expect(extractRequestId(harness.sentUserMessages[1] ?? "")).toBe(retryRequestId);
+  expect(harness.sentMessages).toHaveLength(0);
+  expect(harness.uiStub.customCalls).toHaveLength(0);
+  expect(harness.getActiveTools()).toEqual([
+    "read",
+    "bash",
+    "grep",
+    "find",
+    "ls",
+    "AskUserQuestion",
+  ]);
+  expect(harness.uiStub.notifications).toContainEqual({
+    message: "Couldn't extract plan steps after one automatic retry. Still in read-only plan mode.",
+    level: "error",
+  });
+});
+
 test("plan status reflects guided idle and planning phases", async () => {
   const harness = createPlanExtensionHarness({ hasUI: true });
 
@@ -607,14 +707,16 @@ test("planningPolicy blocks write-like tools and mutating bash during planning",
     });
   }
 
-  expect(await invokeToolCall(harness, { toolName: "bash", input: { command: "rm -rf tmp" } })).toEqual(
-    {
-      block: true,
-      reason: "Plan mode blocked a potentially mutating bash command: rm -rf tmp",
-    },
-  );
+  expect(
+    await invokeToolCall(harness, { toolName: "bash", input: { command: "rm -rf tmp" } }),
+  ).toEqual({
+    block: true,
+    reason: "Plan mode blocked a potentially mutating bash command: rm -rf tmp",
+  });
 
-  expect(await invokeToolCall(harness, { toolName: "bash", input: { command: "ls -la" } })).toBeUndefined();
+  expect(
+    await invokeToolCall(harness, { toolName: "bash", input: { command: "ls -la" } }),
+  ).toBeUndefined();
 });
 
 test("planningPolicy keeps write-like and bash blocking active during approval", async () => {
@@ -629,14 +731,16 @@ test("planningPolicy keeps write-like and bash blocking active during approval",
     });
   }
 
-  expect(await invokeToolCall(harness, { toolName: "bash", input: { command: "rm -rf tmp" } })).toEqual(
-    {
-      block: true,
-      reason: "Plan mode blocked a potentially mutating bash command: rm -rf tmp",
-    },
-  );
+  expect(
+    await invokeToolCall(harness, { toolName: "bash", input: { command: "rm -rf tmp" } }),
+  ).toEqual({
+    block: true,
+    reason: "Plan mode blocked a potentially mutating bash command: rm -rf tmp",
+  });
 
-  expect(await invokeToolCall(harness, { toolName: "bash", input: { command: "ls -la" } })).toBeUndefined();
+  expect(
+    await invokeToolCall(harness, { toolName: "bash", input: { command: "ls -la" } }),
+  ).toBeUndefined();
 });
 
 test("correlated /plan requests ignore unmatched agent_end payloads", async () => {
