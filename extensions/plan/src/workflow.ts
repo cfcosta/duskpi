@@ -6,8 +6,11 @@ import {
   type ExtensionContext,
   type GuidedWorkflowExecutionItem,
   type GuidedWorkflowResult,
+  type SessionCompactEvent,
+  type SessionForkEvent,
   type SessionShutdownEvent,
   type SessionStartEvent,
+  type SessionSwitchEvent,
   type ToolCallEvent,
   type TurnEndEvent,
 } from "../../../packages/workflow-core/src/index";
@@ -438,17 +441,39 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     this.setStatus(ctx);
   }
 
+  async handleSessionSwitch(_event: SessionSwitchEvent, ctx: ExtensionContext): Promise<void> {
+    await this.resetTransientPlanSessionState(ctx);
+  }
+
+  async handleSessionFork(_event: SessionForkEvent, ctx: ExtensionContext): Promise<void> {
+    await this.resetTransientPlanSessionState(ctx);
+  }
+
+  async handleSessionCompact(_event: SessionCompactEvent, ctx: ExtensionContext): Promise<void> {
+    await this.resetTransientPlanSessionState(ctx);
+  }
+
   async handleSessionShutdown(_event: SessionShutdownEvent, ctx: ExtensionContext): Promise<void> {
+    await this.resetTransientPlanSessionState(ctx);
+  }
+
+  private async resetTransientPlanSessionState(ctx: ExtensionContext): Promise<void> {
     if (this.planModeEnabled || this.restoreTools) {
       this.restoreNormalTools();
     }
 
-    await super.handleSessionShutdown(_event, ctx);
+    await super.handleSessionShutdown({ reason: "plan-session-boundary-reset" }, ctx);
     this.resetLocalLifecycleState();
-    if (ctx.hasUI) {
-      ctx.ui.setStatus(STATUS_KEY, undefined);
-      ctx.ui.setWidget(TODO_WIDGET_KEY, undefined);
+    this.clearPlanUiState(ctx);
+  }
+
+  private clearPlanUiState(ctx: ExtensionContext): void {
+    if (!ctx.hasUI) {
+      return;
     }
+
+    ctx.ui.setStatus(STATUS_KEY, undefined);
+    ctx.ui.setWidget(TODO_WIDGET_KEY, undefined);
   }
 
   private hasPendingPlanningRequest(): boolean {

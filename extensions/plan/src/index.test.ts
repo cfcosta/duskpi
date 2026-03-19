@@ -232,6 +232,77 @@ async function emitMatchedHiddenResponse(
   });
 }
 
+async function enterApprovalState(harness: ReturnType<typeof createPlanExtensionHarness>) {
+  await harness.runCommand("plan", "on");
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+}
+
+async function enterExecutionState(harness: ReturnType<typeof createPlanExtensionHarness>) {
+  await harness.runCommand("plan", "on");
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+}
+
+async function assertPlanStateReset(
+  harness: ReturnType<typeof createPlanExtensionHarness>,
+  eventName: "session_switch" | "session_fork" | "session_compact",
+  event: unknown,
+) {
+  await harness.emit(eventName, event);
+
+  expect(harness.getActiveTools()).toEqual([
+    "read",
+    "bash",
+    "grep",
+    "find",
+    "ls",
+    "edit",
+    "write",
+    "AskUserQuestion",
+  ]);
+  expect(harness.uiStub.statuses.get("plan")).toBeUndefined();
+  expect(harness.uiStub.widgets.get("plan-todos")).toBeUndefined();
+
+  await harness.runCommand("plan", "status");
+  expect(harness.uiStub.notifications).toContainEqual({
+    message: "Plan mode: OFF (default YOLO mode)",
+    level: "info",
+  });
+
+  await harness.runCommand("todos");
+  expect(harness.uiStub.notifications).toContainEqual({
+    message: "No tracked plan steps. Create a plan in /plan mode first.",
+    level: "info",
+  });
+}
+
+const SESSION_BOUNDARY_EVENTS = [
+  ["session_switch", { reason: "resume", previousSessionFile: "/tmp/previous.pi" }],
+  ["session_fork", { previousSessionFile: "/tmp/previous.pi" }],
+  ["session_compact", { compactionEntry: { id: "compact-1" }, fromExtension: false }],
+] as const;
+
 test("parseCritiqueVerdict accepts markdown-formatted PASS verdicts", () => {
   expect(parseCritiqueVerdict(`1) **Verdict:** PASS\n2) Issues:\n- none`)).toBe("PASS");
 });
@@ -446,8 +517,11 @@ test("plan extension registers the guided workflow listener surface plus todos",
   expect([...harness.eventHandlers.keys()].sort()).toEqual([
     "agent_end",
     "before_agent_start",
+    "session_compact",
+    "session_fork",
     "session_shutdown",
     "session_start",
+    "session_switch",
     "tool_call",
     "turn_end",
   ]);
@@ -1083,6 +1157,55 @@ test("exit selection restores normal tools and clears tracked progress", async (
     message: "No tracked plan steps. Create a plan in /plan mode first.",
     level: "info",
   });
+});
+
+test("session boundary events reset transient plan state while approval is pending", async () => {
+  for (const [eventName, event] of SESSION_BOUNDARY_EVENTS) {
+    const harness = createPlanExtensionHarness({ hasUI: true });
+
+    await enterApprovalState(harness);
+
+    expect(harness.getActiveTools()).toEqual([
+      "read",
+      "bash",
+      "grep",
+      "find",
+      "ls",
+      "AskUserQuestion",
+    ]);
+    expect(harness.uiStub.statuses.get("plan")).toBe("⏸ plan");
+
+    await assertPlanStateReset(harness, eventName, event);
+  }
+});
+
+test("session boundary events reset transient plan state while approved execution is active", async () => {
+  for (const [eventName, event] of SESSION_BOUNDARY_EVENTS) {
+    const harness = createPlanExtensionHarness({
+      hasUI: true,
+      customSelection: { cancelled: false, action: "approve" },
+    });
+
+    await enterExecutionState(harness);
+
+    expect(harness.getActiveTools()).toEqual([
+      "read",
+      "bash",
+      "grep",
+      "find",
+      "ls",
+      "edit",
+      "write",
+      "AskUserQuestion",
+    ]);
+    expect(harness.uiStub.statuses.get("plan")).toBe("📋 0/2");
+    expect(harness.uiStub.widgets.get("plan-todos")).toEqual([
+      "☐ A regression test for prompt leakage",
+      "☐ Approval action UI to show a compact summary",
+    ]);
+
+    await assertPlanStateReset(harness, eventName, event);
+  }
 });
 
 test("session shutdown restores tools and clears stale plan-mode status", async () => {
