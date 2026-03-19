@@ -1,12 +1,26 @@
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExtensionAPI, ExtensionContext, ToolCallEvent } from "./extension-api";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+  SessionCompactEvent,
+  SessionForkEvent,
+  SessionShutdownEvent,
+  SessionStartEvent,
+  SessionSwitchEvent,
+  ToolCallEvent,
+} from "./extension-api";
 import type { PromptLoadResult } from "./prompt-loader";
 
 export interface PhaseWorkflowController {
   handleCommand(args: unknown, ctx: ExtensionContext): unknown;
   handleToolCall(event: ToolCallEvent): unknown;
   handleAgentEnd(event: { messages?: unknown[] }, ctx: ExtensionContext): unknown;
+  handleSessionStart?(event: SessionStartEvent, ctx: ExtensionContext): unknown;
+  handleSessionSwitch?(event: SessionSwitchEvent, ctx: ExtensionContext): unknown;
+  handleSessionFork?(event: SessionForkEvent, ctx: ExtensionContext): unknown;
+  handleSessionCompact?(event: SessionCompactEvent, ctx: ExtensionContext): unknown;
+  handleSessionShutdown?(event: SessionShutdownEvent, ctx: ExtensionContext): unknown;
 }
 
 export interface RegisterPhaseWorkflowExtensionOptions<Prompts> {
@@ -45,6 +59,26 @@ export function registerPhaseWorkflowExtension<Prompts>(
     }
 
     return workflow.handleAgentEnd(event as { messages?: unknown[] }, ctx);
+  });
+
+  api.on("session_start", (event, ctx) => {
+    return workflow.handleSessionStart?.(event as SessionStartEvent, ctx);
+  });
+
+  api.on("session_switch", (event, ctx) => {
+    return workflow.handleSessionSwitch?.(event as SessionSwitchEvent, ctx);
+  });
+
+  api.on("session_fork", (event, ctx) => {
+    return workflow.handleSessionFork?.(event as SessionForkEvent, ctx);
+  });
+
+  api.on("session_compact", (event, ctx) => {
+    return workflow.handleSessionCompact?.(event as SessionCompactEvent, ctx);
+  });
+
+  api.on("session_shutdown", (event, ctx) => {
+    return workflow.handleSessionShutdown?.(event as SessionShutdownEvent, ctx);
   });
 
   return workflow;

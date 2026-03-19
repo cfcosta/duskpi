@@ -14,6 +14,9 @@ import {
   registerPhaseWorkflowExtension,
   type PromptLoadResult,
   type PromptSnapshot,
+  type SessionCompactEvent,
+  type SessionForkEvent,
+  type SessionSwitchEvent,
 } from "./index";
 
 test("parseTrimmedStringArg trims non-empty strings", () => {
@@ -223,6 +226,45 @@ function replaceRequestId(prompt: string, requestId: string): string {
   );
 }
 
+const PHASE_SESSION_BOUNDARY_EVENTS = [
+  ["session_switch", { reason: "resume", previousSessionFile: "/tmp/previous.pi" }],
+  ["session_fork", { previousSessionFile: "/tmp/previous.pi" }],
+  ["session_compact", { compactionEntry: { id: "compact-1" }, fromExtension: false }],
+  ["session_shutdown", { reason: "exit" }],
+] as const;
+
+async function assertPhaseWorkflowResetOnLifecycleEvent(
+  eventName: (typeof PHASE_SESSION_BOUNDARY_EVENTS)[number][0],
+  event: (typeof PHASE_SESSION_BOUNDARY_EVENTS)[number][1],
+) {
+  const { workflow, ctx, sentMessages, notifications, statusUpdates, widgetUpdates } =
+    createPhaseWorkflowHarness();
+
+  const firstRun = await workflow.handleCommand("scope", ctx);
+  assert.deepEqual(firstRun, { kind: "ok" });
+  assert.equal(sentMessages.length, 1);
+
+  const blockedWhileActive = await workflow.handleCommand("scope", ctx);
+  assert.deepEqual(blockedWhileActive, { kind: "blocked", reason: "already_running" });
+  assert.deepEqual(notifications.at(-1), { level: "warning", message: "running" });
+
+  const handlers = {
+    session_switch: workflow.handleSessionSwitch.bind(workflow),
+    session_fork: workflow.handleSessionFork.bind(workflow),
+    session_compact: workflow.handleSessionCompact.bind(workflow),
+    session_shutdown: workflow.handleSessionShutdown.bind(workflow),
+  };
+
+  const lifecycleResult = await handlers[eventName](event as never, ctx);
+  assert.equal(lifecycleResult, undefined);
+  assert.deepEqual(statusUpdates.at(-1), { id: "wf-test", status: undefined });
+  assert.deepEqual(widgetUpdates.at(-1), { id: "wf-test", widget: undefined });
+
+  const restarted = await workflow.handleCommand("scope", ctx);
+  assert.deepEqual(restarted, { kind: "ok" });
+  assert.equal(sentMessages.length, 2);
+}
+
 test("registerPhaseWorkflowExtension resolves prompts and wires workflow handlers", async () => {
   const commands: Record<
     string,
@@ -247,6 +289,26 @@ test("registerPhaseWorkflowExtension resolves prompts and wires workflow handler
     handleAgentEnd(event: { messages?: unknown[] }, ctx: unknown) {
       forwarded.push({ type: "agent_end", event, ctx });
       return "agent-end-result";
+    },
+    handleSessionStart(event: { restored?: boolean }, ctx: unknown) {
+      forwarded.push({ type: "session_start", event, ctx });
+      return "session-start-result";
+    },
+    handleSessionSwitch(event: SessionSwitchEvent, ctx: unknown) {
+      forwarded.push({ type: "session_switch", event, ctx });
+      return "session-switch-result";
+    },
+    handleSessionFork(event: SessionForkEvent, ctx: unknown) {
+      forwarded.push({ type: "session_fork", event, ctx });
+      return "session-fork-result";
+    },
+    handleSessionCompact(event: SessionCompactEvent, ctx: unknown) {
+      forwarded.push({ type: "session_compact", event, ctx });
+      return "session-compact-result";
+    },
+    handleSessionShutdown(event: { reason?: string }, ctx: unknown) {
+      forwarded.push({ type: "session_shutdown", event, ctx });
+      return "session-shutdown-result";
     },
   };
 
@@ -290,16 +352,50 @@ test("registerPhaseWorkflowExtension resolves prompts and wires workflow handler
   assert.equal(commands["bug-fix"]?.description, "Bug fix");
   assert.ok(listeners.tool_call);
   assert.ok(listeners.agent_end);
+  assert.ok(listeners.session_start);
+  assert.ok(listeners.session_switch);
+  assert.ok(listeners.session_fork);
+  assert.ok(listeners.session_compact);
+  assert.ok(listeners.session_shutdown);
+
+  const sessionSwitchEvent: SessionSwitchEvent = {
+    reason: "resume",
+    previousSessionFile: "/tmp/previous.pi",
+  };
+  const sessionForkEvent: SessionForkEvent = {
+    previousSessionFile: "/tmp/previous.pi",
+  };
+  const sessionCompactEvent: SessionCompactEvent = {
+    compactionEntry: { id: "compact-1" },
+    fromExtension: false,
+  };
+
   assert.equal(commands["bug-fix"]?.handler("scope", ctx as never), "command-result");
   assert.equal(
     listeners.tool_call?.({ toolName: "Read", input: { command: "ls -la" } }, undefined as never),
     "tool-result",
   );
   assert.equal(listeners.agent_end?.({ messages: ["report"] }, ctx as never), "agent-end-result");
+  assert.equal(listeners.session_start?.({ restored: true }, ctx as never), "session-start-result");
+  assert.equal(listeners.session_switch?.(sessionSwitchEvent, ctx as never), "session-switch-result");
+  assert.equal(listeners.session_fork?.(sessionForkEvent, ctx as never), "session-fork-result");
+  assert.equal(
+    listeners.session_compact?.(sessionCompactEvent, ctx as never),
+    "session-compact-result",
+  );
+  assert.equal(
+    listeners.session_shutdown?.({ reason: "exit" }, ctx as never),
+    "session-shutdown-result",
+  );
   assert.deepEqual(forwarded, [
     { type: "command", args: "scope", ctx },
     { type: "tool_call", event: { toolName: "Read", input: { command: "ls -la" } } },
     { type: "agent_end", event: { messages: ["report"] }, ctx },
+    { type: "session_start", event: { restored: true }, ctx },
+    { type: "session_switch", event: sessionSwitchEvent, ctx },
+    { type: "session_fork", event: sessionForkEvent, ctx },
+    { type: "session_compact", event: sessionCompactEvent, ctx },
+    { type: "session_shutdown", event: { reason: "exit" }, ctx },
   ]);
 });
 
@@ -480,6 +576,26 @@ test("PhaseWorkflow handles invalid assistant payload with explicit error", asyn
   assert.equal(result.reason, "invalid_agent_payload");
   assert.equal(notifications.at(-1)?.level, "error");
 });
+
+test("PhaseWorkflow session_start remains a no-op while active", async () => {
+  const { workflow, ctx, sentMessages } = createPhaseWorkflowHarness();
+
+  await workflow.handleCommand("scope", ctx);
+
+  const result = await workflow.handleSessionStart({ restored: true }, ctx);
+
+  assert.equal(result, undefined);
+  assert.equal(sentMessages.length, 1);
+
+  const blockedWhileActive = await workflow.handleCommand("scope", ctx);
+  assert.deepEqual(blockedWhileActive, { kind: "blocked", reason: "already_running" });
+});
+
+for (const [eventName, event] of PHASE_SESSION_BOUNDARY_EVENTS) {
+  test(`PhaseWorkflow resets active runs on ${eventName}`, async () => {
+    await assertPhaseWorkflowResetOnLifecycleEvent(eventName, event);
+  });
+}
 
 test("PhaseWorkflow blocks mutating bash during analysis", async () => {
   const { workflow, ctx } = createPhaseWorkflowHarness();

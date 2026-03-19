@@ -1,5 +1,14 @@
 import { isSafeReadOnlyCommand as defaultIsSafeReadOnlyCommand } from "./command-safety";
-import type { ExtensionAPI, ExtensionContext, ToolCallEvent } from "./extension-api";
+import type {
+  ExtensionAPI,
+  ExtensionContext,
+  SessionCompactEvent,
+  SessionForkEvent,
+  SessionShutdownEvent,
+  SessionStartEvent,
+  SessionSwitchEvent,
+  ToolCallEvent,
+} from "./extension-api";
 import { extractLastUserText, getLastAssistantTextResult } from "./message-content";
 import type { PromptLoadResult } from "./prompt-loader";
 
@@ -231,6 +240,30 @@ export class PhaseWorkflow<Prompts> {
     return { kind: "ok" };
   }
 
+  async handleSessionStart(_event: SessionStartEvent, _ctx: ExtensionContext): Promise<void> {
+    return undefined;
+  }
+
+  async handleSessionSwitch(_event: SessionSwitchEvent, ctx: ExtensionContext): Promise<void> {
+    this.resetForSessionBoundary(ctx);
+    return undefined;
+  }
+
+  async handleSessionFork(_event: SessionForkEvent, ctx: ExtensionContext): Promise<void> {
+    this.resetForSessionBoundary(ctx);
+    return undefined;
+  }
+
+  async handleSessionCompact(_event: SessionCompactEvent, ctx: ExtensionContext): Promise<void> {
+    this.resetForSessionBoundary(ctx);
+    return undefined;
+  }
+
+  async handleSessionShutdown(_event: SessionShutdownEvent, ctx: ExtensionContext): Promise<void> {
+    this.resetForSessionBoundary(ctx);
+    return undefined;
+  }
+
   private async handleAnalysisComplete(ctx: ExtensionContext): Promise<void> {
     this.updateStatus(ctx);
 
@@ -345,6 +378,11 @@ export class PhaseWorkflow<Prompts> {
     if (phase === this.lastAnalysisPhase) {
       this.state.pendingRefinement = undefined;
     }
+  }
+
+  private resetForSessionBoundary(ctx: ExtensionContext) {
+    this.state = this.createIdleState();
+    this.updateStatus(ctx);
   }
 
   private finishRun(ctx: ExtensionContext, message: string) {
