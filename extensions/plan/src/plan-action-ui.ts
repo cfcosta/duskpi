@@ -96,6 +96,7 @@ export class PlanActionComponent {
   private cachedWidth: number | undefined;
   private cachedRenderedLines: string[] | undefined;
   private readonly noteEditor: Editor;
+  private _focused = false;
 
   constructor(
     private readonly tui: TUI,
@@ -144,6 +145,15 @@ export class PlanActionComponent {
         note: normalized,
       });
     };
+  }
+
+  get focused(): boolean {
+    return this._focused;
+  }
+
+  set focused(value: boolean) {
+    this._focused = value;
+    this.noteEditor.focused = value;
   }
 
   render(width: number): string[] {

@@ -168,8 +168,26 @@ test("selectPlanNextActionWithInlineNote preserves quick-action payloads", async
   });
 });
 
-test("selectPlanNextActionWithInlineNote preserves inline note submission payloads", async () => {
+test("PlanActionComponent forwards focus state to the nested editor", () => {
+  const component = new PlanActionComponent(
+    createTui() as never,
+    createTheme() as never,
+    () => {},
+    createApprovalDetails(),
+  );
+
+  const editor = (component as unknown as { noteEditor: { focused: boolean } }).noteEditor;
+
+  component.focused = true;
+  expect(editor.focused).toBe(true);
+
+  component.focused = false;
+  expect(editor.focused).toBe(false);
+});
+
+test("selectPlanNextActionWithInlineNote preserves inline note submission payloads after focus propagation", async () => {
   const result = await runSelectionSimulation((component) => {
+    component.focused = true;
     component.handleInput("tab");
     component.handleInput("submit:  keep keyboard flow fast  ");
   });
