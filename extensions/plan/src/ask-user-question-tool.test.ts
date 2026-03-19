@@ -32,6 +32,13 @@ mock.module("@mariozechner/pi-tui", () => ({
       return [""];
     }
   },
+  Text: class {
+    constructor(private readonly text: string) {}
+
+    render(_width: number) {
+      return [this.text];
+    }
+  },
   Key: {
     tab: "tab",
     escape: "escape",
@@ -52,6 +59,7 @@ const {
   normalizeQuestions,
   buildResultDetails,
   buildResultContent,
+  registerAskUserQuestionTool,
 } = await import("./ask-user-question-tool");
 
 function createTheme() {
@@ -85,6 +93,30 @@ function buildQuestion(label = "Repo local"): AskUserQuestionQuestionConfig {
         description: "Limit the work to documentation changes.",
       },
     ],
+  };
+}
+
+function renderComponentText(component: { render(width: number): string[] }, width = 120): string {
+  return component.render(width).join("\n");
+}
+
+function getRegisteredAskUserQuestionTool() {
+  let tool: unknown;
+  registerAskUserQuestionTool({
+    registerTool(definition: unknown) {
+      tool = definition;
+    },
+  } as never);
+  return tool as {
+    renderCall?: (
+      args: { questions: AskUserQuestionQuestionConfig[] },
+      theme: ReturnType<typeof createTheme>,
+    ) => { render(width: number): string[] };
+    renderResult?: (
+      result: { content: Array<{ type: "text"; text: string }>; details?: AskUserQuestionResultDetails },
+      options: unknown,
+      theme: ReturnType<typeof createTheme>,
+    ) => { render(width: number): string[] };
   };
 }
 
@@ -222,6 +254,145 @@ test("AskUserQuestionComponent caches rendered output per width and invalidates 
   expect(wideSecond).toBe(wideFirst);
   expect(narrow).not.toBe(wideFirst);
   expect(narrow.join("\n")).not.toEqual(wideFirst.join("\n"));
+});
+
+test("AskUserQuestion renderCall shows a concise questionnaire summary", () => {
+  const tool = getRegisteredAskUserQuestionTool();
+  const component = tool.renderCall?.({ questions: [buildQuestion(), { ...buildQuestion("Backend"), question: "How broad should the work be?", header: "Breadth" }] }, createTheme());
+
+  expect(component).toBeTruthy();
+  expect(renderComponentText(component!)).toContain("AskUserQuestion 2 questions (Scope, Breadth)");
+});
+
+test("AskUserQuestion renderResult shows cancelled output", () => {
+  const tool = getRegisteredAskUserQuestionTool();
+  const component = tool.renderResult?.(
+    {
+      content: [{ type: "text", text: "User cancelled the questionnaire" }],
+      details: {
+        questions: [],
+        answers: {},
+        cancelled: true,
+      },
+    },
+    {},
+    createTheme(),
+  );
+
+  expect(renderComponentText(component!)).toBe("Cancelled");
+});
+
+test("AskUserQuestion renderResult shows a single-choice answer", () => {
+  const tool = getRegisteredAskUserQuestionTool();
+  const component = tool.renderResult?.(
+    {
+      content: [{ type: "text", text: "unused" }],
+      details: {
+        questions: [
+          {
+            question: "Which scope should we use?",
+            header: "Scope",
+            options: [
+              {
+                label: "Repo local",
+                description: "Only touch the current repository.",
+              },
+              {
+                label: "Docs only",
+                description: "Limit the work to documentation changes.",
+              },
+            ],
+            multiSelect: false,
+          },
+        ],
+        answers: {
+          "Which scope should we use?": "Repo local",
+        },
+        cancelled: false,
+      },
+    },
+    {},
+    createTheme(),
+  );
+
+  expect(renderComponentText(component!)).toBe("✓ Scope: Repo local");
+});
+
+test("AskUserQuestion renderResult shows a multi-choice answer", () => {
+  const tool = getRegisteredAskUserQuestionTool();
+  const component = tool.renderResult?.(
+    {
+      content: [{ type: "text", text: "unused" }],
+      details: {
+        questions: [
+          {
+            question: "Which scope should we use?",
+            header: "Scope",
+            options: [
+              {
+                label: "Repo local",
+                description: "Only touch the current repository.",
+              },
+              {
+                label: "Docs only",
+                description: "Limit the work to documentation changes.",
+              },
+            ],
+            multiSelect: true,
+          },
+        ],
+        answers: {
+          "Which scope should we use?": "Repo local, Docs only",
+        },
+        cancelled: false,
+      },
+    },
+    {},
+    createTheme(),
+  );
+
+  expect(renderComponentText(component!)).toBe("✓ Scope: Repo local, Docs only");
+});
+
+test("AskUserQuestion renderResult shows a custom-text answer", () => {
+  const tool = getRegisteredAskUserQuestionTool();
+  const component = tool.renderResult?.(
+    {
+      content: [{ type: "text", text: "unused" }],
+      details: {
+        questions: [
+          {
+            question: "Which scope should we use?",
+            header: "Scope",
+            options: [
+              {
+                label: "Repo local",
+                description: "Only touch the current repository.",
+              },
+              {
+                label: "Docs only",
+                description: "Limit the work to documentation changes.",
+              },
+            ],
+            multiSelect: false,
+          },
+        ],
+        answers: {
+          "Which scope should we use?": "Handle it with a custom workflow",
+        },
+        annotations: {
+          "Which scope should we use?": {
+            notes: "Handle it with a custom workflow",
+          },
+        },
+        cancelled: false,
+      },
+    },
+    {},
+    createTheme(),
+  );
+
+  expect(renderComponentText(component!)).toBe("✓ Scope: (wrote) Handle it with a custom workflow");
 });
 
 test("buildResultDetails formats answers, annotations, and strips the injected other option", () => {

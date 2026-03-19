@@ -12,6 +12,7 @@ import {
   truncateToWidth,
   Markdown,
   type MarkdownTheme,
+  Text,
   wrapTextWithAnsi,
 } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
@@ -374,6 +375,57 @@ export function buildResultContent(details: AskUserQuestionResultDetails): strin
   }
 
   return `User has answered your questions: ${parts.join(", ")}. You can now continue with the user's answers in mind.`;
+}
+
+function buildQuestionnaireCallSummary(
+  questions: AskUserQuestionQuestionConfig[] | undefined,
+  theme: AskUserQuestionTheme,
+): string {
+  const safeQuestions = questions ?? [];
+  const labels = safeQuestions
+    .map((question, index) => question.header?.trim() || `Q${index + 1}`)
+    .join(", ");
+
+  let text = theme.fg("toolTitle", "AskUserQuestion ");
+  text += theme.fg("muted", `${safeQuestions.length} question${safeQuestions.length === 1 ? "" : "s"}`);
+  if (labels) {
+    text += theme.fg("dim", ` (${truncateToWidth(labels, 40)})`);
+  }
+  return text;
+}
+
+function buildQuestionnaireResultLines(
+  details: AskUserQuestionResultDetails,
+  theme: AskUserQuestionTheme,
+): string[] {
+  if (details.cancelled) {
+    return [theme.fg("warning", "Cancelled")];
+  }
+
+  const lines: string[] = [];
+  for (const question of details.questions) {
+    const answer = details.answers[question.question];
+    if (!answer) {
+      continue;
+    }
+
+    const annotation = details.annotations?.[question.question];
+    const hasSuggestedOptionMatch = question.options.some((option) => answer.includes(option.label));
+    const label = question.header || question.question;
+    const renderedAnswer = !hasSuggestedOptionMatch && annotation?.notes
+      ? `${theme.fg("muted", "(wrote) ")}${annotation.notes}`
+      : answer;
+    lines.push(`${theme.fg("success", "✓ ")}${theme.fg("accent", label)}: ${renderedAnswer}`);
+  }
+
+  if (lines.length > 0) {
+    return lines;
+  }
+
+  const text = details.answers && Object.keys(details.answers).length === 0
+    ? "User cancelled the questionnaire"
+    : buildResultContent(details);
+  return [text];
 }
 
 export class AskUserQuestionComponent {
@@ -952,6 +1004,20 @@ export function registerAskUserQuestionTool(pi: ExtensionAPI): void {
         content: [{ type: "text", text: contentText }],
         details: result,
       };
+    },
+
+    renderCall(args, theme) {
+      return new Text(buildQuestionnaireCallSummary(args.questions, theme), 0, 0);
+    },
+
+    renderResult(result, _options, theme) {
+      const details = result.details as AskUserQuestionResultDetails | undefined;
+      if (!details) {
+        const text = result.content[0];
+        return new Text(text?.type === "text" ? text.text : "", 0, 0);
+      }
+
+      return new Text(buildQuestionnaireResultLines(details, theme).join("\n"), 0, 0);
     },
   });
 }
