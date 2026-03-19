@@ -273,6 +273,17 @@ async function invokeToolCall(
   return handler?.(event, harness.ctx);
 }
 
+async function expectPlanStatus(
+  harness: ReturnType<typeof createPlanExtensionHarness>,
+  message: string,
+) {
+  await harness.runCommand("plan", "status");
+  expect(harness.uiStub.notifications.at(-1)).toEqual({
+    message,
+    level: "info",
+  });
+}
+
 async function assertPlanStateReset(
   harness: ReturnType<typeof createPlanExtensionHarness>,
   eventName: "session_switch" | "session_fork" | "session_compact",
@@ -553,6 +564,35 @@ test("one-shot /plan task enables plan mode and starts a correlated planning req
   expect(harness.sentUserMessages).toHaveLength(1);
   expect(harness.sentUserMessages[0]).toContain("Investigate flaky prompt extraction");
   expect(extractRequestId(harness.sentUserMessages[0] ?? "")).toBeTruthy();
+});
+
+test("plan status reflects guided idle and planning phases", async () => {
+  const harness = createPlanExtensionHarness({ hasUI: true });
+
+  await expectPlanStatus(harness, "Plan mode: OFF (default YOLO mode)");
+
+  await harness.runCommand("plan", "Investigate flaky prompt extraction");
+
+  await expectPlanStatus(harness, "Plan mode: ON (read-only planning)");
+});
+
+test("plan status reflects the guided approval phase", async () => {
+  const harness = createPlanExtensionHarness({ hasUI: true });
+
+  await enterApprovalState(harness);
+
+  await expectPlanStatus(harness, "Plan mode: ON (read-only planning)");
+});
+
+test("plan status reflects the guided executing phase", async () => {
+  const harness = createPlanExtensionHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+  });
+
+  await enterExecutionState(harness);
+
+  await expectPlanStatus(harness, "Plan mode: OFF (executing approved plan)");
 });
 
 test("planningPolicy blocks write-like tools and mutating bash during planning", async () => {

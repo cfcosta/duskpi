@@ -294,15 +294,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     }
 
     if (["status", "state"].includes(command)) {
-      notify(
-        this.pi,
-        ctx,
-        this.planModeEnabled
-          ? "Plan mode: ON (read-only planning)"
-          : this.executionMode
-            ? "Plan mode: OFF (executing approved plan)"
-            : "Plan mode: OFF (default YOLO mode)",
-      );
+      notify(this.pi, ctx, this.getPlanStatusText());
       return { kind: "ok" };
     }
 
@@ -503,6 +495,21 @@ export class PiPlanWorkflow extends GuidedWorkflow {
 
     ctx.ui.setStatus(STATUS_KEY, undefined);
     ctx.ui.setWidget(TODO_WIDGET_KEY, undefined);
+  }
+
+  private getPlanStatusText(): string {
+    const state = this.getStateSnapshot();
+    const execution = this.getExecutionSnapshot();
+
+    if (state.phase === "planning" || state.phase === "approval") {
+      return "Plan mode: ON (read-only planning)";
+    }
+
+    if (state.phase === "executing" && execution.items.length > 0) {
+      return "Plan mode: OFF (executing approved plan)";
+    }
+
+    return "Plan mode: OFF (default YOLO mode)";
   }
 
   private hasPendingPlanningRequest(): boolean {
