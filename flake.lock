@@ -136,10 +136,27 @@
         "type": "github"
       }
     },
+    "pi-autoresearch": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1773910144,
+        "narHash": "sha256-ljI3//9fzq8XTCXyMNXB+3GXxnK8Ou4vWKw3+6EO0fY=",
+        "owner": "davebcn87",
+        "repo": "pi-autoresearch",
+        "rev": "cf1bbf03debca8f3fb2cca2c3e799b9e23320f87",
+        "type": "github"
+      },
+      "original": {
+        "owner": "davebcn87",
+        "repo": "pi-autoresearch",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
         "llm-agents": "llm-agents",
         "nixpkgs": "nixpkgs",
+        "pi-autoresearch": "pi-autoresearch",
         "skill-design-taste-frontend": "skill-design-taste-frontend",
         "skill-visual-explainer": "skill-visual-explainer"
       }

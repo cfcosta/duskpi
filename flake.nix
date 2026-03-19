@@ -10,6 +10,10 @@
       url = "github:nicobailon/visual-explainer";
       flake = false;
     };
+    pi-autoresearch = {
+      url = "github:davebcn87/pi-autoresearch";
+      flake = false;
+    };
 
     llm-agents = {
       url = "github:numtide/llm-agents.nix";
@@ -76,6 +80,10 @@
 
               cp -rf ${./extensions}/* $out/extensions/
               cp -rf ${./packages}/* $out/packages/
+
+              mkdir -p $out/packages/pi-autoresearch
+              cp -rf ${inputs.pi-autoresearch}/* $out/packages/pi-autoresearch/
+
               cp -rf ${./prompts}/* $out/prompts/
               cp -rf ${./themes}/* $out/themes/
               cp -rf ${./skills}/rust-proptest $out/skills/rust-proptest
@@ -102,10 +110,12 @@
                 "pi": {
                   "theme": "catppuccin-mocha",
                   "extensions": [
-                    "./extensions/*/index.ts"
+                    "./extensions/*/index.ts",
+                    "./packages/pi-autoresearch/extensions"
                   ],
                   "skills": [
-                    "./skills"
+                    "./skills",
+                    "./packages/pi-autoresearch/skills"
                   ],
                   "prompts": [
                     "./prompts"
@@ -135,7 +145,9 @@
                 --add-flags "--extension $out/extensions/catppuccin/index.ts" \
                 --add-flags "--extension $out/extensions/plan/index.ts" \
                 --add-flags "--extension $out/extensions/btw/index.ts" \
+                --add-flags "--extension $out/packages/pi-autoresearch/extensions/pi-autoresearch/index.ts" \
                 --add-flags "--skill $out/skills" \
+                --add-flags "--skill $out/packages/pi-autoresearch/skills" \
                 --add-flags "--prompt-template $out/prompts" \
                 --add-flags "--theme $out/themes"
             '';
