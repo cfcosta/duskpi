@@ -3,8 +3,11 @@ import type {
   BeforeAgentStartEvent,
   ExtensionAPI,
   ExtensionContext,
+  SessionCompactEvent,
+  SessionForkEvent,
   SessionShutdownEvent,
   SessionStartEvent,
+  SessionSwitchEvent,
   ToolCallEvent,
   TurnEndEvent,
 } from "./extension-api";
@@ -16,6 +19,9 @@ export interface GuidedWorkflowController {
   handleBeforeAgentStart?(event: BeforeAgentStartEvent, ctx: ExtensionContext): unknown;
   handleTurnEnd?(event: TurnEndEvent, ctx: ExtensionContext): unknown;
   handleSessionStart?(event: SessionStartEvent, ctx: ExtensionContext): unknown;
+  handleSessionSwitch?(event: SessionSwitchEvent, ctx: ExtensionContext): unknown;
+  handleSessionFork?(event: SessionForkEvent, ctx: ExtensionContext): unknown;
+  handleSessionCompact?(event: SessionCompactEvent, ctx: ExtensionContext): unknown;
   handleSessionShutdown?(event: SessionShutdownEvent, ctx: ExtensionContext): unknown;
 }
 
@@ -54,6 +60,18 @@ export function registerGuidedWorkflowExtension(
 
   api.on("session_start", (event, ctx) => {
     return workflow.handleSessionStart?.(event as SessionStartEvent, ctx);
+  });
+
+  api.on("session_switch", (event, ctx) => {
+    return workflow.handleSessionSwitch?.(event as SessionSwitchEvent, ctx);
+  });
+
+  api.on("session_fork", (event, ctx) => {
+    return workflow.handleSessionFork?.(event as SessionForkEvent, ctx);
+  });
+
+  api.on("session_compact", (event, ctx) => {
+    return workflow.handleSessionCompact?.(event as SessionCompactEvent, ctx);
   });
 
   api.on("session_shutdown", (event, ctx) => {

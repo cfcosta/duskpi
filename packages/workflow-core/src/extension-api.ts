@@ -107,6 +107,20 @@ export interface SessionStartEvent {
   restored?: boolean;
 }
 
+export interface SessionSwitchEvent {
+  reason: "new" | "resume";
+  previousSessionFile: string | undefined;
+}
+
+export interface SessionForkEvent {
+  previousSessionFile: string | undefined;
+}
+
+export interface SessionCompactEvent {
+  compactionEntry: unknown;
+  fromExtension: boolean;
+}
+
 export interface SessionShutdownEvent {
   reason?: string;
 }
@@ -117,6 +131,9 @@ export interface ExtensionEventMap {
   before_agent_start: BeforeAgentStartEvent;
   turn_end: TurnEndEvent;
   session_start: SessionStartEvent;
+  session_switch: SessionSwitchEvent;
+  session_fork: SessionForkEvent;
+  session_compact: SessionCompactEvent;
   session_shutdown: SessionShutdownEvent;
 }
 
@@ -126,6 +143,9 @@ interface ExtensionEventContext {
   before_agent_start: ExtensionContext;
   turn_end: ExtensionContext;
   session_start: ExtensionContext;
+  session_switch: ExtensionContext;
+  session_fork: ExtensionContext;
+  session_compact: ExtensionContext;
   session_shutdown: ExtensionContext;
 }
 

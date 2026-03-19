@@ -8,6 +8,9 @@ import {
   type ExtensionTheme,
   type ExtensionUICustomFactory,
   type ExtensionWidgetFactory,
+  type SessionCompactEvent,
+  type SessionForkEvent,
+  type SessionSwitchEvent,
 } from "./index";
 
 function createContext(): ExtensionContext {
@@ -148,6 +151,18 @@ test("registerGuidedWorkflowExtension wires guided workflow handlers", async () 
       forwarded.push({ type: "session_start", payload: event, ctx });
       return "session-start-result";
     },
+    handleSessionSwitch(event: SessionSwitchEvent, ctx: ExtensionContext) {
+      forwarded.push({ type: "session_switch", payload: event, ctx });
+      return "session-switch-result";
+    },
+    handleSessionFork(event: SessionForkEvent, ctx: ExtensionContext) {
+      forwarded.push({ type: "session_fork", payload: event, ctx });
+      return "session-fork-result";
+    },
+    handleSessionCompact(event: SessionCompactEvent, ctx: ExtensionContext) {
+      forwarded.push({ type: "session_compact", payload: event, ctx });
+      return "session-compact-result";
+    },
     handleSessionShutdown(event: { reason?: string }, ctx: ExtensionContext) {
       forwarded.push({ type: "session_shutdown", payload: event, ctx });
       return "session-shutdown-result";
@@ -174,7 +189,22 @@ test("registerGuidedWorkflowExtension wires guided workflow handlers", async () 
   assert.ok(listeners.before_agent_start);
   assert.ok(listeners.turn_end);
   assert.ok(listeners.session_start);
+  assert.ok(listeners.session_switch);
+  assert.ok(listeners.session_fork);
+  assert.ok(listeners.session_compact);
   assert.ok(listeners.session_shutdown);
+
+  const sessionSwitchEvent: SessionSwitchEvent = {
+    reason: "resume",
+    previousSessionFile: "/tmp/previous.pi",
+  };
+  const sessionForkEvent: SessionForkEvent = {
+    previousSessionFile: "/tmp/previous.pi",
+  };
+  const sessionCompactEvent: SessionCompactEvent = {
+    compactionEntry: { id: "compact-1" },
+    fromExtension: true,
+  };
 
   assert.equal(commands.plan?.handler("scope", ctx), "command-result");
   assert.equal(
@@ -185,6 +215,9 @@ test("registerGuidedWorkflowExtension wires guided workflow handlers", async () 
   assert.deepEqual(listeners.before_agent_start?.({ systemPrompt: "base" }, ctx), beforeResult);
   assert.equal(listeners.turn_end?.({ message: { role: "assistant" } }, ctx), "turn-end-result");
   assert.equal(listeners.session_start?.({ restored: true }, ctx), "session-start-result");
+  assert.equal(listeners.session_switch?.(sessionSwitchEvent, ctx), "session-switch-result");
+  assert.equal(listeners.session_fork?.(sessionForkEvent, ctx), "session-fork-result");
+  assert.equal(listeners.session_compact?.(sessionCompactEvent, ctx), "session-compact-result");
   assert.equal(listeners.session_shutdown?.({ reason: "exit" }, ctx), "session-shutdown-result");
 
   assert.deepEqual(forwarded, [
@@ -194,6 +227,9 @@ test("registerGuidedWorkflowExtension wires guided workflow handlers", async () 
     { type: "before_agent_start", payload: { systemPrompt: "base" }, ctx },
     { type: "turn_end", payload: { message: { role: "assistant" } }, ctx },
     { type: "session_start", payload: { restored: true }, ctx },
+    { type: "session_switch", payload: sessionSwitchEvent, ctx },
+    { type: "session_fork", payload: sessionForkEvent, ctx },
+    { type: "session_compact", payload: sessionCompactEvent, ctx },
     { type: "session_shutdown", payload: { reason: "exit" }, ctx },
   ]);
 });
