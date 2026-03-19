@@ -42,7 +42,8 @@ Current shared capabilities:
 - approval callbacks for approve, continue, regenerate, and exit
 - execution item extraction and next-step prompt building
 - `[DONE:n]` progress syncing
-- session shutdown cleanup for guided state
+- forwarded guided session lifecycle hooks for `session_start`, `session_switch`, `session_fork`, `session_compact`, and `session_shutdown`
+- session-boundary cleanup hooks so guided consumers can reset transient state when sessions switch, fork, compact, or shut down
 
 Current repo consumer:
 

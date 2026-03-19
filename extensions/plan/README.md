@@ -9,12 +9,15 @@ This directory is the repo-local copy bundled under `extensions/plan`. It is not
 - default execution-first mode (YOLO)
 - read-only `/plan` mode for investigation and plan drafting
 - an internal hidden critique and revision pass before approval
+- one automatic draft-reformat retry when Pi returns a non-parseable plan without an explicit `Plan:` section
 - an approval menu with approve, continue, regenerate, and exit actions
+- non-UI approval fallback commands while approval is pending: `/plan approve`, `/plan continue <note>`, `/plan regenerate`, `/plan exit`
 - approval previews that show compact step summaries plus file and validation hints when available
-- `/todos` progress reporting that stays compact even when the plan contains richer step metadata
+- `/todos` progress reporting that stays compact during approved execution even when the plan contains richer step metadata
 - step-by-step approved execution with one `jj` commit per plan step
 - execution prompts that reuse the original step objective plus files, validation, and rollback notes when the plan includes them
-- status and todo-widget output backed by shared guided workflow state
+- status text derived from guided workflow snapshots and todo-widget output derived from guided execution snapshots
+- transient plan state reset on `session_switch`, `session_fork`, and `session_compact`
 
 ```txt
 /plan on
@@ -30,7 +33,9 @@ Sometimes you want speed. Sometimes you want a review point before the first edi
 - default workflows stay fast because normal mode still executes directly
 - planning mode stays read-only until you approve execution
 - every draft plan gets a critique pass before the approval UI appears
+- malformed drafts get one automatic restatement retry before the extension surfaces a visible failure
 - approved plans run one step at a time with tracked progress
+- session switches, forks, and compaction do not carry stale transient plan state into the next boundary
 
 ## Repo architecture
 
@@ -76,7 +81,7 @@ This enables plan mode if needed and immediately starts the planning request.
 
 ### 3) Review, refine, or approve
 
-After a plan is generated, Pi first runs an internal hidden critique pass. The critique and revision prompts stay out of the visible chat, while status notifications still appear normally. Once the plan passes critique, you get an approval menu with:
+After a plan is generated, Pi first runs an internal hidden critique pass. The critique and revision prompts stay out of the visible chat, while status notifications still appear normally. If Pi responds with a draft that still does not contain a parseable `Plan:` section, the extension automatically asks for one restatement using the required contract before surfacing a visible failure. Once the plan passes critique, you get an approval menu with:
 
 - a compact review summary built from the first extracted plan steps
 - per-step file/component and validation hints when the plan includes them
@@ -95,6 +100,13 @@ Choosing **Approve and execute now** automatically:
 4. includes the original step objective plus any parsed files, validation notes, and rollback notes in the execution prompt,
 5. expects one atomic `jj` commit for that step,
 6. then prompts the next remaining step until the todo list is complete.
+
+If no interactive UI is available while approval is pending, the same approval state can be resolved through slash commands instead:
+
+- `/plan approve`
+- `/plan continue <note>`
+- `/plan regenerate`
+- `/plan exit`
 
 ## Modes
 
@@ -129,6 +141,7 @@ If plan mode hits a real ambiguity that would change the design, the agent can u
 - tabbed navigation when there is more than one question
 - a dedicated preview pane for the focused option, with markdown-style rendering for richer previews
 - side-by-side choices/preview layout on wide terminals, with a stacked fallback on narrow terminals
+- explicit `PlanActionComponent` and `AskUserQuestionComponent` classes now back the approval and questionnaire UIs, so width-aware caching and nested editor focus propagation live in dedicated components instead of anonymous render objects
 
 ## Plan output contract
 
@@ -141,9 +154,9 @@ In plan mode, the system prompt now follows a Claude Code-style planning flow an
 5. Plan (step objective, target files or components, validation)
 6. End with: `Ready to execute when approved.`
 
-Before approval is shown, Pi critiques the draft plan for atomicity, ordering, specificity, validation quality, executability, and metadata noise. Weak plans are automatically sent back for refinement through hidden extension messages.
+Before approval is shown, Pi critiques the draft plan for atomicity, ordering, specificity, validation quality, executability, and metadata noise. Weak plans are automatically sent back for refinement through hidden extension messages. If Pi returns a draft without a parseable `Plan:` section, the extension now sends one automatic restatement request that preserves the same intent but explicitly asks for the required contract and numbered `Plan:` steps. If the second draft is still unparseable, approval is not opened and plan mode stays read-only with a visible failure notification.
 
-When a plan includes nested step metadata like target files/components, validation method, or risks and rollback notes, the extension now preserves that structure for approval previews and execution prompts while keeping `/todos` and the widget intentionally one-line and compact.
+When a plan includes nested step metadata like target files/components, validation method, or risks and rollback notes, the extension now preserves that structure for approval previews and execution prompts while keeping `/todos` and the widget intentionally one-line and compact during approved execution.
 
 ## Commands
 
@@ -154,7 +167,11 @@ When a plan includes nested step metadata like target files/components, validati
 - `/plan off` — disable plan mode
 - `/plan status` — show current status
 - `/plan <task>` — enable mode if needed and start planning for `<task>`
-- `/todos` — show tracked plan progress (`✓` and `○`) from extracted `Plan:` steps and `[DONE:n]` markers, using compact labels even if the underlying plan stores richer metadata
+- `/plan approve` — when approval is pending and no interactive UI is available, approve and start execution
+- `/plan continue <note>` — when approval is pending and no interactive UI is available, continue planning with a required note
+- `/plan regenerate` — when approval is pending and no interactive UI is available, rebuild the plan from scratch
+- `/plan exit` — when approval is pending and no interactive UI is available, leave plan mode and clear tracked plan state
+- `/todos` — show tracked approved-execution progress (`✓` and `○`) from guided execution items, using compact labels even if the underlying plan stores richer metadata
 - approved execution runs one step per turn, requires one atomic `jj` commit for that step, then auto-continues to the next remaining todo
 - after each planning turn, the action menu includes:
   - a compact review summary for the extracted plan
@@ -165,12 +182,19 @@ When a plan includes nested step metadata like target files/components, validati
   - `Continue from proposed plan` _(inline note optional via `Tab` or `E`; without a note, Pi prompts for modification input and waits)_
   - `Regenerate plan` _(no additional note required)_
 
+### Session boundary behavior
+
+When `session_switch`, `session_fork`, or `session_compact` fires, the extension resets transient plan state instead of trying to carry it across boundaries.
+
+That reset restores the normal tool set, clears footer status and the todo widget, and leaves `/todos` empty until a new approved execution starts in the new session state.
+
 ## Project structure
 
 - `index.ts` - extension entry re-export
 - `src/index.ts` - guided bootstrap and `/todos` command wiring
 - `src/workflow.ts` - `PiPlanWorkflow` built on shared `GuidedWorkflow`
-- `src/plan-action-ui.ts` - approval action UI
+- `src/plan-action-ui.ts` - `PlanActionComponent` approval UI
+- `src/ask-user-question-tool.ts` - `AskUserQuestion` tool plus `AskUserQuestionComponent`
 - `src/utils.ts` - read-only bash checks, structured plan-step parsing, and compact todo derivation helpers
 - `src/index.test.ts` - extension regression coverage
 - `plan.md` - repo-local architecture and feature notes
