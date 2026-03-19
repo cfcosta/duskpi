@@ -37,6 +37,7 @@ Use `GuidedWorkflow` when the extension needs a more interactive planning lifecy
 Current shared capabilities:
 
 - correlated planning requests via embedded workflow request ids
+- bounded recovery when assistant output is empty or invalid during planning, critique, or revision turns
 - hidden critique and revision follow-ups through `sendMessage(...)`
 - planning-time tool and shell safety hooks
 - approval callbacks for approve, continue, regenerate, and exit

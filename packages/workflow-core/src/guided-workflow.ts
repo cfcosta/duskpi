@@ -38,6 +38,8 @@ interface GuidedWorkflowText {
   sendFailed?: string;
 }
 
+type PendingPromptDelivery = "user" | "hidden";
+
 export interface GuidedWorkflowCritiqueOptions {
   buildCritiquePrompt: (args: { goal?: string; planText: string }) => string;
   buildRevisionPrompt: (args: {
@@ -115,22 +117,29 @@ export interface GuidedWorkflowOptions {
   planningPolicy?: GuidedWorkflowPlanningPolicy;
   approval?: GuidedWorkflowApprovalOptions;
   execution?: GuidedWorkflowExecutionOptions;
+  maxMissingOutputRetries?: number;
   text: GuidedWorkflowText;
 }
 
 export class GuidedWorkflow implements GuidedWorkflowController {
   private state: GuidedWorkflowState = this.createIdleState();
   private requestSequence = 0;
+  private missingOutputRetries = 0;
   private pendingResponseKind?: PendingResponseKind;
+  private pendingPromptText?: string;
+  private pendingPromptDelivery?: PendingPromptDelivery;
   private latestPlanText?: string;
   private latestCritiqueText?: string;
   private executionItems: GuidedWorkflowExecutionItem[] = [];
   private executionNote?: string;
+  private readonly maxMissingOutputRetries: number;
 
   constructor(
     private readonly api: ExtensionAPI,
     private readonly options: GuidedWorkflowOptions,
-  ) {}
+  ) {
+    this.maxMissingOutputRetries = options.maxMissingOutputRetries ?? 2;
+  }
 
   getStateSnapshot(): GuidedWorkflowState {
     return { ...this.state };
@@ -166,6 +175,9 @@ export class GuidedWorkflow implements GuidedWorkflowController {
       awaitingResponse: true,
     };
     this.pendingResponseKind = "planning";
+    this.pendingPromptText = prompt;
+    this.pendingPromptDelivery = "user";
+    this.missingOutputRetries = 0;
     this.latestPlanText = undefined;
     this.latestCritiqueText = undefined;
 
@@ -230,8 +242,12 @@ export class GuidedWorkflow implements GuidedWorkflowController {
 
     const assistantResult = getLastAssistantTextResult(eventMessages);
     if (assistantResult.kind !== "ok") {
-      return { kind: "blocked", reason: "missing_assistant_output" };
+      return this.handleMissingAssistantOutput(ctx);
     }
+
+    this.missingOutputRetries = 0;
+    this.pendingPromptText = undefined;
+    this.pendingPromptDelivery = undefined;
 
     if (this.pendingResponseKind === "critique") {
       return this.handleCritiqueResponse(assistantResult.text, ctx);
@@ -306,6 +322,51 @@ export class GuidedWorkflow implements GuidedWorkflowController {
     return { kind: "ok" };
   }
 
+  private handleMissingAssistantOutput(ctx: ExtensionContext): GuidedWorkflowResult {
+    this.missingOutputRetries += 1;
+
+    if (this.missingOutputRetries > this.maxMissingOutputRetries) {
+      const attempts = this.maxMissingOutputRetries + 1;
+      this.resetWorkflowState();
+      ctx.ui.notify(
+        `Guided workflow stopped: assistant output stayed empty or invalid after ${attempts} attempts.`,
+        "error",
+      );
+      return { kind: "recoverable_error", reason: "max_missing_output_retries" };
+    }
+
+    ctx.ui.notify(
+      `Guided workflow response was empty or invalid during ${describePendingResponseKind(this.pendingResponseKind)}. Retrying (${this.missingOutputRetries}/${this.maxMissingOutputRetries}).`,
+      "warning",
+    );
+
+    const retryResult = this.retryPendingPrompt(ctx);
+    return retryResult.kind === "ok"
+      ? { kind: "recoverable_error", reason: "empty_output_retry" }
+      : retryResult;
+  }
+
+  private retryPendingPrompt(ctx: ExtensionContext): GuidedWorkflowResult {
+    if (!this.pendingPromptText || !this.pendingPromptDelivery || !this.pendingResponseKind) {
+      this.resetWorkflowState();
+      ctx.ui.notify(
+        "Guided workflow stopped: missing pending prompt state for recovery.",
+        "error",
+      );
+      return { kind: "recoverable_error", reason: "missing_pending_prompt" };
+    }
+
+    if (this.pendingPromptDelivery === "hidden") {
+      return this.sendHiddenFollowUp(this.pendingPromptText, this.pendingResponseKind, ctx, {
+        preserveMissingOutputRetries: true,
+      });
+    }
+
+    return this.sendPlanningFollowUp(this.pendingPromptText, ctx, {
+      preserveMissingOutputRetries: true,
+    });
+  }
+
   private async handleCritiqueResponse(
     critiqueText: string,
     ctx: ExtensionContext,
@@ -357,6 +418,7 @@ export class GuidedWorkflow implements GuidedWorkflowController {
     prompt: string,
     nextResponseKind: PendingResponseKind,
     ctx: ExtensionContext,
+    options: { preserveMissingOutputRetries?: boolean } = {},
   ): GuidedWorkflowResult {
     const requestId = this.nextRequestId();
     const promptWithRequestId = `${prompt}\n\n${requestIdMarker(requestId)}`;
@@ -389,6 +451,11 @@ export class GuidedWorkflow implements GuidedWorkflowController {
       awaitingResponse: true,
     };
     this.pendingResponseKind = nextResponseKind;
+    this.pendingPromptText = prompt;
+    this.pendingPromptDelivery = "hidden";
+    if (!options.preserveMissingOutputRetries) {
+      this.missingOutputRetries = 0;
+    }
     return { kind: "ok" };
   }
 
@@ -461,7 +528,7 @@ export class GuidedWorkflow implements GuidedWorkflowController {
   private sendPlanningFollowUp(
     prompt: string,
     ctx: ExtensionContext,
-    options: { resetDraftState?: boolean } = {},
+    options: { resetDraftState?: boolean; preserveMissingOutputRetries?: boolean } = {},
   ): GuidedWorkflowResult {
     const requestId = this.nextRequestId();
     const promptWithRequestId = `${prompt}\n\n${requestIdMarker(requestId)}`;
@@ -489,6 +556,11 @@ export class GuidedWorkflow implements GuidedWorkflowController {
       awaitingResponse: true,
     };
     this.pendingResponseKind = "planning";
+    this.pendingPromptText = prompt;
+    this.pendingPromptDelivery = "user";
+    if (!options.preserveMissingOutputRetries) {
+      this.missingOutputRetries = 0;
+    }
     return { kind: "ok" };
   }
 
@@ -590,7 +662,10 @@ export class GuidedWorkflow implements GuidedWorkflowController {
 
   private resetWorkflowState() {
     this.state = this.createIdleState();
+    this.missingOutputRetries = 0;
     this.pendingResponseKind = undefined;
+    this.pendingPromptText = undefined;
+    this.pendingPromptDelivery = undefined;
     this.latestPlanText = undefined;
     this.latestCritiqueText = undefined;
     this.executionItems = [];
@@ -713,6 +788,18 @@ function isDefaultMutatingToolName(toolName?: string): boolean {
 function normalizeNote(note?: string): string | undefined {
   const normalized = note?.replace(/\s+/g, " ").trim();
   return normalized && normalized.length > 0 ? normalized : undefined;
+}
+
+function describePendingResponseKind(kind?: PendingResponseKind): string {
+  if (kind === "critique") {
+    return "the critique review";
+  }
+
+  if (kind === "revision") {
+    return "the revision draft";
+  }
+
+  return "the planning response";
 }
 
 function buildDefaultContinuePrompt(args: GuidedWorkflowApprovalPromptArgs): string {

@@ -294,6 +294,86 @@ test("GuidedWorkflow ignores unmatched agent_end payloads while awaiting the act
   });
 });
 
+test("GuidedWorkflow retries a missing planning response once and then resets cleanly", async () => {
+  const { api, sentUserMessages } = createApi();
+  const workflow = new GuidedWorkflow(api, {
+    id: "guided-test",
+    maxMissingOutputRetries: 1,
+    parseGoalArg: parseTrimmedStringArg,
+    text: { alreadyRunning: "guided running" },
+  });
+  const { ctx, notifications } = createContext();
+
+  await workflow.handleCommand("first run", ctx);
+
+  const retryResult = await workflow.handleAgentEnd(
+    {
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "text", text: sentUserMessages[0]! }],
+        },
+        {
+          role: "assistant",
+          content: [{ type: "tool_result", text: "ignored" }],
+        },
+      ],
+    },
+    ctx,
+  );
+
+  assert.deepEqual(retryResult, { kind: "recoverable_error", reason: "empty_output_retry" });
+  assert.equal(sentUserMessages.length, 2);
+  assert.notEqual(extractRequestId(sentUserMessages[1]!), extractRequestId(sentUserMessages[0]!));
+  assert.deepEqual(workflow.getStateSnapshot(), {
+    phase: "planning",
+    goal: "first run",
+    pendingRequestId: "guided-test-2",
+    awaitingResponse: true,
+  });
+  assert.deepEqual(notifications.at(-1), {
+    level: "warning",
+    message:
+      "Guided workflow response was empty or invalid during the planning response. Retrying (1/1).",
+  });
+
+  const stopResult = await workflow.handleAgentEnd(
+    {
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "text", text: sentUserMessages[1]! }],
+        },
+        {
+          role: "assistant",
+          content: [{ type: "tool_result", text: "ignored" }],
+        },
+      ],
+    },
+    ctx,
+  );
+
+  assert.deepEqual(stopResult, {
+    kind: "recoverable_error",
+    reason: "max_missing_output_retries",
+  });
+  assert.deepEqual(workflow.getStateSnapshot(), {
+    phase: "idle",
+    goal: undefined,
+    pendingRequestId: undefined,
+    awaitingResponse: false,
+  });
+  assert.deepEqual(notifications.at(-1), {
+    level: "error",
+    message: "Guided workflow stopped: assistant output stayed empty or invalid after 2 attempts.",
+  });
+
+  const restart = await workflow.handleCommand("second run", ctx);
+  assert.deepEqual(restart, { kind: "ok" });
+  assert.equal(sentUserMessages.length, 3);
+  assert.equal(extractRequestId(sentUserMessages[2]!), "guided-test-3");
+});
+
 test("GuidedWorkflow advances to approval after a matched planning response", async () => {
   const { api, sentUserMessages } = createApi();
   const workflow = new GuidedWorkflow(api, {
@@ -373,6 +453,73 @@ test("GuidedWorkflow sends hidden critique follow-ups after a planning response"
   });
 });
 
+test("GuidedWorkflow retries invalid critique output with a fresh hidden follow-up", async () => {
+  const { api, sentUserMessages, sentCustomMessages } = createApi();
+  const workflow = new GuidedWorkflow(api, {
+    id: "guided-test",
+    maxMissingOutputRetries: 1,
+    parseGoalArg: parseTrimmedStringArg,
+    critique: createCritiqueOptions(),
+    text: { alreadyRunning: "guided running" },
+  });
+  const { ctx, notifications } = createContext();
+
+  await workflow.handleCommand("first run", ctx);
+  await workflow.handleAgentEnd(
+    {
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "text", text: sentUserMessages[0]! }],
+        },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "draft plan" }],
+        },
+      ],
+    },
+    ctx,
+  );
+
+  const firstCritiquePrompt = String(sentCustomMessages[0]?.content);
+  const result = await workflow.handleAgentEnd(
+    {
+      messages: [
+        {
+          role: "custom",
+          content: firstCritiquePrompt,
+        },
+        {
+          role: "assistant",
+          content: "invalid-payload",
+        },
+      ],
+    },
+    ctx,
+  );
+
+  assert.deepEqual(result, { kind: "recoverable_error", reason: "empty_output_retry" });
+  assert.equal(sentCustomMessages.length, 2);
+  assert.deepEqual(sentCustomMessages[1], {
+    customType: "guided-test-internal",
+    content: `Critique the plan:\n\ndraft plan\n\n<!-- workflow-request-id:guided-test-3 -->`,
+    display: false,
+    triggerTurn: true,
+    deliverAs: "followUp",
+  });
+  assert.deepEqual(workflow.getStateSnapshot(), {
+    phase: "planning",
+    goal: "first run",
+    pendingRequestId: "guided-test-3",
+    awaitingResponse: true,
+  });
+  assert.deepEqual(notifications.at(-1), {
+    level: "warning",
+    message:
+      "Guided workflow response was empty or invalid during the critique review. Retrying (1/1).",
+  });
+});
+
 test("GuidedWorkflow sends a hidden revision follow-up after a REFINE critique", async () => {
   const { api, sentUserMessages, sentCustomMessages } = createApi();
   const workflow = new GuidedWorkflow(api, {
@@ -431,6 +578,89 @@ test("GuidedWorkflow sends a hidden revision follow-up after a REFINE critique",
     goal: "first run",
     pendingRequestId: "guided-test-3",
     awaitingResponse: true,
+  });
+});
+
+test("GuidedWorkflow retries missing revision output with a fresh hidden follow-up", async () => {
+  const { api, sentUserMessages, sentCustomMessages } = createApi();
+  const workflow = new GuidedWorkflow(api, {
+    id: "guided-test",
+    maxMissingOutputRetries: 1,
+    parseGoalArg: parseTrimmedStringArg,
+    critique: createCritiqueOptions(),
+    text: { alreadyRunning: "guided running" },
+  });
+  const { ctx, notifications } = createContext();
+
+  await workflow.handleCommand("first run", ctx);
+  await workflow.handleAgentEnd(
+    {
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "text", text: sentUserMessages[0]! }],
+        },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "draft plan" }],
+        },
+      ],
+    },
+    ctx,
+  );
+  await workflow.handleAgentEnd(
+    {
+      messages: [
+        {
+          role: "custom",
+          content: String(sentCustomMessages[0]?.content),
+        },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "1) Verdict: REFINE\n2) Issues:\n- split a step" }],
+        },
+      ],
+    },
+    ctx,
+  );
+
+  const firstRevisionPrompt = String(sentCustomMessages[1]?.content);
+  const result = await workflow.handleAgentEnd(
+    {
+      messages: [
+        {
+          role: "custom",
+          content: firstRevisionPrompt,
+        },
+        {
+          role: "assistant",
+          content: [{ type: "tool_result", text: "ignored" }],
+        },
+      ],
+    },
+    ctx,
+  );
+
+  assert.deepEqual(result, { kind: "recoverable_error", reason: "empty_output_retry" });
+  assert.equal(sentCustomMessages.length, 3);
+  assert.deepEqual(sentCustomMessages[2], {
+    customType: "guided-test-internal",
+    content:
+      "Revise the plan after REFINE:\n\ndraft plan\n\nCritique:\n\n1) Verdict: REFINE\n2) Issues:\n- split a step\n\n<!-- workflow-request-id:guided-test-4 -->",
+    display: false,
+    triggerTurn: true,
+    deliverAs: "followUp",
+  });
+  assert.deepEqual(workflow.getStateSnapshot(), {
+    phase: "planning",
+    goal: "first run",
+    pendingRequestId: "guided-test-4",
+    awaitingResponse: true,
+  });
+  assert.deepEqual(notifications.at(-1), {
+    level: "warning",
+    message:
+      "Guided workflow response was empty or invalid during the revision draft. Retrying (1/1).",
   });
 });
 
