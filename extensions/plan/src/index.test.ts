@@ -264,6 +264,15 @@ async function enterExecutionState(harness: ReturnType<typeof createPlanExtensio
   );
 }
 
+async function invokeToolCall(
+  harness: ReturnType<typeof createPlanExtensionHarness>,
+  event: { toolName?: string; input?: unknown },
+) {
+  const handler = harness.eventHandlers.get("tool_call")?.[0];
+  expect(handler).toBeTruthy();
+  return handler?.(event, harness.ctx);
+}
+
 async function assertPlanStateReset(
   harness: ReturnType<typeof createPlanExtensionHarness>,
   eventName: "session_switch" | "session_fork" | "session_compact",
@@ -544,6 +553,50 @@ test("one-shot /plan task enables plan mode and starts a correlated planning req
   expect(harness.sentUserMessages).toHaveLength(1);
   expect(harness.sentUserMessages[0]).toContain("Investigate flaky prompt extraction");
   expect(extractRequestId(harness.sentUserMessages[0] ?? "")).toBeTruthy();
+});
+
+test("planningPolicy blocks write-like tools and mutating bash during planning", async () => {
+  const harness = createPlanExtensionHarness();
+
+  await harness.runCommand("plan", "Investigate flaky prompt extraction");
+
+  for (const toolName of ["edit", "write", "ast_rewrite"]) {
+    expect(await invokeToolCall(harness, { toolName })).toEqual({
+      block: true,
+      reason: "Plan mode is read-only. Approve execution first (choose 'Approve and execute now').",
+    });
+  }
+
+  expect(await invokeToolCall(harness, { toolName: "bash", input: { command: "rm -rf tmp" } })).toEqual(
+    {
+      block: true,
+      reason: "Plan mode blocked a potentially mutating bash command: rm -rf tmp",
+    },
+  );
+
+  expect(await invokeToolCall(harness, { toolName: "bash", input: { command: "ls -la" } })).toBeUndefined();
+});
+
+test("planningPolicy keeps write-like and bash blocking active during approval", async () => {
+  const harness = createPlanExtensionHarness({ hasUI: true });
+
+  await enterApprovalState(harness);
+
+  for (const toolName of ["edit", "write", "ast_rewrite"]) {
+    expect(await invokeToolCall(harness, { toolName })).toEqual({
+      block: true,
+      reason: "Plan mode is read-only. Approve execution first (choose 'Approve and execute now').",
+    });
+  }
+
+  expect(await invokeToolCall(harness, { toolName: "bash", input: { command: "rm -rf tmp" } })).toEqual(
+    {
+      block: true,
+      reason: "Plan mode blocked a potentially mutating bash command: rm -rf tmp",
+    },
+  );
+
+  expect(await invokeToolCall(harness, { toolName: "bash", input: { command: "ls -la" } })).toBeUndefined();
 });
 
 test("correlated /plan requests ignore unmatched agent_end payloads", async () => {

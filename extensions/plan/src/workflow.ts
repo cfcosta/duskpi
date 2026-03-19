@@ -49,6 +49,20 @@ const PLAN_TOOL_CANDIDATES = [
 ] as const;
 
 const WRITE_LIKE_TOOLS = new Set(["edit", "write", "ast_rewrite"]);
+const PLAN_MODE_WRITE_BLOCKED_REASON =
+  "Plan mode is read-only. Approve execution first (choose 'Approve and execute now').";
+
+function isPlanWriteCapableTool(toolName?: string): boolean {
+  return WRITE_LIKE_TOOLS.has((toolName ?? "").trim().toLowerCase());
+}
+
+function isBashToolName(toolName?: string): boolean {
+  return (toolName ?? "").trim().toLowerCase() === "bash";
+}
+
+function buildPlanModeBashBlockedReason(command: string): string {
+  return `Plan mode blocked a potentially mutating bash command: ${command}`;
+}
 
 const PLAN_MODE_SYSTEM_PROMPT = `
 [PLAN MODE ACTIVE - READ ONLY]
@@ -191,6 +205,18 @@ export class PiPlanWorkflow extends GuidedWorkflow {
         parseCritiqueVerdict,
         customMessageType: "plan-internal",
       },
+      planningPolicy: {
+        isWriteCapableTool(toolName) {
+          return isPlanWriteCapableTool(toolName);
+        },
+        isSafeReadOnlyCommand(command) {
+          return isSafeReadOnlyCommand(command);
+        },
+        writeBlockedReason: PLAN_MODE_WRITE_BLOCKED_REASON,
+        bashBlockedReason(command) {
+          return buildPlanModeBashBlockedReason(command);
+        },
+      },
       approval: {
         async selectAction(args, ctx) {
           return self.selectApprovalAction(args, ctx);
@@ -289,27 +315,30 @@ export class PiPlanWorkflow extends GuidedWorkflow {
 
   async handleToolCall(
     event: ToolCallEvent,
-    _ctx: ExtensionContext,
+    ctx: ExtensionContext,
   ): Promise<{ block: true; reason: string } | void> {
     if (!this.planModeEnabled) {
       return;
     }
 
-    if (WRITE_LIKE_TOOLS.has(event.toolName ?? "")) {
+    if (this.getStateSnapshot().phase !== "idle") {
+      return super.handleToolCall(event, ctx);
+    }
+
+    if (isPlanWriteCapableTool(event.toolName)) {
       return {
         block: true,
-        reason:
-          "Plan mode is read-only. Approve execution first (choose 'Approve and execute now').",
+        reason: PLAN_MODE_WRITE_BLOCKED_REASON,
       };
     }
 
-    if (event.toolName === "bash") {
+    if (isBashToolName(event.toolName)) {
       const input = event.input as { command?: unknown };
       const command = typeof input.command === "string" ? input.command : "";
       if (!isSafeReadOnlyCommand(command)) {
         return {
           block: true,
-          reason: `Plan mode blocked a potentially mutating bash command: ${command}`,
+          reason: buildPlanModeBashBlockedReason(command),
         };
       }
     }
