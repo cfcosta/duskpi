@@ -396,6 +396,29 @@ test("real skeptic prompt rejects weak security findings", () => {
   );
 });
 
+test("real arbiter prompt requires repo-specific fix-now triage", () => {
+  const promptDirectory = path.join(path.dirname(new URL(import.meta.url).pathname), "prompts");
+  const loaded = loadPrompts(promptDirectory);
+
+  assert.equal(loaded.ok, true);
+  if (!loaded.ok) {
+    return;
+  }
+
+  assert.match(loaded.prompts.arbiter, /why the OWASP category applies in this repository/i);
+  assert.match(loaded.prompts.arbiter, /why the issue is real here and not just a generic weakness/i);
+  assert.match(loaded.prompts.arbiter, /exact code path or resource at risk/i);
+  assert.match(loaded.prompts.arbiter, /minimal remediation scope/i);
+  assert.match(
+    loaded.prompts.arbiter,
+    /dismiss the finding when the current evidence is not sufficient to justify fixing it now/i,
+  );
+  assert.match(
+    loaded.prompts.arbiter,
+    /prioritize by actual risk and evidentiary strength, not by category label alone/i,
+  );
+});
+
 test("owaspFix command wiring uses real prompt files end-to-end", async () => {
   const commands: Record<string, { handler: (args: unknown, ctx: unknown) => Promise<unknown> }> =
     {};

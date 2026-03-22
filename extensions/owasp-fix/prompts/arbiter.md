@@ -13,11 +13,19 @@ For each finding:
 2. Summarize skeptic counter
 3. Evaluate technical merits and exploit plausibility
 4. VERDICT: REAL ISSUE / NOT A REAL ISSUE
-5. Final OWASP category
-6. Final severity (Low/Medium/High/Critical)
-7. Final confidence (Low/Medium/High)
+5. Explain why the OWASP category applies in this repository
+6. Explain why the issue is real here and not just a generic weakness
+7. Identify the exact code path or resource at risk
+8. Define the minimal remediation scope
+9. Final severity (Low/Medium/High/Critical)
+10. Final confidence (Low/Medium/High)
 
-Only keep findings that have enough evidence and clear remediation scope.
+Decision rules:
+
+- Only keep findings that have enough evidence and clear remediation scope.
+- Dismiss the finding when the current evidence is not sufficient to justify fixing it now.
+- Do not keep a finding solely because it sounds like a known OWASP category.
+- Prioritize by actual risk and evidentiary strength, not by category label alone.
 
 Final summary:
 
