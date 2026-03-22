@@ -69,7 +69,7 @@ function createContext(options: { hasUI?: boolean; editorValue?: string } = {}) 
 function createHarness() {
   const tools = new Map<string, RegisteredTool>();
   const commands = new Map<string, RegisteredCommand>();
-  const sentUserMessages: string[] = [];
+  const sentMessages: Array<{ customType?: string; content?: unknown; display?: boolean }> = [];
   const pi = {
     registerTool(definition: RegisteredTool) {
       tools.set(definition.name, definition);
@@ -77,8 +77,8 @@ function createHarness() {
     registerCommand(name: string, definition: RegisteredCommand) {
       commands.set(name, definition);
     },
-    sendUserMessage(message: string) {
-      sentUserMessages.push(message);
+    sendMessage(message: { customType?: string; content?: unknown; display?: boolean }) {
+      sentMessages.push(message);
     },
   };
 
@@ -87,7 +87,7 @@ function createHarness() {
   return {
     tools,
     commands,
-    sentUserMessages,
+    sentMessages,
     getTool(name: string) {
       const tool = tools.get(name);
       expect(tool).toBeDefined();
@@ -122,30 +122,74 @@ test("registers the web_search tool and /web-search command", () => {
   expect(harness.commands.has("web-search")).toBe(true);
 });
 
-test("/web-search sends a focused user message", async () => {
+test("/web-search runs the search directly and emits results", async () => {
+  process.env.KAGI_API_KEY = "test-key";
+
+  globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    expect(url).toContain("https://kagi.com/api/v0/search?");
+    expect(url).toContain("q=pi+coding+agent+github");
+
+    return new Response(
+      JSON.stringify({
+        meta: { ms: 21 },
+        data: [
+          {
+            t: 0,
+            url: "https://github.com/mariozechner/pi",
+            title: "pi",
+            snippet: "AI coding agent for the terminal.",
+          },
+        ],
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      },
+    );
+  }) as typeof fetch;
+
   const harness = createHarness();
   const command = harness.getCommand("web-search");
 
   await command.handler("pi coding agent github", createContext().ctx);
 
-  expect(harness.sentUserMessages).toHaveLength(1);
-  expect(harness.sentUserMessages[0]).toContain(
-    "Use the web_search tool to search for: pi coding agent github",
+  expect(harness.sentMessages).toHaveLength(1);
+  expect(harness.sentMessages[0]).toMatchObject({
+    customType: "web-search-result",
+    display: true,
+  });
+  expect(String(harness.sentMessages[0]?.content)).toContain(
+    "Web search for: pi coding agent github",
   );
-  expect(harness.sentUserMessages[0]).toContain("Keep max_results small");
+  expect(String(harness.sentMessages[0]?.content)).toContain("https://github.com/mariozechner/pi");
 });
 
 test("/web-search prompts for a query when none is provided", async () => {
+  process.env.KAGI_API_KEY = "test-key";
+
+  globalThis.fetch = mock(
+    async () =>
+      new Response(
+        JSON.stringify({
+          meta: { ms: 10 },
+          data: [],
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      ),
+  ) as typeof fetch;
+
   const harness = createHarness();
   const command = harness.getCommand("web-search");
   const { ctx: interactiveCtx } = createContext({ hasUI: true, editorValue: "golang context" });
 
   await command.handler("", interactiveCtx);
 
-  expect(harness.sentUserMessages).toHaveLength(1);
-  expect(harness.sentUserMessages[0]).toContain(
-    "Use the web_search tool to search for: golang context",
-  );
+  expect(harness.sentMessages).toHaveLength(1);
+  expect(String(harness.sentMessages[0]?.content)).toContain("Web search for: golang context");
 });
 
 test("web_search calls the Kagi API directly and formats results", async () => {

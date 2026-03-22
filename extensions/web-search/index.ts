@@ -504,38 +504,91 @@ function toWebSearchDetails(query: string, response: KagiSearchResponse): WebSea
   return details;
 }
 
-function buildWebSearchCommandPrompt(query: string): string {
-  return [
-    `Use the web_search tool to search for: ${query}`,
-    "",
-    "Guidance:",
-    "- Prefer a focused query.",
-    "- Keep max_results small unless broader coverage is clearly needed.",
-    "- Set include_content to true only when snippets are not enough.",
-  ].join("\n");
+async function executeWebSearch(
+  params: WebSearchParams,
+  signal: AbortSignal,
+): Promise<ExtensionToolResult<WebSearchDetails>> {
+  const query = trimText(params.query);
+  if (!query) {
+    return errorResult("Error: query is required");
+  }
+
+  const maxResults = clampInteger(params.max_results, 5, 1, 10);
+  const includeContent = params.include_content === true;
+  const maxContentChars = clampInteger(params.max_content_chars, 4000, 250, 10000);
+  const timeoutMs = clampInteger(params.timeout_sec, 15, 1, 60) * 1000;
+
+  let details: WebSearchDetails;
+  try {
+    const response = await fetchSearchResults(query, maxResults, signal, timeoutMs);
+    details = toWebSearchDetails(query, response);
+  } catch (error) {
+    return errorResult(`Error: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  if (includeContent) {
+    for (const result of details.results) {
+      if (!trimText(result.link)) {
+        continue;
+      }
+      try {
+        const page = await fetchPageContent(result.link, maxContentChars, signal, timeoutMs);
+        if (!trimText(result.title) && trimText(page.title)) {
+          result.title = page.title;
+        }
+        result.content = page.content;
+      } catch (error) {
+        result.content_error = error instanceof Error ? error.message : String(error);
+      }
+    }
+  }
+
+  return {
+    content: [{ type: "text", text: buildResultText(details) }],
+    details,
+  };
+}
+
+function sendCommandMessage(pi: ExtensionAPI, content: string, details?: WebSearchDetails): void {
+  pi.sendMessage({
+    customType: "web-search-result",
+    content,
+    display: true,
+    details,
+  });
 }
 
 export default function webSearchExtension(pi: ExtensionAPI): void {
   pi.registerCommand("web-search", {
-    description: "Search the web using the bundled web_search tool",
+    description: "Search the web and print results directly",
     handler: async (args, ctx) => {
-      const query = trimText(typeof args === "string" ? args : "");
+      const initialQuery = trimText(typeof args === "string" ? args : "");
+      let query = initialQuery;
+
+      if (!query && ctx.hasUI) {
+        query = trimText(await ctx.ui.editor("Search query:", ""));
+      }
+
       if (!query) {
         if (ctx.hasUI) {
-          const entered = trimText(await ctx.ui.editor("Search query:", ""));
-          if (!entered) {
-            ctx.ui.notify("Usage: /web-search <query>", "warning");
-            return;
-          }
-          pi.sendUserMessage(buildWebSearchCommandPrompt(entered));
-          return;
+          ctx.ui.notify("Usage: /web-search <query>", "warning");
+        } else {
+          sendCommandMessage(pi, "Usage: /web-search <query>");
         }
-
-        ctx.ui.notify("Usage: /web-search <query>", "warning");
         return;
       }
 
-      pi.sendUserMessage(buildWebSearchCommandPrompt(query));
+      ctx.ui.setStatus("web-search", `Searching web for: ${query}`);
+      try {
+        const result = await executeWebSearch({ query }, new AbortController().signal);
+        const contentText = result.content[0]?.text ?? "";
+        sendCommandMessage(pi, contentText, result.details);
+        if (contentText.startsWith("Error:")) {
+          ctx.ui.notify(contentText, "error");
+        }
+      } finally {
+        ctx.ui.setStatus("web-search", undefined);
+      }
     },
   });
 
@@ -560,46 +613,7 @@ export default function webSearchExtension(pi: ExtensionAPI): void {
       _onUpdate: ((update: ExtensionToolResult<WebSearchDetails>) => void) | undefined,
       _ctx: ExtensionContext,
     ) {
-      const query = trimText(params.query);
-      if (!query) {
-        return errorResult("Error: query is required");
-      }
-
-      const maxResults = clampInteger(params.max_results, 5, 1, 10);
-      const includeContent = params.include_content === true;
-      const maxContentChars = clampInteger(params.max_content_chars, 4000, 250, 10000);
-      const timeoutMs = clampInteger(params.timeout_sec, 15, 1, 60) * 1000;
-
-      let details: WebSearchDetails;
-      try {
-        const response = await fetchSearchResults(query, maxResults, signal, timeoutMs);
-        details = toWebSearchDetails(query, response);
-      } catch (error) {
-        return errorResult(`Error: ${error instanceof Error ? error.message : String(error)}`);
-      }
-
-      if (includeContent) {
-        for (const result of details.results) {
-          if (!trimText(result.link)) {
-            continue;
-          }
-          try {
-            const page = await fetchPageContent(result.link, maxContentChars, signal, timeoutMs);
-            if (!trimText(result.title) && trimText(page.title)) {
-              result.title = page.title;
-            }
-            result.content = page.content;
-          } catch (error) {
-            result.content_error = error instanceof Error ? error.message : String(error);
-          }
-        }
-      }
-
-      const contentText = buildResultText(details);
-      return {
-        content: [{ type: "text", text: contentText }],
-        details,
-      };
+      return executeWebSearch(params, signal);
     },
 
     renderCall(args, theme) {

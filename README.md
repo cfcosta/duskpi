@@ -183,9 +183,9 @@ These are available immediately because the package preloads them.
 
 ### 4b. Use `/web-search` for direct web queries
 
-The distribution also ships a `/web-search` command that turns your query into a focused request using the bundled `web_search` tool.
+The distribution also ships a `/web-search` command that runs the bundled `web_search` implementation directly and prints the results into the session without asking the agent to interpret the command first.
 
-Use it when you want a command-style entrypoint instead of asking in freeform prose.
+Use it when you want a command-style entrypoint with immediate search output instead of asking in freeform prose.
 
 ### 5. Use specialized skills without extra setup
 
@@ -216,7 +216,6 @@ That is why commands like these should be present right away:
 - `/web-search`
 - `/fetch`
 - `/innovate`
-- `/web-search`
 
 The Catppuccin theme is activated by the bundled `catppuccin` extension, which reads the package's `pi.theme` value and calls `setTheme()` after the wrapped binary has already exposed the bundled theme files.
 
