@@ -29,6 +29,15 @@ Distinguish **"current coverage is weak"** from **"the refactor is unsound"**.
 - Treat missing or thin coverage as execution debt: identify the narrow regression tests that must be added during implementation.
 - Challenge candidates when the invariants are too vague, the blast radius is too large, or the behavioral risk is not containable — not merely because the repository starts with poor tests.
 
+## LLM smell false-positive calibration
+
+When the mapper reports LLM-specific smells, challenge them aggressively unless the repository contains direct LLM integration evidence in code.
+
+- Reject LLM smell claims for non-LLM repositories or areas that only mention AI in docs, comments, prompt text, or naming.
+- Reject claims based only on prompt templates, markdown guidance, README examples, or configuration labels when there is no actual inference code path.
+- Reject generic best-practice advice masquerading as a repo-specific smell finding. The mapper must identify the concrete call site, message construction path, schema expectation, model identifier, or request-setting omission that makes the smell real here.
+- If the repository does contain LLM integration code, downgrade or reject any claim whose evidence does not tie the smell to that exact integration path.
+
 ## Anti-patterns to flag
 
 - **Behavior change disguised as cleanup**: Refactors that quietly alter semantics while claiming to be structural-only

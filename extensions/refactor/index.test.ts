@@ -461,6 +461,35 @@ test("real mapper prompt limits LLM smell reporting to explicit integration code
   assert.match(loaded.prompts.mapper, /cite the exact integration code path/i);
 });
 
+test("real skeptic prompt rejects LLM smell claims without direct integration evidence", () => {
+  const promptDirectory = path.join(path.dirname(new URL(import.meta.url).pathname), "prompts");
+  const loaded = loadPrompts(promptDirectory);
+
+  assert.equal(loaded.ok, true);
+  if (!loaded.ok) {
+    return;
+  }
+
+  assert.match(loaded.prompts.skeptic, /direct LLM integration evidence in code/i);
+  assert.match(loaded.prompts.skeptic, /Reject LLM smell claims for non-LLM repositories/i);
+  assert.match(
+    loaded.prompts.skeptic,
+    /only mention AI in docs, comments, prompt text, or naming/i,
+  );
+  assert.match(
+    loaded.prompts.skeptic,
+    /prompt templates, markdown guidance, README examples, or configuration labels/i,
+  );
+  assert.match(
+    loaded.prompts.skeptic,
+    /generic best-practice advice masquerading as a repo-specific smell finding/i,
+  );
+  assert.match(
+    loaded.prompts.skeptic,
+    /concrete call site, message construction path, schema expectation, model identifier, or request-setting omission/i,
+  );
+});
+
 test("workflow reports invalid assistant payload instead of retrying as empty output", async () => {
   const { workflow, ctx, sentMessages, notifications } = createHarness();
 
