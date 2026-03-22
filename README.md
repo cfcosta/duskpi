@@ -20,11 +20,12 @@ The default package bundles upstream Pi together with repo-owned resources:
   - `/todos`
 - **Side-question extension**
   - `/btw`
+- **Search command**
+  - `/web-search`
 - **Prompt templates**
   - `/fetch`
   - `/innovate`
   - `/jj-commit`
-  - `/web-search`
 - **Custom tools**
   - `web_search`
 - **Skills**
@@ -177,9 +178,14 @@ The distribution ships prompt templates that expand into reusable workflows.
 - `/fetch` for pulling readable content from one or more URLs through the bundled fetch skill
 - `/innovate` for ideation and solution exploration
 - `/jj-commit` for commit-message and jujutsu-oriented commit flow guidance
-- `/web-search` for kicking off a web query through the bundled `web_search` tool
 
 These are available immediately because the package preloads them.
+
+### 4b. Use `/web-search` for direct web queries
+
+The distribution also ships a `/web-search` command that turns your query into a focused request using the bundled `web_search` tool.
+
+Use it when you want a command-style entrypoint instead of asking in freeform prose.
 
 ### 5. Use specialized skills without extra setup
 
@@ -207,6 +213,7 @@ That is why commands like these should be present right away:
 - `/plan`
 - `/todos`
 - `/btw`
+- `/web-search`
 - `/fetch`
 - `/innovate`
 - `/web-search`

@@ -504,7 +504,41 @@ function toWebSearchDetails(query: string, response: KagiSearchResponse): WebSea
   return details;
 }
 
+function buildWebSearchCommandPrompt(query: string): string {
+  return [
+    `Use the web_search tool to search for: ${query}`,
+    "",
+    "Guidance:",
+    "- Prefer a focused query.",
+    "- Keep max_results small unless broader coverage is clearly needed.",
+    "- Set include_content to true only when snippets are not enough.",
+  ].join("\n");
+}
+
 export default function webSearchExtension(pi: ExtensionAPI): void {
+  pi.registerCommand("web-search", {
+    description: "Search the web using the bundled web_search tool",
+    handler: async (args, ctx) => {
+      const query = trimText(typeof args === "string" ? args : "");
+      if (!query) {
+        if (ctx.hasUI) {
+          const entered = trimText(await ctx.ui.editor("Search query:", ""));
+          if (!entered) {
+            ctx.ui.notify("Usage: /web-search <query>", "warning");
+            return;
+          }
+          pi.sendUserMessage(buildWebSearchCommandPrompt(entered));
+          return;
+        }
+
+        ctx.ui.notify("Usage: /web-search <query>", "warning");
+        return;
+      }
+
+      pi.sendUserMessage(buildWebSearchCommandPrompt(query));
+    },
+  });
+
   pi.registerTool<WebSearchParams, WebSearchDetails>({
     name: "web_search",
     label: "web_search",

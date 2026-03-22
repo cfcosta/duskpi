@@ -29,11 +29,56 @@ interface RegisteredTool {
   execute: (...args: any[]) => Promise<unknown> | unknown;
 }
 
+interface RegisteredCommand {
+  description: string;
+  handler: (args: unknown, ctx: ExtensionContext) => Promise<void> | void;
+}
+
+function createContext(options: { hasUI?: boolean; editorValue?: string } = {}) {
+  const notifications: Array<{ message: string; level?: string }> = [];
+  const ctx = {
+    hasUI: options.hasUI ?? false,
+    ui: {
+      theme: {
+        fg: (_color: string, text: string) => text,
+        strikethrough: (text: string) => text,
+      },
+      notify(message: string, level?: string) {
+        notifications.push({ message, level });
+      },
+      setStatus() {},
+      setWidget() {},
+      async select() {
+        return undefined;
+      },
+      async editor() {
+        return options.editorValue;
+      },
+      async custom() {
+        return undefined as never;
+      },
+      setTheme() {
+        return { success: true } as const;
+      },
+    },
+  } satisfies ExtensionContext;
+
+  return { ctx, notifications };
+}
+
 function createHarness() {
   const tools = new Map<string, RegisteredTool>();
+  const commands = new Map<string, RegisteredCommand>();
+  const sentUserMessages: string[] = [];
   const pi = {
     registerTool(definition: RegisteredTool) {
       tools.set(definition.name, definition);
+    },
+    registerCommand(name: string, definition: RegisteredCommand) {
+      commands.set(name, definition);
+    },
+    sendUserMessage(message: string) {
+      sentUserMessages.push(message);
     },
   };
 
@@ -41,38 +86,22 @@ function createHarness() {
 
   return {
     tools,
+    commands,
+    sentUserMessages,
     getTool(name: string) {
       const tool = tools.get(name);
       expect(tool).toBeDefined();
       return tool!;
     },
+    getCommand(name: string) {
+      const command = commands.get(name);
+      expect(command).toBeDefined();
+      return command!;
+    },
   };
 }
 
-const ctx = {
-  hasUI: false,
-  ui: {
-    theme: {
-      fg: (_color: string, text: string) => text,
-      strikethrough: (text: string) => text,
-    },
-    notify() {},
-    setStatus() {},
-    setWidget() {},
-    async select() {
-      return undefined;
-    },
-    async editor() {
-      return undefined;
-    },
-    async custom() {
-      return undefined as never;
-    },
-    setTheme() {
-      return { success: true } as const;
-    },
-  },
-} satisfies ExtensionContext;
+const { ctx } = createContext();
 
 const originalFetch = globalThis.fetch;
 const originalKagiAPIKey = process.env.KAGI_API_KEY;
@@ -87,9 +116,36 @@ afterEach(() => {
   }
 });
 
-test("registers the web_search tool", () => {
+test("registers the web_search tool and /web-search command", () => {
   const harness = createHarness();
   expect(harness.tools.has("web_search")).toBe(true);
+  expect(harness.commands.has("web-search")).toBe(true);
+});
+
+test("/web-search sends a focused user message", async () => {
+  const harness = createHarness();
+  const command = harness.getCommand("web-search");
+
+  await command.handler("pi coding agent github", createContext().ctx);
+
+  expect(harness.sentUserMessages).toHaveLength(1);
+  expect(harness.sentUserMessages[0]).toContain(
+    "Use the web_search tool to search for: pi coding agent github",
+  );
+  expect(harness.sentUserMessages[0]).toContain("Keep max_results small");
+});
+
+test("/web-search prompts for a query when none is provided", async () => {
+  const harness = createHarness();
+  const command = harness.getCommand("web-search");
+  const { ctx: interactiveCtx } = createContext({ hasUI: true, editorValue: "golang context" });
+
+  await command.handler("", interactiveCtx);
+
+  expect(harness.sentUserMessages).toHaveLength(1);
+  expect(harness.sentUserMessages[0]).toContain(
+    "Use the web_search tool to search for: golang context",
+  );
 });
 
 test("web_search calls the Kagi API directly and formats results", async () => {

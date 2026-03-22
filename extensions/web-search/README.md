@@ -1,6 +1,6 @@
 # web-search extension
 
-Registers a `web_search` tool backed directly by the Kagi Search API.
+Registers a `web_search` tool backed directly by the Kagi Search API, plus a `/web-search` command that turns a query into a focused user request.
 
 ## Behavior
 
