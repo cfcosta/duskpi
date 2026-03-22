@@ -240,6 +240,18 @@ If the approved plan uses an older or broader label, treat it as the precise can
 - **Name interfaces, adapters, helpers, and local variables after their semantic role.** If a variable or function is named mainly because of the prompt wording or historical patch context, rename it before finishing the step.
 - **Do not preserve legacy or misleading names just to keep the refactor mechanically small** when the approved step already touches that abstraction. A minimal diff is not an excuse to leave semantic drift inside the approved scope.
 
+## LLM smell remediation discipline
+
+When executing approved LLM-specific smell fixes, keep the remediation concrete, local, and evidence-backed.
+
+- For **Unbounded Max Metrics**, make the relevant output/token cap, timeout, retry limit, or equivalent request bound explicit at the evidenced integration call site.
+- For **No Model Version Pinning**, replace moving aliases with the approved immutable model version or snapshot at the exact integration boundary.
+- For **No System Message**, add or repair the system message only where the approved plan showed a real role-based chat path that lacks stable behavioral guidance.
+- For **No Structured Output**, enforce a concrete schema or structured-output contract at the API boundary when downstream code expects typed or parseable fields.
+- For **LLM Temperature Not Explicitly Set**, set the temperature explicitly at the evidenced integration call site instead of relying on provider defaults.
+- Keep the output as free-form markdown for the workflow report, but describe the concrete code-level remediation with precise refactoring-action language.
+- Do not widen a local LLM smell fix into runtime/framework redesign, shared abstraction work, or generic AI hardening unless the approved plan explicitly requires that broader scope.
+
 ## Output format
 
 For each refactor step:

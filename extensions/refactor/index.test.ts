@@ -519,6 +519,29 @@ test("real arbiter prompt requires evidence-backed approval for LLM smell candid
   );
 });
 
+test("real executor prompt gives concrete remediation guidance for LLM smells", () => {
+  const promptDirectory = path.join(path.dirname(new URL(import.meta.url).pathname), "prompts");
+  const loaded = loadPrompts(promptDirectory);
+
+  assert.equal(loaded.ok, true);
+  if (!loaded.ok) {
+    return;
+  }
+
+  assert.match(loaded.prompts.executor, /Unbounded Max Metrics/i);
+  assert.match(loaded.prompts.executor, /No Model Version Pinning/i);
+  assert.match(loaded.prompts.executor, /No System Message/i);
+  assert.match(loaded.prompts.executor, /No Structured Output/i);
+  assert.match(loaded.prompts.executor, /LLM Temperature Not Explicitly Set/i);
+  assert.match(loaded.prompts.executor, /free-form markdown/i);
+  assert.match(loaded.prompts.executor, /precise refactoring-action language/i);
+  assert.match(loaded.prompts.executor, /evidence-backed/i);
+  assert.match(
+    loaded.prompts.executor,
+    /Do not widen a local LLM smell fix into runtime\/framework redesign/i,
+  );
+});
+
 test("workflow reports invalid assistant payload instead of retrying as empty output", async () => {
   const { workflow, ctx, sentMessages, notifications } = createHarness();
 
