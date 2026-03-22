@@ -80,11 +80,9 @@
             meta.mainProgram = "kagi-search";
           };
 
-          trafilatura = pkgs.python313Packages.trafilatura;
-
         in
         rec {
-          inherit chrome-cdp kagi-search trafilatura;
+          inherit chrome-cdp kagi-search;
 
           resources = pkgs.stdenv.mkDerivation (_: {
             name = "duskpi-resources";
@@ -113,14 +111,10 @@
               cp -rf ${inputs.skill-design-taste-frontend}/skills/taste-skill/SKILL.md $out/skills/design-taste-frontend/
 
               cp -rf ${./skills}/chrome-cdp $out/skills/chrome-cdp
-              cp -rf ${./skills}/fetch $out/skills/fetch
               cp -rf ${./skills}/kagi-search $out/skills/kagi-search
 
               substituteInPlace $out/skills/chrome-cdp/SKILL.md \
                 --replace-fail '##CHROME-CDP##' '${chrome-cdp}/bin/chrome-cdp'
-
-              substituteInPlace $out/skills/fetch/SKILL.md \
-                --replace-fail '##TRAFILATURA##' '${trafilatura}/bin/trafilatura'
 
               substituteInPlace $out/skills/kagi-search/SKILL.md \
                 --replace-fail '##KAGI-SEARCH##' '${kagi-search}/bin/kagi-search'
@@ -157,17 +151,19 @@
             paths = [
               inputs.llm-agents.packages.${system}.pi
               kagi-search
-              trafilatura
               resources
             ];
             nativeBuildInputs = [ pkgs.makeWrapper ];
             postBuild = ''
               wrapProgram $out/bin/pi \
+                --set SSL_CERT_FILE ${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt \
+                --set NODE_EXTRA_CA_CERTS ${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt \
                 --add-flags "--extension $out/extensions/bug-fix/index.ts" \
                 --add-flags "--extension $out/extensions/owasp-fix/index.ts" \
                 --add-flags "--extension $out/extensions/refactor/index.ts" \
                 --add-flags "--extension $out/extensions/test-audit/index.ts" \
                 --add-flags "--extension $out/extensions/catppuccin/index.ts" \
+                --add-flags "--extension $out/extensions/fetch/index.ts" \
                 --add-flags "--extension $out/extensions/web-search/index.ts" \
                 --add-flags "--extension $out/extensions/plan/index.ts" \
                 --add-flags "--extension $out/extensions/btw/index.ts" \

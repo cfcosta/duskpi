@@ -20,18 +20,18 @@ The default package bundles upstream Pi together with repo-owned resources:
   - `/todos`
 - **Side-question extension**
   - `/btw`
-- **Search command**
+- **Direct commands**
+  - `/fetch`
   - `/web-search`
 - **Prompt templates**
-  - `/fetch`
   - `/innovate`
   - `/jj-commit`
 - **Custom tools**
+  - `fetch_content`
   - `web_search`
 - **Skills**
   - `chrome-cdp`
   - `design-taste-frontend`
-  - `fetch`
   - `humanizer`
   - `rust-proptest`
   - `visual-explainer`
@@ -175,11 +175,16 @@ The side answer is tool-less by design and is intended to feel lightweight and d
 
 The distribution ships prompt templates that expand into reusable workflows.
 
-- `/fetch` for pulling readable content from one or more URLs through the bundled fetch skill
 - `/innovate` for ideation and solution exploration
 - `/jj-commit` for commit-message and jujutsu-oriented commit flow guidance
 
 These are available immediately because the package preloads them.
+
+### 4a. Use `/fetch` to pull readable page content into the session
+
+The distribution also ships a `/fetch` command that fetches a concrete URL, runs Readability.js over the returned HTML, and injects the extracted content into the current session context as a user message.
+
+Use it when you already know the exact page you want Pi to work from.
 
 ### 4b. Use `/web-search` for direct web queries
 
@@ -193,7 +198,6 @@ The bundled skills cover common high-value tasks:
 
 - **chrome-cdp** for inspecting and interacting with your live Chrome, Chromium, or Brave session
 - **design-taste-frontend** for stronger UI/UX and frontend design decisions
-- **fetch** for extracting readable content from web pages with Trafilatura
 - **humanizer** for making generated text sound less AI-written
 - **rust-proptest** for Rust property testing
 - **visual-explainer** for turning complex technical material into visual HTML explainers
@@ -234,6 +238,8 @@ Notable entries:
 - `catppuccin`
 - `plan` (repo-local private extension vendored under `extensions/plan`)
 - `btw`
+- `fetch`
+- `web-search`
 
 ### `packages/workflow-core/`
 
