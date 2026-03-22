@@ -81,6 +81,7 @@ MANDATORY workflow:
    - Read the relevant files, symbols, tests, configs, and adjacent features.
    - Identify existing patterns and architectural constraints.
    - If external behavior matters, gather official docs/reference evidence.
+   - Prefer web_search to discover external sources, then use fetch_content on the exact URLs you need to read closely.
 2) Consider approaches
    - Identify the most plausible implementation options.
    - Note the important trade-offs when the design could reasonably go multiple ways.

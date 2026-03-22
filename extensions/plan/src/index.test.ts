@@ -56,6 +56,7 @@ type EventHandler = (event: unknown, ctx: ExtensionContext) => Promise<unknown> 
 interface HarnessOptions {
   hasUI?: boolean;
   customSelection?: { cancelled: boolean; action?: string; note?: string };
+  extraTools?: string[];
 }
 
 function createUiStub(customSelection?: { cancelled: boolean; action?: string; note?: string }) {
@@ -105,6 +106,7 @@ function createPlanExtensionHarness(options: HarnessOptions = {}) {
     { name: "ls" },
     { name: "edit" },
     { name: "write" },
+    ...(options.extraTools ?? []).map((name) => ({ name })),
   ];
   let activeTools = allTools.map((tool) => tool.name);
 
@@ -1053,6 +1055,25 @@ test("plan extension harness registers commands and handles agent_end in read-on
   expect(harness.sentMessages).toHaveLength(1);
   expect(harness.sentMessages[0]?.customType).toBe("plan-mode-status");
   expect(String(harness.sentMessages[0]?.content)).toContain("Plan mode enabled");
+});
+
+test("plan mode enables web_search and fetch_content when they are available", async () => {
+  const harness = createPlanExtensionHarness({
+    extraTools: ["web_search", "fetch_content"],
+  });
+
+  await harness.runCommand("plan", "on");
+
+  expect(harness.getActiveTools()).toEqual([
+    "read",
+    "bash",
+    "grep",
+    "find",
+    "ls",
+    "AskUserQuestion",
+    "web_search",
+    "fetch_content",
+  ]);
 });
 
 test("critique pass routes orchestration through a hidden custom message after extracting a plan", async () => {
