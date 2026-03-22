@@ -136,7 +136,7 @@
                 --add-flags "--extension $out/extensions/refactor/index.ts" \
                 --add-flags "--extension $out/extensions/test-audit/index.ts" \
                 --add-flags "--extension $out/extensions/catppuccin/index.ts" \
-                --add-flags "--extension $out/extensions/fetch/index.ts" \
+                --add-flags "--extension $out/extensions/web-fetch/index.ts" \
                 --add-flags "--extension $out/extensions/web-search/index.ts" \
                 --add-flags "--extension $out/extensions/plan/index.ts" \
                 --add-flags "--extension $out/extensions/btw/index.ts" \

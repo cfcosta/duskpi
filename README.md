@@ -26,7 +26,7 @@ The default package bundles upstream Pi together with repo-owned resources:
 - **Side-question extension**
   - `/btw`
 - **Direct commands**
-  - `/fetch`
+  - `/web-fetch`
   - `/web-search` _(when `KAGI_API_KEY` is set)_
 - **Prompt templates**
   - `/innovate`
@@ -198,9 +198,9 @@ The distribution ships prompt templates that expand into reusable workflows.
 
 These are available immediately because the package preloads them.
 
-### 5a. Use `/fetch` to pull readable page content into the session
+### 5a. Use `/web-fetch` to pull readable page content into the session
 
-The distribution also ships a `/fetch` command that fetches a concrete URL, runs Readability.js over the returned HTML, and injects the extracted content into the current session context as a user message.
+The distribution also ships a `/web-fetch` command that fetches a concrete URL, runs Readability.js over the returned HTML, and injects the extracted content into the current session context as a user message.
 
 Use it when you already know the exact page you want Pi to work from.
 
@@ -240,7 +240,7 @@ That is why commands like these should be present right away:
 - `/autoresearch`
 - `/btw`
 - `/web-search`
-- `/fetch`
+- `/web-fetch`
 - `/innovate`
 
 The Catppuccin theme is activated by the bundled `catppuccin` extension, which reads the package's `pi.theme` value and calls `setTheme()` after the wrapped binary has already exposed the bundled theme files.
@@ -261,7 +261,7 @@ Notable entries:
 - `plan` (repo-local private extension vendored under `extensions/plan`)
 - `autoresearch` (vendored upstream extension under `extensions/autoresearch`)
 - `btw`
-- `fetch`
+- `web-fetch`
 - `web-search`
 
 ### `packages/workflow-core/`
