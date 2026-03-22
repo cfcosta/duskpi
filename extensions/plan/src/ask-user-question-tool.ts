@@ -239,7 +239,7 @@ export function normalizeQuestions(
   }
 
   if (rawQuestions.length > 4) {
-    return { ok: false, message: "Error: AskUserQuestion accepts at most 4 questions" };
+    return { ok: false, message: "Error: ask_user_question accepts at most 4 questions" };
   }
 
   const seenQuestions = new Set<string>();
@@ -386,7 +386,7 @@ function buildQuestionnaireCallSummary(
     .map((question, index) => question.header?.trim() || `Q${index + 1}`)
     .join(", ");
 
-  let text = theme.fg("toolTitle", "AskUserQuestion ");
+  let text = theme.fg("toolTitle", "ask_user_question ");
   text += theme.fg(
     "muted",
     `${safeQuestions.length} question${safeQuestions.length === 1 ? "" : "s"}`,
@@ -975,8 +975,8 @@ export class AskUserQuestionComponent {
 
 export function registerAskUserQuestionTool(pi: ExtensionAPI): void {
   pi.registerTool({
-    name: "AskUserQuestion",
-    label: "AskUserQuestion",
+    name: "ask_user_question",
+    label: "ask_user_question",
     description:
       "Ask the user multiple-choice clarification questions with suggested options. The user can always choose 'Type something.' to provide a custom answer.",
     promptSnippet:

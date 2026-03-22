@@ -41,7 +41,7 @@ const PLAN_TOOL_CANDIDATES = [
   "grep",
   "find",
   "ls",
-  "AskUserQuestion",
+  "ask_user_question",
   "lsp",
   "ast_search",
   "web_search",
@@ -86,9 +86,9 @@ MANDATORY workflow:
    - Identify the most plausible implementation options.
    - Note the important trade-offs when the design could reasonably go multiple ways.
 3) Clarify only when needed
-   - If a blocking ambiguity or user preference would materially change the design, use AskUserQuestion to ask concise clarifying question(s) before finalizing.
+   - If a blocking ambiguity or user preference would materially change the design, use ask_user_question to ask concise clarifying question(s) before finalizing.
    - Prefer 2-4 concrete options when there are a few plausible approaches. The user will still be able to type a custom answer.
-   - Do not use AskUserQuestion to ask whether the plan is ready or whether you should proceed. The plan approval UI handles that.
+   - Do not use ask_user_question to ask whether the plan is ready or whether you should proceed. The plan approval UI handles that.
 4) Produce an implementation plan for approval
    - Build a concrete execution plan grounded in what you found.
    - Keep steps atomic enough to execute one at a time.
@@ -181,7 +181,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       buildPlanningPrompt: ({ goal }) => {
         return [
           "Plan this implementation task in read-only mode before making any changes.",
-          "Explore the codebase, identify existing patterns and similar features, consider important trade-offs, and use AskUserQuestion only if a blocking ambiguity remains.",
+          "Explore the codebase, identify existing patterns and similar features, consider important trade-offs, and use ask_user_question only if a blocking ambiguity remains.",
           "When you need clarification, prefer a short multiple-choice questionnaire with 2-4 concrete options; the user can still type a custom answer.",
           "Then return a concrete implementation plan that follows the required plan-mode response contract.",
           "",

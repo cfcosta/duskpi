@@ -366,7 +366,7 @@ async function assertPlanStateReset(
     "ls",
     "edit",
     "write",
-    "AskUserQuestion",
+    "ask_user_question",
   ]);
   expect(harness.uiStub.statuses.get("plan")).toBeUndefined();
   expect(harness.uiStub.widgets.get("plan-todos")).toBeUndefined();
@@ -612,7 +612,7 @@ test("plan extension registers the guided workflow listener surface plus todos",
     "tool_call",
     "turn_end",
   ]);
-  expect(harness.tools.has("AskUserQuestion")).toBe(true);
+  expect(harness.tools.has("ask_user_question")).toBe(true);
 });
 
 test("one-shot /plan task enables plan mode and starts a correlated planning request", async () => {
@@ -626,7 +626,7 @@ test("one-shot /plan task enables plan mode and starts a correlated planning req
     "grep",
     "find",
     "ls",
-    "AskUserQuestion",
+    "ask_user_question",
   ]);
   expect(harness.sentUserMessages).toHaveLength(1);
   expect(harness.sentUserMessages[0]).toContain("Investigate flaky prompt extraction");
@@ -761,7 +761,7 @@ test("a second unparseable planning draft stays read-only and fails visibly with
     "grep",
     "find",
     "ls",
-    "AskUserQuestion",
+    "ask_user_question",
   ]);
   expect(harness.uiStub.notifications).toContainEqual({
     message: "Couldn't extract plan steps after one automatic retry. Still in read-only plan mode.",
@@ -780,7 +780,7 @@ test("non-ui /plan approve restores normal tools and sends the execution prompt"
     "grep",
     "find",
     "ls",
-    "AskUserQuestion",
+    "ask_user_question",
   ]);
 
   await harness.runCommand("plan", "approve");
@@ -793,7 +793,7 @@ test("non-ui /plan approve restores normal tools and sends the execution prompt"
     "ls",
     "edit",
     "write",
-    "AskUserQuestion",
+    "ask_user_question",
   ]);
   expect(harness.sentUserMessages).toHaveLength(2);
   expect(harness.sentUserMessages[1]).toContain(
@@ -841,7 +841,7 @@ test("non-ui /plan exit clears tracked plan state", async () => {
     "ls",
     "edit",
     "write",
-    "AskUserQuestion",
+    "ask_user_question",
   ]);
 
   await harness.runCommand("plan", "status");
@@ -1038,7 +1038,7 @@ test("plan extension harness registers commands and handles agent_end in read-on
     "grep",
     "find",
     "ls",
-    "AskUserQuestion",
+    "ask_user_question",
   ]);
 
   await harness.emit("agent_end", {
@@ -1070,7 +1070,7 @@ test("plan mode enables web_search and fetch_content when they are available", a
     "grep",
     "find",
     "ls",
-    "AskUserQuestion",
+    "ask_user_question",
     "web_search",
     "fetch_content",
   ]);
@@ -1331,7 +1331,7 @@ test("continue selection sends a correlated planning follow-up and keeps read-on
     "grep",
     "find",
     "ls",
-    "AskUserQuestion",
+    "ask_user_question",
   ]);
   expect(harness.sentUserMessages).toHaveLength(1);
   expect(harness.sentUserMessages[0]).toContain(
@@ -1372,7 +1372,7 @@ test("approve action can include an execution note and restores normal tools", a
     "ls",
     "edit",
     "write",
-    "AskUserQuestion",
+    "ask_user_question",
   ]);
   expect(harness.sentUserMessages).toHaveLength(1);
   expect(harness.sentUserMessages[0]).toContain(
@@ -1696,7 +1696,7 @@ test("exit selection restores normal tools and clears tracked progress", async (
     "ls",
     "edit",
     "write",
-    "AskUserQuestion",
+    "ask_user_question",
   ]);
   expect(harness.sentUserMessages).toHaveLength(0);
 
@@ -1719,7 +1719,7 @@ test("session boundary events reset transient plan state while approval is pendi
       "grep",
       "find",
       "ls",
-      "AskUserQuestion",
+      "ask_user_question",
     ]);
     expect(harness.uiStub.statuses.get("plan")).toBe("⏸ plan");
 
@@ -1744,7 +1744,7 @@ test("session boundary events reset transient plan state while approved executio
       "ls",
       "edit",
       "write",
-      "AskUserQuestion",
+      "ask_user_question",
     ]);
     expect(harness.uiStub.statuses.get("plan")).toBe("📋 0/2");
     expect(harness.uiStub.widgets.get("plan-todos")).toEqual([
@@ -1766,7 +1766,7 @@ test("session shutdown restores tools and clears stale plan-mode status", async 
     "grep",
     "find",
     "ls",
-    "AskUserQuestion",
+    "ask_user_question",
   ]);
   expect(harness.uiStub.statuses.get("plan")).toBe("⏸ plan");
 
@@ -1780,7 +1780,7 @@ test("session shutdown restores tools and clears stale plan-mode status", async 
     "ls",
     "edit",
     "write",
-    "AskUserQuestion",
+    "ask_user_question",
   ]);
   expect(harness.uiStub.statuses.get("plan")).toBeUndefined();
   expect(harness.uiStub.widgets.get("plan-todos")).toBeUndefined();

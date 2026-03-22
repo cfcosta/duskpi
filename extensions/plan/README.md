@@ -136,7 +136,7 @@ In plan mode:
 
 ### Clarification questions
 
-If plan mode hits a real ambiguity that would change the design, the agent can use `AskUserQuestion` to ask an interactive questionnaire instead of dropping into plain prose. This mirrors Claude Code's clarification flow more closely:
+If plan mode hits a real ambiguity that would change the design, the agent can use `ask_user_question` to ask an interactive questionnaire instead of dropping into plain prose. This mirrors Claude Code's clarification flow more closely:
 
 - 1-4 questions per questionnaire
 - 2-4 suggested options per question
@@ -197,7 +197,7 @@ That reset restores the normal tool set, clears footer status and the todo widge
 - `src/index.ts` - guided bootstrap and `/todos` command wiring
 - `src/workflow.ts` - `PiPlanWorkflow` built on shared `GuidedWorkflow`
 - `src/plan-action-ui.ts` - `PlanActionComponent` approval UI
-- `src/ask-user-question-tool.ts` - `AskUserQuestion` tool plus `AskUserQuestionComponent`
+- `src/ask-user-question-tool.ts` - `ask_user_question` tool plus `AskUserQuestionComponent`
 - `src/utils.ts` - read-only bash checks, structured plan-step parsing, and compact todo derivation helpers
 - `src/index.test.ts` - extension regression coverage
 - `plan.md` - repo-local architecture and feature notes

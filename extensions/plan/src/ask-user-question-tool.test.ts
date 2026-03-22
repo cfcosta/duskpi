@@ -139,7 +139,7 @@ test("normalizeQuestions rejects empty and oversized questionnaires", () => {
     ]),
   ).toEqual({
     ok: false,
-    message: "Error: AskUserQuestion accepts at most 4 questions",
+    message: "Error: ask_user_question accepts at most 4 questions",
   });
 });
 
@@ -329,7 +329,7 @@ test("AskUserQuestionComponent keeps the editor focused in custom-answer mode an
   expect(renderComponentText(rendered!)).toBe("✓ Scope: (wrote) Handle it with a custom workflow");
 });
 
-test("AskUserQuestion renderCall shows a concise questionnaire summary", () => {
+test("ask_user_question renderCall shows a concise questionnaire summary", () => {
   const tool = getRegisteredAskUserQuestionTool();
   const component = tool.renderCall?.(
     {
@@ -346,10 +346,12 @@ test("AskUserQuestion renderCall shows a concise questionnaire summary", () => {
   );
 
   expect(component).toBeTruthy();
-  expect(renderComponentText(component!)).toContain("AskUserQuestion 2 questions (Scope, Breadth)");
+  expect(renderComponentText(component!)).toContain(
+    "ask_user_question 2 questions (Scope, Breadth)",
+  );
 });
 
-test("AskUserQuestion renderResult shows cancelled output", () => {
+test("ask_user_question renderResult shows cancelled output", () => {
   const tool = getRegisteredAskUserQuestionTool();
   const component = tool.renderResult?.(
     {
@@ -367,7 +369,7 @@ test("AskUserQuestion renderResult shows cancelled output", () => {
   expect(renderComponentText(component!)).toBe("Cancelled");
 });
 
-test("AskUserQuestion renderResult shows a single-choice answer", () => {
+test("ask_user_question renderResult shows a single-choice answer", () => {
   const tool = getRegisteredAskUserQuestionTool();
   const component = tool.renderResult?.(
     {
@@ -403,7 +405,7 @@ test("AskUserQuestion renderResult shows a single-choice answer", () => {
   expect(renderComponentText(component!)).toBe("✓ Scope: Repo local");
 });
 
-test("AskUserQuestion renderResult shows a multi-choice answer", () => {
+test("ask_user_question renderResult shows a multi-choice answer", () => {
   const tool = getRegisteredAskUserQuestionTool();
   const component = tool.renderResult?.(
     {
@@ -439,7 +441,7 @@ test("AskUserQuestion renderResult shows a multi-choice answer", () => {
   expect(renderComponentText(component!)).toBe("✓ Scope: Repo local, Docs only");
 });
 
-test("AskUserQuestion renderResult shows a custom-text answer", () => {
+test("ask_user_question renderResult shows a custom-text answer", () => {
   const tool = getRegisteredAskUserQuestionTool();
   const component = tool.renderResult?.(
     {
