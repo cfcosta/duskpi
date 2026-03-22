@@ -166,6 +166,14 @@ function createPlanExtensionHarness(options: HarnessOptions = {}) {
     }
   };
 
+  const emitWithResult = async (eventName: string, event: unknown) => {
+    const results: unknown[] = [];
+    for (const handler of eventHandlers.get(eventName) ?? []) {
+      results.push(await handler(event, ctx));
+    }
+    return results;
+  };
+
   return {
     ctx,
     uiStub,
@@ -177,6 +185,7 @@ function createPlanExtensionHarness(options: HarnessOptions = {}) {
     getActiveTools: () => [...activeTools],
     runCommand,
     emit,
+    emitWithResult,
   };
 }
 
@@ -631,6 +640,44 @@ test("one-shot /plan task enables plan mode and starts a correlated planning req
   expect(harness.sentUserMessages).toHaveLength(1);
   expect(harness.sentUserMessages[0]).toContain("Investigate flaky prompt extraction");
   expect(extractRequestId(harness.sentUserMessages[0] ?? "")).toBeTruthy();
+});
+
+test("planning prompt asks Pi to proactively surface change decisions with questionnaires", async () => {
+  const harness = createPlanExtensionHarness();
+
+  await harness.runCommand("plan", "Refine the plan approval flow");
+
+  expect(harness.sentUserMessages[0]).toContain(
+    "consider important trade-offs while actively surfacing user-controlled decisions",
+  );
+  expect(harness.sentUserMessages[0]).toContain(
+    "Prefer asking over guessing when behavior, UX, API, schema, validation, rollout, compatibility, performance, or migration choices are still open.",
+  );
+  expect(harness.sentUserMessages[0]).toContain(
+    "Use ask_user_question to bundle the key uncertainties into 1-4 focused multiple-choice questions",
+  );
+});
+
+test("before_agent_start prompt tells plan mode to ask more than one clarifying question when needed", async () => {
+  const harness = createPlanExtensionHarness();
+
+  await harness.runCommand("plan", "on");
+
+  const [result] = await harness.emitWithResult("before_agent_start", {
+    systemPrompt: "base system prompt",
+  });
+
+  expect(result).toEqual(
+    expect.objectContaining({
+      systemPrompt: expect.stringContaining("Clarify proactively before locking a design"),
+    }),
+  );
+  expect((result as { systemPrompt: string }).systemPrompt).toContain(
+    "Ask more than one question when multiple independent choices remain.",
+  );
+  expect((result as { systemPrompt: string }).systemPrompt).toContain(
+    "Prefer asking over guessing when a change could reasonably go multiple ways.",
+  );
 });
 
 test("cancelling a planning response keeps plan mode ready for steering instead of auto-retrying", async () => {

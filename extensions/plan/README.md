@@ -136,9 +136,9 @@ In plan mode:
 
 ### Clarification questions
 
-If plan mode hits a real ambiguity that would change the design, the agent can use `ask_user_question` to ask an interactive questionnaire instead of dropping into plain prose. This mirrors Claude Code's clarification flow more closely:
+While considering changes, plan mode should actively surface user-owned decisions instead of silently guessing. If behavior, UX, API, schema, compatibility, rollout, validation, performance, or migration choices are still open, the agent should use `ask_user_question` to ask an interactive questionnaire before finalizing the plan. This mirrors Claude Code's clarification flow more closely:
 
-- 1-4 questions per questionnaire
+- 1-4 questions per questionnaire, with more than one question when multiple independent choices remain
 - 2-4 suggested options per question
 - automatic free-text fallback via `Type something.`
 - tabbed navigation when there is more than one question

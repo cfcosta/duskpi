@@ -80,6 +80,7 @@ function createApi() {
       sentUserMessageOptions.push(options ? { deliverAs: options.deliverAs } : undefined);
     },
     registerCommand() {},
+    registerMessageRenderer() {},
     registerTool() {},
     getActiveTools() {
       return ["read", "bash"];

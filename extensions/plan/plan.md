@@ -25,6 +25,7 @@ This file tracks the repo-local architecture of the vendored `plan` extension in
 ## User-visible behavior
 
 - `/plan` keeps planning read-only until approval.
+- While considering changes, the planner should proactively ask clarifying questionnaires for open user-owned decisions instead of only asking on hard blockers.
 - Every draft plan gets a hidden critique pass before the approval UI appears.
 - If a draft still does not contain a parseable `Plan:` section, the extension automatically asks Pi once to restate the same draft using the required contract and an explicit `Plan:` section. A second failure stays read-only and surfaces a visible error instead of opening approval.
 - The approval UI now shows the first few compact step labels plus file/component and validation hints when the plan includes them.

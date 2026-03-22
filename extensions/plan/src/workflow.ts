@@ -85,9 +85,12 @@ MANDATORY workflow:
 2) Consider approaches
    - Identify the most plausible implementation options.
    - Note the important trade-offs when the design could reasonably go multiple ways.
-3) Clarify only when needed
-   - If a blocking ambiguity or user preference would materially change the design, use ask_user_question to ask concise clarifying question(s) before finalizing.
-   - Prefer 2-4 concrete options when there are a few plausible approaches. The user will still be able to type a custom answer.
+3) Clarify proactively before locking a design
+   - While considering changes, actively look for product, UX, API, schema, compatibility, rollout, validation, performance, and migration decisions the user may want to control.
+   - If any such decision is not clearly fixed by the request or existing repo patterns, use ask_user_question before finalizing. Prefer asking over guessing when a change could reasonably go multiple ways.
+   - Bundle related ambiguities into 1-4 concise questions in one questionnaire.
+   - Prefer 2-4 concrete options per question. The user will still be able to type a custom answer.
+   - Ask more than one question when multiple independent choices remain.
    - Do not use ask_user_question to ask whether the plan is ready or whether you should proceed. The plan approval UI handles that.
 4) Produce an implementation plan for approval
    - Build a concrete execution plan grounded in what you found.
@@ -181,8 +184,9 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       buildPlanningPrompt: ({ goal }) => {
         return [
           "Plan this implementation task in read-only mode before making any changes.",
-          "Explore the codebase, identify existing patterns and similar features, consider important trade-offs, and use ask_user_question only if a blocking ambiguity remains.",
-          "When you need clarification, prefer a short multiple-choice questionnaire with 2-4 concrete options; the user can still type a custom answer.",
+          "Explore the codebase, identify existing patterns and similar features, and consider important trade-offs while actively surfacing user-controlled decisions.",
+          "Prefer asking over guessing when behavior, UX, API, schema, validation, rollout, compatibility, performance, or migration choices are still open.",
+          "Use ask_user_question to bundle the key uncertainties into 1-4 focused multiple-choice questions with 2-4 concrete options each; the user can still type a custom answer.",
           "Then return a concrete implementation plan that follows the required plan-mode response contract.",
           "",
           `Task: ${goal ?? "Create a concrete implementation plan."}`,

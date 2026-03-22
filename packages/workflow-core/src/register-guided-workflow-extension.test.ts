@@ -88,6 +88,7 @@ test("registerGuidedWorkflowExtension wires guided workflow handlers", async () 
       });
     },
     sendUserMessage() {},
+    registerMessageRenderer() {},
     registerTool() {},
     registerCommand(name, command) {
       commands[name] = command;
