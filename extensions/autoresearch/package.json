@@ -1,0 +1,12 @@
+{
+  "name": "@duskpi/autoresearch",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Vendored pi-autoresearch extension for duskpi",
+  "type": "module",
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

@@ -18,6 +18,11 @@ The default package bundles upstream Pi together with repo-owned resources:
 - **Planning extension**
   - `/plan`
   - `/todos`
+- **Autoresearch extension**
+  - `/autoresearch`
+  - `init_experiment`
+  - `run_experiment`
+  - `log_experiment`
 - **Side-question extension**
   - `/btw`
 - **Direct commands**
@@ -30,6 +35,7 @@ The default package bundles upstream Pi together with repo-owned resources:
   - `fetch_content`
   - `web_search` _(when `KAGI_API_KEY` is set)_
 - **Skills**
+  - `autoresearch-create`
   - `chrome-cdp`
   - `design-taste-frontend`
   - `humanizer`
@@ -157,7 +163,19 @@ This is useful when you want:
 - a review point before execution
 - tracked step-by-step execution after approval
 
-### 3. Ask side questions without interrupting the main task
+### 3. Run autonomous optimization loops
+
+The bundled `autoresearch` extension adds:
+
+- `/autoresearch`
+- `init_experiment`
+- `run_experiment`
+- `log_experiment`
+- the `autoresearch-create` skill
+
+Use it when you want Pi to benchmark changes in a loop, keep wins automatically, and preserve experiment history in `autoresearch.jsonl`.
+
+### 4. Ask side questions without interrupting the main task
 
 The bundled `/btw` extension opens an ephemeral overlay for quick side questions.
 
@@ -171,7 +189,7 @@ The side answer is tool-less by design and is intended to feel lightweight and d
 
 ![Screenshot of the `/btw` side-question overlay while the main task keeps running](resources/btw.png)
 
-### 4. Use prompt templates for recurring tasks
+### 5. Use prompt templates for recurring tasks
 
 The distribution ships prompt templates that expand into reusable workflows.
 
@@ -180,13 +198,13 @@ The distribution ships prompt templates that expand into reusable workflows.
 
 These are available immediately because the package preloads them.
 
-### 4a. Use `/fetch` to pull readable page content into the session
+### 5a. Use `/fetch` to pull readable page content into the session
 
 The distribution also ships a `/fetch` command that fetches a concrete URL, runs Readability.js over the returned HTML, and injects the extracted content into the current session context as a user message.
 
 Use it when you already know the exact page you want Pi to work from.
 
-### 4b. Use `/web-search` for direct web queries
+### 5b. Use `/web-search` for direct web queries
 
 When `KAGI_API_KEY` is set, the distribution ships a `/web-search` command and `web_search` tool that run the bundled Kagi-backed implementation directly.
 
@@ -194,10 +212,11 @@ If `KAGI_API_KEY` is not set, the search extension stays disabled, so `/web-sear
 
 Use it when you want a command-style entrypoint with immediate search output instead of asking in freeform prose.
 
-### 5. Use specialized skills without extra setup
+### 6. Use specialized skills without extra setup
 
 The bundled skills cover common high-value tasks:
 
+- **autoresearch-create** for setting up and launching autonomous optimization loops
 - **chrome-cdp** for inspecting and interacting with your live Chrome, Chromium, or Brave session
 - **design-taste-frontend** for stronger UI/UX and frontend design decisions
 - **humanizer** for making generated text sound less AI-written
@@ -218,6 +237,7 @@ That is why commands like these should be present right away:
 - `/refactor`
 - `/plan`
 - `/todos`
+- `/autoresearch`
 - `/btw`
 - `/web-search`
 - `/fetch`
@@ -239,6 +259,7 @@ Notable entries:
 - `refactor`
 - `catppuccin`
 - `plan` (repo-local private extension vendored under `extensions/plan`)
+- `autoresearch` (vendored upstream extension under `extensions/autoresearch`)
 - `btw`
 - `fetch`
 - `web-search`
@@ -280,7 +301,7 @@ The flake:
 - vendors local extensions, skills, prompts, and themes into one output
 - wraps the final `pi` binary so bundled resources are loaded on startup
 
-`plan` is vendored directly into `extensions/plan` as a repo-local private extension, so you can modify it locally like the other bundled extensions without treating this copy as a separately published package.
+`plan` is vendored directly into `extensions/plan`, and `autoresearch` is vendored into `extensions/autoresearch`, so you can modify both locally like the other bundled extensions without treating either copy as an externally pulled package at build time.
 
 ## Why this repo exists
 
