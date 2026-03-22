@@ -67,22 +67,9 @@
             exec ${pkgs.bun}/bin/bun ${./skills/chrome-cdp/scripts/cdp.mjs} "$@"
           '';
 
-          kagi-search = pkgs.buildGo126Module rec {
-            pname = "kagi-search";
-            version = "unstable-2026-03-21";
-            src = ./skills/kagi-search;
-            vendorHash = "sha256-7z/m3GyfBrdEb7CIRAao2YnSDT2yfNbksSgtzUn4SwI=";
-            ldflags = [
-              "-s"
-              "-w"
-              "-X main.version=${version}"
-            ];
-            meta.mainProgram = "kagi-search";
-          };
-
         in
         rec {
-          inherit chrome-cdp kagi-search;
+          inherit chrome-cdp;
 
           resources = pkgs.stdenv.mkDerivation (_: {
             name = "duskpi-resources";
@@ -111,13 +98,9 @@
               cp -rf ${inputs.skill-design-taste-frontend}/skills/taste-skill/SKILL.md $out/skills/design-taste-frontend/
 
               cp -rf ${./skills}/chrome-cdp $out/skills/chrome-cdp
-              cp -rf ${./skills}/kagi-search $out/skills/kagi-search
 
               substituteInPlace $out/skills/chrome-cdp/SKILL.md \
                 --replace-fail '##CHROME-CDP##' '${chrome-cdp}/bin/chrome-cdp'
-
-              substituteInPlace $out/skills/kagi-search/SKILL.md \
-                --replace-fail '##KAGI-SEARCH##' '${kagi-search}/bin/kagi-search'
 
               cat > $out/package.json <<'EOF'
               {
@@ -150,7 +133,6 @@
             name = "pi";
             paths = [
               inputs.llm-agents.packages.${system}.pi
-              kagi-search
               resources
             ];
             nativeBuildInputs = [ pkgs.makeWrapper ];

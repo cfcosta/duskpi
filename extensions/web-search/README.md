@@ -12,4 +12,4 @@ Registers a `web_search` tool backed directly by the Kagi Search API, plus a `/w
 
 Set `KAGI_API_KEY` in the environment.
 
-The tool performs the Kagi request itself instead of shelling out to the old `kagi-search` CLI.
+The tool performs the Kagi request itself instead of shelling out to a separate search CLI.
