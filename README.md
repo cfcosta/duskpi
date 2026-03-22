@@ -24,6 +24,7 @@ The default package bundles upstream Pi together with repo-owned resources:
   - `/fetch`
   - `/innovate`
   - `/jj-commit`
+  - `/web-search`
 - **Custom tools**
   - `web_search`
 - **Skills**
@@ -176,6 +177,7 @@ The distribution ships prompt templates that expand into reusable workflows.
 - `/fetch` for pulling readable content from one or more URLs through the bundled fetch skill
 - `/innovate` for ideation and solution exploration
 - `/jj-commit` for commit-message and jujutsu-oriented commit flow guidance
+- `/web-search` for kicking off a web query through the bundled `web_search` tool
 
 These are available immediately because the package preloads them.
 
@@ -207,6 +209,7 @@ That is why commands like these should be present right away:
 - `/btw`
 - `/fetch`
 - `/innovate`
+- `/web-search`
 
 The Catppuccin theme is activated by the bundled `catppuccin` extension, which reads the package's `pi.theme` value and calls `setTheme()` after the wrapped binary has already exposed the bundled theme files.
 
