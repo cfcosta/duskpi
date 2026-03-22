@@ -255,7 +255,7 @@ function truncateLikeReadTool(
   return { text: outputText, truncated: true };
 }
 
-function buildFetchResultText(details: FetchDetails): string {
+function buildFullFetchResultText(details: FetchDetails): string {
   const lines: string[] = [];
   lines.push(`Fetched content from: ${details.final_url || details.url}`);
 
@@ -282,8 +282,12 @@ function buildFetchResultText(details: FetchDetails): string {
   lines.push("Content:");
   lines.push(...formatMultilineBlock(details.content, "  "));
 
+  return lines.join("\n").trim();
+}
+
+function buildFetchResultText(details: FetchDetails): string {
   return truncateLikeReadTool(
-    lines.join("\n").trim(),
+    buildFullFetchResultText(details),
     "Use fetch_content with a lower max_chars value or fetch the URL again if you need a different excerpt.",
   ).text;
 }
@@ -652,13 +656,15 @@ export default function fetchExtension(pi: ExtensionAPI): void {
     renderResult(result, options, theme) {
       const text = result.content[0];
       const output = text?.type === "text" ? text.text : "";
+      const details = result.details as FetchDetails | undefined;
 
       if (options.isPartial) {
         return new Text(theme.fg("warning", "Fetching..."), 0, 0);
       }
 
       if (options.expanded) {
-        return new Text(output, 0, 0);
+        const expandedOutput = details ? buildFullFetchResultText(details) : output;
+        return new Text(expandedOutput, 0, 0);
       }
 
       const lines = output.split("\n");

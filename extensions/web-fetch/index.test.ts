@@ -364,3 +364,35 @@ test("fetch_content renderResult collapses multiline output", async () => {
   expect(rendered.text).toContain("2 more lines");
   expect(rendered.text).not.toContain("Second line");
 });
+
+test("fetch_content renderResult expands to the full fetched text", async () => {
+  const harness = createHarness();
+  const tool = harness.getTool("fetch_content");
+  const rendered = tool.renderResult?.(
+    {
+      content: [
+        {
+          type: "text",
+          text: "Fetched content from: https://example.com\n\n[Showing lines 1-1 of 3.]",
+        },
+      ],
+      details: {
+        url: "https://example.com",
+        final_url: "https://example.com",
+        title: "Example",
+        content: "Line one\nLine two\nLine three",
+        content_length: 26,
+        truncated: false,
+      },
+    },
+    { expanded: true, isPartial: false },
+    {
+      fg: (_color: string, text: string) => text,
+    },
+  ) as MockText;
+
+  expect(rendered.text).toContain("Line one");
+  expect(rendered.text).toContain("Line two");
+  expect(rendered.text).toContain("Line three");
+  expect(rendered.text).not.toContain("[Showing lines");
+});
