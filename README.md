@@ -39,6 +39,7 @@ The default package bundles upstream Pi together with repo-owned resources:
   - `chrome-cdp`
   - `humanizer`
   - `rust-proptest`
+  - `userinterface-wiki`
   - `visual-explainer`
 - **Themes**
   - `catppuccin-latte`
@@ -219,6 +220,7 @@ The bundled skills cover common high-value tasks:
 - **chrome-cdp** for inspecting and interacting with your live Chrome, Chromium, or Brave session
 - **humanizer** for making generated text sound less AI-written
 - **rust-proptest** for Rust property testing
+- **userinterface-wiki** for UI/UX reviews covering animation, typography, CSS, audio, and interaction patterns
 - **visual-explainer** for turning complex technical material into visual HTML explainers
 
 ## Startup behavior

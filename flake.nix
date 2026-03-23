@@ -6,6 +6,10 @@
       url = "github:nicobailon/visual-explainer";
       flake = false;
     };
+    skill-userinterface-wiki = {
+      url = "github:raphaelsalaja/userinterface-wiki";
+      flake = false;
+    };
     llm-agents = {
       url = "github:numtide/llm-agents.nix";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -81,6 +85,9 @@
 
               mkdir -p $out/skills/visual-explainer
               cp -rf ${inputs.skill-visual-explainer}/* $out/skills/visual-explainer/
+
+              mkdir -p $out/skills/userinterface-wiki
+              cp -rf ${inputs.skill-userinterface-wiki}/skills/* $out/skills/userinterface-wiki/
 
               cp -rf ${./skills}/chrome-cdp $out/skills/chrome-cdp
               cp -rf ${./skills}/autoresearch-create $out/skills/autoresearch-create
