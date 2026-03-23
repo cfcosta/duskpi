@@ -35,9 +35,15 @@ The default package bundles upstream Pi together with repo-owned resources:
   - `web_fetch`
   - `web_search` _(when `KAGI_API_KEY` is set)_
 - **Skills**
+  - `attach-db`
   - `autoresearch-create`
   - `chrome-cdp`
+  - `duckdb-docs`
   - `humanizer`
+  - `install-duckdb`
+  - `query`
+  - `read-file`
+  - `read-memories`
   - `rust-proptest`
   - `userinterface-wiki`
   - `visual-explainer`
@@ -216,9 +222,15 @@ Use it when you want a command-style entrypoint with immediate search output ins
 
 The bundled skills cover common high-value tasks:
 
+- **attach-db** for attaching DuckDB database files and persisting shared session state
 - **autoresearch-create** for setting up and launching autonomous optimization loops
 - **chrome-cdp** for inspecting and interacting with your live Chrome, Chromium, or Brave session
+- **duckdb-docs** for searching DuckDB and DuckLake documentation from the session
 - **humanizer** for making generated text sound less AI-written
+- **install-duckdb** for installing or updating the DuckDB CLI and extensions
+- **query** for running DuckDB SQL against attached databases or ad-hoc data files
+- **read-file** for exploring CSV, Parquet, JSON, spreadsheets, and other files through DuckDB
+- **read-memories** for searching prior session logs with DuckDB-backed exploration
 - **rust-proptest** for Rust property testing
 - **userinterface-wiki** for UI/UX reviews covering animation, typography, CSS, audio, and interaction patterns
 - **visual-explainer** for turning complex technical material into visual HTML explainers

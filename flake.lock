@@ -140,8 +140,25 @@
       "inputs": {
         "llm-agents": "llm-agents",
         "nixpkgs": "nixpkgs",
+        "skill-duckdb-skills": "skill-duckdb-skills",
         "skill-userinterface-wiki": "skill-userinterface-wiki",
         "skill-visual-explainer": "skill-visual-explainer"
+      }
+    },
+    "skill-duckdb-skills": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1774255284,
+        "narHash": "sha256-13dPimt/Gf7coSQe6q1vF7yQwSUoTJSucP9URAxf9VA=",
+        "owner": "duckdb",
+        "repo": "duckdb-skills",
+        "rev": "f6114c786311232360c30856432b4014ebd3604c",
+        "type": "github"
+      },
+      "original": {
+        "owner": "duckdb",
+        "repo": "duckdb-skills",
+        "type": "github"
       }
     },
     "skill-userinterface-wiki": {
