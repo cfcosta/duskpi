@@ -26,6 +26,7 @@ export const RLM_COMMAND_DESCRIPTION =
   "Run the Recursive Language Model workflow scaffold for long documents and notes";
 
 const RLM_INTERNAL_MESSAGE_TYPE = "rlm-internal";
+const RLM_STATUS_KEY = "rlm";
 const INITIAL_PREVIEW_CHARS = 160;
 
 type PendingResponse =
@@ -103,6 +104,7 @@ export class RlmWorkflow {
       iterationCount: 0,
       malformedOutputRetries: 0,
     };
+    this.updateStatus(ctx);
 
     this.api.sendUserMessage(`${prompt}\n\n${requestIdMarker(requestId)}`);
   }
@@ -139,7 +141,7 @@ export class RlmWorkflow {
         `RLM stopped: exceeded max iteration budget (${this.maxIterations}).`,
         "error",
       );
-      this.state = undefined;
+      this.clearState(ctx);
       return;
     }
 
@@ -173,7 +175,7 @@ export class RlmWorkflow {
     if (action.value.kind === "final_result") {
       this.state.environment.setFinalResult(action.value.result);
       ctx.ui.notify(`RLM final result ready for ${this.state.request.path}.`, "info");
-      this.state = undefined;
+      this.clearState(ctx);
       return;
     }
 
@@ -196,15 +198,25 @@ export class RlmWorkflow {
 
   handleTurnEnd(_event: TurnEndEvent, _ctx: ExtensionContext): void {}
 
-  handleSessionStart(_event: SessionStartEvent, _ctx: ExtensionContext): void {}
+  handleSessionStart(_event: SessionStartEvent, ctx: ExtensionContext): void {
+    this.updateStatus(ctx);
+  }
 
-  handleSessionSwitch(_event: SessionSwitchEvent, _ctx: ExtensionContext): void {}
+  handleSessionSwitch(_event: SessionSwitchEvent, ctx: ExtensionContext): void {
+    this.clearState(ctx);
+  }
 
-  handleSessionFork(_event: SessionForkEvent, _ctx: ExtensionContext): void {}
+  handleSessionFork(_event: SessionForkEvent, ctx: ExtensionContext): void {
+    this.clearState(ctx);
+  }
 
-  handleSessionCompact(_event: SessionCompactEvent, _ctx: ExtensionContext): void {}
+  handleSessionCompact(_event: SessionCompactEvent, ctx: ExtensionContext): void {
+    this.clearState(ctx);
+  }
 
-  handleSessionShutdown(_event: SessionShutdownEvent, _ctx: ExtensionContext): void {}
+  handleSessionShutdown(_event: SessionShutdownEvent, ctx: ExtensionContext): void {
+    this.clearState(ctx);
+  }
 
   private handleChildAgentEnd(text: string, ctx: ExtensionContext): void {
     if (!this.state || this.state.pending.kind !== "child") {
@@ -255,7 +267,7 @@ export class RlmWorkflow {
         `RLM stopped: exceeded max recursion depth (${this.maxRecursionDepth}).`,
         "error",
       );
-      this.state = undefined;
+      this.clearState(ctx);
       return;
     }
 
@@ -322,7 +334,7 @@ export class RlmWorkflow {
       );
     } catch {
       ctx.ui.notify("RLM stopped: failed to send follow-up prompt.", "error");
-      this.state = undefined;
+      this.clearState(ctx);
       return;
     }
 
@@ -331,6 +343,7 @@ export class RlmWorkflow {
     this.state.pending = pending;
     this.state.pendingPrompt = prompt;
     this.state.malformedOutputRetries = 0;
+    this.updateStatus(ctx);
   }
 
   private handleMalformedOutput(
@@ -353,7 +366,7 @@ export class RlmWorkflow {
     }
 
     ctx.ui.notify(stopMessage, "error");
-    this.state = undefined;
+    this.clearState(ctx);
   }
 
   private resendPendingPrompt(ctx: ExtensionContext): void {
@@ -379,13 +392,32 @@ export class RlmWorkflow {
       );
     } catch {
       ctx.ui.notify("RLM stopped: failed to resend the pending prompt.", "error");
-      this.state = undefined;
+      this.clearState(ctx);
       return;
     }
 
     this.state.pendingRequestId = requestId;
     this.state.awaitingResponse = true;
     this.state.pending = pending;
+    this.updateStatus(ctx);
+  }
+
+  private updateStatus(ctx: ExtensionContext): void {
+    if (!this.state) {
+      ctx.ui.setStatus(RLM_STATUS_KEY, undefined);
+      return;
+    }
+
+    const phase = this.state.pending.kind === "child" ? "child" : "root";
+    ctx.ui.setStatus(
+      RLM_STATUS_KEY,
+      `RLM ${phase}: ${this.state.request.path} (${this.state.iterationCount}/${this.maxIterations})`,
+    );
+  }
+
+  private clearState(ctx: ExtensionContext): void {
+    this.state = undefined;
+    this.updateStatus(ctx);
   }
 
   private nextRequestId(): string {

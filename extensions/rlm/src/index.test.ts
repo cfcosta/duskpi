@@ -24,6 +24,7 @@ interface Harness {
 
 function createContext(): ExtensionContext {
   const notifications: Array<{ message: string; level?: string }> = [];
+  const statuses: Array<{ key: string; value: string | undefined }> = [];
   const theme: ExtensionTheme = {
     fg(_color: string, text: string) {
       return text;
@@ -40,7 +41,9 @@ function createContext(): ExtensionContext {
       notify(message: string, level?: "info" | "warning" | "error") {
         notifications.push({ message, level });
       },
-      setStatus() {},
+      setStatus(key: string, value: string | undefined) {
+        statuses.push({ key, value });
+      },
       setWidget() {},
       async select() {
         return undefined;
@@ -62,6 +65,7 @@ function createContext(): ExtensionContext {
   };
 
   Reflect.set(ctx, "notifications", notifications);
+  Reflect.set(ctx, "statuses", statuses);
   return ctx;
 }
 
@@ -281,6 +285,70 @@ test("/rlm starts a run by sending a metadata-only initial prompt", async () => 
   assert.match(prompt, /workflow-request-id:rlm-1/);
   assert.doesNotMatch(prompt, /SENTINEL_FULL_DOCUMENT_TAIL_DO_NOT_LEAK/);
   assert.deepEqual((ctx as ExtensionContext & { notifications?: unknown[] }).notifications, []);
+});
+
+test("/rlm sets status during an active run and clears it on completion", async () => {
+  const harness = createHarness();
+  const notePath = createNoteFile("alpha beta gamma delta epsilon");
+  const ctx = createContext() as ExtensionContext & {
+    notifications?: Array<{ message: string; level?: string }>;
+    statuses?: Array<{ key: string; value: string | undefined }>;
+  };
+
+  await harness.commands.rlm?.handler(`${notePath} conclude`, ctx);
+
+  assert.ok(ctx.statuses?.some((entry) => entry.key === "rlm" && /RLM root:/.test(entry.value ?? "")));
+
+  const prompt = String(harness.sentUserMessages[0]?.content ?? "");
+  harness.listeners.agent_end?.(
+    {
+      messages: [
+        buildTextMessage("user", prompt),
+        buildTextMessage(
+          "assistant",
+          '{"action":"final_result","result":"done"}',
+        ),
+      ],
+    },
+    ctx,
+  );
+
+  assert.deepEqual(ctx.statuses?.at(-1), { key: "rlm", value: undefined });
+});
+
+test("/rlm resets active state on session lifecycle events", async () => {
+  for (const [eventName, eventPayload] of [
+    ["session_switch", { reason: "resume", previousSessionFile: "/tmp/prev.pi" }],
+    ["session_fork", { previousSessionFile: "/tmp/prev.pi" }],
+    ["session_compact", { compactionEntry: { id: "compact-1" }, fromExtension: true }],
+    ["session_shutdown", { reason: "shutdown" }],
+  ] as const) {
+    const harness = createHarness();
+    const notePath = createNoteFile("alpha beta gamma delta epsilon");
+    const ctx = createContext() as ExtensionContext & {
+      statuses?: Array<{ key: string; value: string | undefined }>;
+    };
+
+    await harness.commands.rlm?.handler(`${notePath} inspect`, ctx);
+    assert.ok(ctx.statuses?.some((entry) => entry.key === "rlm" && typeof entry.value === "string"));
+
+    harness.listeners[eventName]?.(eventPayload, ctx);
+
+    assert.deepEqual(ctx.statuses?.at(-1), { key: "rlm", value: undefined });
+
+    const prompt = String(harness.sentUserMessages[0]?.content ?? "");
+    harness.listeners.agent_end?.(
+      {
+        messages: [
+          buildTextMessage("user", prompt),
+          buildTextMessage("assistant", '{"action":"inspect_document"}'),
+        ],
+      },
+      ctx,
+    );
+
+    assert.equal(harness.sentMessages.length, 0);
+  }
 });
 
 test("/rlm ignores agent_end payloads with mismatched request ids", async () => {
