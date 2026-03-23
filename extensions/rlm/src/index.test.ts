@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import { mkdtempSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -126,6 +127,10 @@ function createNoteFile(content: string): string {
   const notePath = path.join(tempDir, "example.md");
   writeFileSync(notePath, content, "utf8");
   return notePath;
+}
+
+function getFixturePath(name: string): string {
+  return fileURLToPath(new URL(`./__fixtures__/${name}`, import.meta.url));
 }
 
 test("registerRlmExtension wires /rlm and forwards all workflow handlers", async () => {
@@ -660,6 +665,95 @@ test("/rlm retries malformed assistant output once and then stops with a clear e
     {
       message: "RLM stopped: assistant action output remained malformed.",
       level: "error",
+    },
+  ]);
+});
+
+test("/rlm completes an end-to-end recursive workflow over a long note fixture", async () => {
+  const harness = createHarness();
+  const notePath = getFixturePath("long-note.md");
+  const ctx = createContext() as ExtensionContext & {
+    notifications?: Array<{ message: string; level?: string }>;
+  };
+
+  await harness.commands.rlm?.handler(`${notePath} summarize the note`, ctx);
+
+  assert.equal(harness.sentUserMessages.length, 1);
+  const initialPrompt = String(harness.sentUserMessages[0]?.content ?? "");
+  assert.match(initialPrompt, /Document metadata:/);
+  assert.doesNotMatch(initialPrompt, /SENTINEL_END_TO_END_LONG_NOTE_DO_NOT_LEAK_IN_INITIAL_PROMPT/);
+
+  harness.listeners.agent_end?.(
+    {
+      messages: [
+        buildTextMessage("user", initialPrompt),
+        buildTextMessage(
+          "assistant",
+          '{"action":"subcall","prompt":"Summarize the introduction and key idea in one sentence.","storeAs":"intro_summary"}',
+        ),
+      ],
+    },
+    ctx,
+  );
+
+  assert.equal(harness.sentMessages.length, 1);
+  const childPrompt = String(harness.sentMessages[0]?.message.content ?? "");
+  assert.match(childPrompt, /Recursive child sub-call/);
+  assert.match(childPrompt, /Store target: intro_summary/);
+
+  harness.listeners.agent_end?.(
+    {
+      messages: [
+        buildTextMessage("custom", childPrompt),
+        buildTextMessage(
+          "assistant",
+          '{"action":"final_result","result":"The note says the root should start from metadata, read bounded slices on demand, and reuse stored summaries."}',
+        ),
+      ],
+    },
+    ctx,
+  );
+
+  assert.equal(harness.sentMessages.length, 2);
+  const parentResume = String(harness.sentMessages[1]?.message.content ?? "");
+  assert.match(parentResume, /"type": "subcall_result"/);
+  assert.match(parentResume, /"storeAs": "intro_summary"/);
+  assert.match(parentResume, /reuse stored summaries/);
+
+  harness.listeners.agent_end?.(
+    {
+      messages: [
+        buildTextMessage("custom", parentResume),
+        buildTextMessage("assistant", '{"action":"inspect_document"}'),
+      ],
+    },
+    ctx,
+  );
+
+  assert.equal(harness.sentMessages.length, 3);
+  const inspectObservation = String(harness.sentMessages[2]?.message.content ?? "");
+  assert.match(inspectObservation, /"type": "inspect_document"/);
+  assert.match(inspectObservation, /"variableCount": 1/);
+  assert.match(inspectObservation, /"intro_summary"/);
+
+  harness.listeners.agent_end?.(
+    {
+      messages: [
+        buildTextMessage("custom", inspectObservation),
+        buildTextMessage(
+          "assistant",
+          '{"action":"final_result","result":"Final answer: the note recommends metadata-first control, bounded reads, and reuse of the stored intro_summary variable for later reasoning."}',
+        ),
+      ],
+    },
+    ctx,
+  );
+
+  assert.equal(harness.sentMessages.length, 3);
+  assert.deepEqual(ctx.notifications, [
+    {
+      message: `RLM final result ready for ${notePath}.`,
+      level: "info",
     },
   ]);
 });
