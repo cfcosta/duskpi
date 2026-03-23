@@ -406,7 +406,10 @@ test("real arbiter prompt requires repo-specific fix-now triage", () => {
   }
 
   assert.match(loaded.prompts.arbiter, /why the OWASP category applies in this repository/i);
-  assert.match(loaded.prompts.arbiter, /why the issue is real here and not just a generic weakness/i);
+  assert.match(
+    loaded.prompts.arbiter,
+    /why the issue is real here and not just a generic weakness/i,
+  );
   assert.match(loaded.prompts.arbiter, /exact code path or resource at risk/i);
   assert.match(loaded.prompts.arbiter, /minimal remediation scope/i);
   assert.match(

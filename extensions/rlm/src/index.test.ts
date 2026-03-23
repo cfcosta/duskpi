@@ -17,9 +17,15 @@ import rlmExtension, { registerRlmExtension } from "../index";
 import { RLM_COMMAND_DESCRIPTION, RlmWorkflow } from "./workflow";
 
 interface Harness {
-  commands: Record<string, { description: string; handler: (args: unknown, ctx: ExtensionContext) => unknown }>;
+  commands: Record<
+    string,
+    { description: string; handler: (args: unknown, ctx: ExtensionContext) => unknown }
+  >;
   listeners: Record<string, (event: unknown, ctx: ExtensionContext) => unknown>;
-  sentMessages: Array<{ message: { customType?: string; content?: unknown; display?: boolean }; options?: unknown }>;
+  sentMessages: Array<{
+    message: { customType?: string; content?: unknown; display?: boolean };
+    options?: unknown;
+  }>;
   sentUserMessages: Array<{ content: unknown; options?: unknown }>;
 }
 
@@ -233,18 +239,14 @@ test("registerRlmExtension wires /rlm and forwards all workflow handlers", async
   assert.equal(commands.rlm?.handler("notes.md", ctx), "command-result");
   assert.equal(listeners.tool_call?.({ toolName: "read" }, ctx), "tool-result");
   assert.equal(listeners.agent_end?.({ messages: ["done"] }, ctx), "agent-end-result");
-  assert.deepEqual(
-    listeners.before_agent_start?.({ systemPrompt: "base" }, ctx),
-    { systemPrompt: "base\n\nrlm" },
-  );
+  assert.deepEqual(listeners.before_agent_start?.({ systemPrompt: "base" }, ctx), {
+    systemPrompt: "base\n\nrlm",
+  });
   assert.equal(listeners.turn_end?.({ message: { role: "assistant" } }, ctx), "turn-end-result");
   assert.equal(listeners.session_start?.({ restored: true }, ctx), "session-start-result");
   assert.equal(listeners.session_switch?.(sessionSwitchEvent, ctx), "session-switch-result");
   assert.equal(listeners.session_fork?.(sessionForkEvent, ctx), "session-fork-result");
-  assert.equal(
-    listeners.session_compact?.(sessionCompactEvent, ctx),
-    "session-compact-result",
-  );
+  assert.equal(listeners.session_compact?.(sessionCompactEvent, ctx), "session-compact-result");
   assert.equal(
     listeners.session_shutdown?.({ reason: "shutdown" }, ctx),
     "session-shutdown-result",
@@ -302,17 +304,16 @@ test("/rlm sets status during an active run and clears it on completion", async 
 
   await harness.commands.rlm?.handler(`${notePath} conclude`, ctx);
 
-  assert.ok(ctx.statuses?.some((entry) => entry.key === "rlm" && /RLM root:/.test(entry.value ?? "")));
+  assert.ok(
+    ctx.statuses?.some((entry) => entry.key === "rlm" && /RLM root:/.test(entry.value ?? "")),
+  );
 
   const prompt = String(harness.sentUserMessages[0]?.content ?? "");
   harness.listeners.agent_end?.(
     {
       messages: [
         buildTextMessage("user", prompt),
-        buildTextMessage(
-          "assistant",
-          '{"action":"final_result","result":"done"}',
-        ),
+        buildTextMessage("assistant", '{"action":"final_result","result":"done"}'),
       ],
     },
     ctx,
@@ -335,7 +336,9 @@ test("/rlm resets active state on session lifecycle events", async () => {
     };
 
     await harness.commands.rlm?.handler(`${notePath} inspect`, ctx);
-    assert.ok(ctx.statuses?.some((entry) => entry.key === "rlm" && typeof entry.value === "string"));
+    assert.ok(
+      ctx.statuses?.some((entry) => entry.key === "rlm" && typeof entry.value === "string"),
+    );
 
     harness.listeners[eventName]?.(eventPayload, ctx);
 
@@ -441,7 +444,10 @@ test("/rlm executes read_segment and search_document actions", async () => {
     {
       messages: [
         buildTextMessage("custom", readFollowUp),
-        buildTextMessage("assistant", '{"action":"search_document","query":"recursion","maxResults":2}'),
+        buildTextMessage(
+          "assistant",
+          '{"action":"search_document","query":"recursion","maxResults":2}',
+        ),
       ],
     },
     ctx,
@@ -488,7 +494,10 @@ test("/rlm schedules a hidden child turn for subcall actions and resumes the par
   harness.listeners.agent_end?.(
     {
       messages: [
-        buildTextMessage("custom", childPrompt.replace("workflow-request-id:rlm-2", "workflow-request-id:rlm-999")),
+        buildTextMessage(
+          "custom",
+          childPrompt.replace("workflow-request-id:rlm-2", "workflow-request-id:rlm-999"),
+        ),
         buildTextMessage(
           "assistant",
           '{"action":"final_result","result":"This child summary should be ignored."}',
@@ -540,9 +549,14 @@ test("/rlm schedules a hidden child turn for subcall actions and resumes the par
 });
 
 test("/rlm stops when subcalls exceed the recursion depth budget", async () => {
-  const harness = createHarness((api) => registerRlmExtension(api, new RlmWorkflow(api, {
-    maxRecursionDepth: 0,
-  })));
+  const harness = createHarness((api) =>
+    registerRlmExtension(
+      api,
+      new RlmWorkflow(api, {
+        maxRecursionDepth: 0,
+      }),
+    ),
+  );
   const notePath = createNoteFile("alpha beta gamma delta epsilon");
   const ctx = createContext() as ExtensionContext & {
     notifications?: Array<{ message: string; level?: string }>;
@@ -574,9 +588,14 @@ test("/rlm stops when subcalls exceed the recursion depth budget", async () => {
 });
 
 test("/rlm stops when actions exceed the iteration budget", async () => {
-  const harness = createHarness((api) => registerRlmExtension(api, new RlmWorkflow(api, {
-    maxIterations: 1,
-  })));
+  const harness = createHarness((api) =>
+    registerRlmExtension(
+      api,
+      new RlmWorkflow(api, {
+        maxIterations: 1,
+      }),
+    ),
+  );
   const notePath = createNoteFile("alpha beta gamma delta epsilon");
   const ctx = createContext() as ExtensionContext & {
     notifications?: Array<{ message: string; level?: string }>;
@@ -618,9 +637,14 @@ test("/rlm stops when actions exceed the iteration budget", async () => {
 });
 
 test("/rlm retries malformed assistant output once and then stops with a clear error", async () => {
-  const harness = createHarness((api) => registerRlmExtension(api, new RlmWorkflow(api, {
-    maxMalformedOutputRetries: 1,
-  })));
+  const harness = createHarness((api) =>
+    registerRlmExtension(
+      api,
+      new RlmWorkflow(api, {
+        maxMalformedOutputRetries: 1,
+      }),
+    ),
+  );
   const notePath = createNoteFile("alpha beta gamma delta epsilon");
   const ctx = createContext() as ExtensionContext & {
     notifications?: Array<{ message: string; level?: string }>;

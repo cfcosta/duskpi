@@ -6,13 +6,12 @@ import {
   parseAssistantAction,
   parseAssistantProgram,
 } from "./protocol";
-import {
-  DEFAULT_RLM_MAX_RESULT_CHARS,
-  DEFAULT_RLM_MAX_SLICE_CHARS,
-} from "./request";
+import { DEFAULT_RLM_MAX_RESULT_CHARS, DEFAULT_RLM_MAX_SLICE_CHARS } from "./request";
 
 test("parseAssistantProgram accepts a fenced js block", () => {
-  const result = parseAssistantProgram('```js\nconst summary = env.get("intro");\nsetFinal(summary);\n```');
+  const result = parseAssistantProgram(
+    '```js\nconst summary = env.get("intro");\nsetFinal(summary);\n```',
+  );
   assert.deepEqual(result, {
     ok: true,
     value: {
@@ -23,7 +22,9 @@ test("parseAssistantProgram accepts a fenced js block", () => {
 });
 
 test("parseAssistantProgram accepts a raw JavaScript program", () => {
-  const result = parseAssistantProgram('const metadata = inspect();\nset("count", metadata.lineCount);');
+  const result = parseAssistantProgram(
+    'const metadata = inspect();\nset("count", metadata.lineCount);',
+  );
   assert.equal(result.ok, true);
   if (!result.ok) {
     throw new Error("expected JavaScript program parsing to succeed");
@@ -57,7 +58,7 @@ test("parseAssistantProgram rejects multiple code blocks explicitly", () => {
 });
 
 test("parseAssistantProgram rejects invalid JavaScript explicitly", () => {
-  const result = parseAssistantProgram('```js\nconst broken = ;\n```');
+  const result = parseAssistantProgram("```js\nconst broken = ;\n```");
   assert.equal(result.ok, false);
   if (result.ok) {
     throw new Error("expected parse failure");
@@ -102,7 +103,9 @@ test("parseAssistantAction accepts search_document and defaults maxResults", () 
 });
 
 test("parseAssistantAction accepts final_result from a fenced json block", () => {
-  const result = parseAssistantAction('```json\n{"action":"final_result","result":"Main thesis"}\n```');
+  const result = parseAssistantAction(
+    '```json\n{"action":"final_result","result":"Main thesis"}\n```',
+  );
   assert.deepEqual(result, {
     ok: true,
     value: {
@@ -113,12 +116,10 @@ test("parseAssistantAction accepts final_result from a fenced json block", () =>
 });
 
 test("RLM_PROTOCOL_ACTIONS lists the initial v1 action set", () => {
-  assert.deepEqual([...RLM_PROTOCOL_ACTIONS], [
-    "inspect_document",
-    "read_segment",
-    "search_document",
-    "final_result",
-  ]);
+  assert.deepEqual(
+    [...RLM_PROTOCOL_ACTIONS],
+    ["inspect_document", "read_segment", "search_document", "final_result"],
+  );
 });
 
 test("parseAssistantAction rejects empty output explicitly", () => {

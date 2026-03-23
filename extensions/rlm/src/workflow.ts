@@ -80,7 +80,10 @@ export class RlmWorkflow {
 
   async handleCommand(args: unknown, ctx: ExtensionContext): Promise<void> {
     if (this.state?.awaitingResponse) {
-      ctx.ui.notify("RLM is already running. Finish the current run before starting another.", "warning");
+      ctx.ui.notify(
+        "RLM is already running. Finish the current run before starting another.",
+        "warning",
+      );
       return;
     }
 
@@ -91,7 +94,9 @@ export class RlmWorkflow {
     }
 
     const environment = new RlmDocumentEnvironment(request.value);
-    const prompt = buildInitialPrompt(environment.getMetadata({ previewChars: INITIAL_PREVIEW_CHARS }));
+    const prompt = buildInitialPrompt(
+      environment.getMetadata({ previewChars: INITIAL_PREVIEW_CHARS }),
+    );
     const requestId = this.nextRequestId();
 
     this.state = {
@@ -137,10 +142,7 @@ export class RlmWorkflow {
     }
 
     if (this.state.iterationCount + 1 > this.maxIterations) {
-      ctx.ui.notify(
-        `RLM stopped: exceeded max iteration budget (${this.maxIterations}).`,
-        "error",
-      );
+      ctx.ui.notify(`RLM stopped: exceeded max iteration budget (${this.maxIterations}).`, "error");
       this.clearState(ctx);
       return;
     }
@@ -308,7 +310,11 @@ export class RlmWorkflow {
     }
   }
 
-  private sendObservationFollowUp(observation: unknown, ctx: ExtensionContext, nextPending: PendingResponse): void {
+  private sendObservationFollowUp(
+    observation: unknown,
+    ctx: ExtensionContext,
+    nextPending: PendingResponse,
+  ): void {
     const prompt = buildObservationPrompt(observation);
     this.sendHiddenPrompt(prompt, ctx, nextPending);
   }
@@ -472,9 +478,7 @@ function buildRlmSystemPrompt(pending: PendingResponse): string {
   ].join("\n");
 }
 
-function parseSubcallAction(text: string):
-  | { ok: true; value: RlmSubcallAction }
-  | { ok: false } {
+function parseSubcallAction(text: string): { ok: true; value: RlmSubcallAction } | { ok: false } {
   const normalized = text.trim();
   if (normalized.length === 0) {
     return { ok: false };

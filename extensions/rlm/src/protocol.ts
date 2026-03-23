@@ -1,7 +1,4 @@
-import {
-  DEFAULT_RLM_MAX_RESULT_CHARS,
-  DEFAULT_RLM_MAX_SLICE_CHARS,
-} from "./request";
+import { DEFAULT_RLM_MAX_RESULT_CHARS, DEFAULT_RLM_MAX_SLICE_CHARS } from "./request";
 
 export type RlmAssistantProgramLanguage = "javascript";
 
@@ -170,10 +167,7 @@ function parseReadSegmentAction(payload: Record<string, unknown>): RlmAssistantA
   const length = payload.length;
 
   if (!isNonNegativeInteger(offset)) {
-    return failure(
-      "invalid_payload",
-      "read_segment requires a non-negative integer 'offset'.",
-    );
+    return failure("invalid_payload", "read_segment requires a non-negative integer 'offset'.");
   }
 
   if (!isPositiveInteger(length)) {
@@ -268,7 +262,9 @@ function validateJavaScriptProgram(code: string): RlmAssistantProgramParseResult
   };
 }
 
-function extractJsonPayload(text: string): RlmAssistantActionParseResult | { ok: true; value: string } {
+function extractJsonPayload(
+  text: string,
+): RlmAssistantActionParseResult | { ok: true; value: string } {
   const fencedMatch = text.match(/^```(?:json)?\s*([\s\S]*?)```$/i);
   if (fencedMatch) {
     const fenced = fencedMatch[1]?.trim() ?? "";

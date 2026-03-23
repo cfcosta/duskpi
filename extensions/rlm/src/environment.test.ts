@@ -124,9 +124,6 @@ test("final result storage persists the final answer separately", () => {
 
   environment.setFinalResult("The note argues for environment-backed recursion.");
 
-  assert.equal(
-    environment.getFinalResult(),
-    "The note argues for environment-backed recursion.",
-  );
+  assert.equal(environment.getFinalResult(), "The note argues for environment-backed recursion.");
   assert.equal(environment.getMetadata().hasFinalResult, true);
 });

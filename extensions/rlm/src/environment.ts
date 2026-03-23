@@ -106,10 +106,7 @@ export class RlmDocumentEnvironment {
     };
   }
 
-  search(
-    query: string,
-    options: RlmDocumentSearchOptions = {},
-  ): RlmDocumentSearchResult {
+  search(query: string, options: RlmDocumentSearchOptions = {}): RlmDocumentSearchResult {
     const normalizedQuery = query.trim();
     if (normalizedQuery.length === 0) {
       return {
