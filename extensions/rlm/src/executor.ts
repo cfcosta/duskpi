@@ -1,5 +1,11 @@
 import { spawn } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import type { RlmAssistantProgram } from "./protocol";
+
+export const RLM_WASMTIME_BIN_ENV = "RLM_WASMTIME_BIN";
+export const RLM_JAVY_BIN_ENV = "RLM_JAVY_BIN";
 
 export interface RlmExecutorInput {
   program: RlmAssistantProgram;
@@ -49,37 +55,154 @@ export type RlmExecutorResult =
   | RlmExecutorRuntimeErrorResult
   | RlmExecutorInvalidOutputResult;
 
+export type WasmtimeExecutorMode = "module" | "javy";
+
 export interface WasmtimeExecutorOptions {
+  mode?: WasmtimeExecutorMode;
   command?: string;
   args?: string[];
   modulePath?: string;
+  compilerCommand?: string;
+  compilerArgs?: string[];
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
+  tempDir?: string;
+}
+
+interface ProcessResult {
+  ok: boolean;
+  code: number | null;
+  stdout: string;
+  stderr: string;
+  error?: Error;
 }
 
 export class WasmtimeExecutor {
+  private readonly mode: WasmtimeExecutorMode;
   private readonly command: string;
   private readonly args: string[];
   private readonly modulePath?: string;
+  private readonly compilerCommand?: string;
+  private readonly compilerArgs: string[];
   private readonly env?: NodeJS.ProcessEnv;
   private readonly timeoutMs: number;
+  private readonly tempDir: string;
 
   constructor(options: WasmtimeExecutorOptions = {}) {
+    this.mode = options.mode ?? "module";
     this.command = options.command ?? "wasmtime";
     this.args = options.args ?? [];
     this.modulePath = options.modulePath;
+    this.compilerCommand = options.compilerCommand;
+    this.compilerArgs = options.compilerArgs ?? [];
     this.env = options.env;
     this.timeoutMs = options.timeoutMs ?? 10_000;
+    this.tempDir = options.tempDir ?? os.tmpdir();
   }
 
   async execute(input: RlmExecutorInput): Promise<RlmExecutorResult> {
+    if (this.mode === "javy") {
+      return await this.executeViaJavy(input);
+    }
+
+    return await this.executePrecompiledModule(input);
+  }
+
+  private async executePrecompiledModule(input: RlmExecutorInput): Promise<RlmExecutorResult> {
     const payload = JSON.stringify({
       program: input.program,
       bindings: input.bindings ?? {},
     });
+    const timeoutMs = input.timeoutMs ?? this.timeoutMs;
 
-    return await new Promise<RlmExecutorResult>((resolve) => {
-      const child = spawn(this.command, this.buildArgs(), {
+    const result = await this.runProcess(
+      this.command,
+      this.buildRuntimeArgs(this.modulePath),
+      payload,
+      timeoutMs,
+    );
+    if (!result.ok) {
+      return processFailure(
+        `Executor process ${result.error ? "failed" : "exited"}.`,
+        result,
+        timeoutMs,
+      );
+    }
+
+    return normalizeExecutorOutput(result.stdout, result.stderr);
+  }
+
+  private async executeViaJavy(input: RlmExecutorInput): Promise<RlmExecutorResult> {
+    if (!this.compilerCommand) {
+      return {
+        kind: "runtime_error",
+        message: "Javy executor mode requires a compilerCommand.",
+        exitCode: null,
+      };
+    }
+
+    const tempRoot = await mkdtemp(path.join(this.tempDir, "rlm-javy-"));
+    const sourcePath = path.join(tempRoot, "program.js");
+    const modulePath = path.join(tempRoot, "program.wasm");
+    const timeoutMs = input.timeoutMs ?? this.timeoutMs;
+
+    try {
+      await writeFile(sourcePath, buildJavyRuntimeSource(input.program.code), "utf8");
+
+      const compileResult = await this.runProcess(
+        this.compilerCommand,
+        [...this.compilerArgs, "build", sourcePath, "-o", modulePath],
+        undefined,
+        timeoutMs,
+      );
+      if (!compileResult.ok) {
+        return {
+          kind: "runtime_error",
+          message: compileResult.error
+            ? `Javy compilation failed: ${compileResult.error.message}`
+            : `Javy compilation exited with code ${compileResult.code}.`,
+          exitCode: compileResult.code,
+          stdout: compileResult.stdout,
+          stderr: compileResult.stderr,
+        };
+      }
+
+      const runtimePayload = JSON.stringify({
+        program: input.program,
+        bindings: input.bindings ?? {},
+      });
+      const runtimeResult = await this.runProcess(
+        this.command,
+        this.buildRuntimeArgs(modulePath),
+        runtimePayload,
+        timeoutMs,
+      );
+      if (!runtimeResult.ok) {
+        return processFailure(
+          `Wasmtime runtime ${runtimeResult.error ? "failed" : "exited"}.`,
+          runtimeResult,
+          timeoutMs,
+        );
+      }
+
+      return normalizeExecutorOutput(runtimeResult.stdout, runtimeResult.stderr);
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  }
+
+  private buildRuntimeArgs(modulePath?: string): string[] {
+    return modulePath ? [...this.args, modulePath] : [...this.args];
+  }
+
+  private async runProcess(
+    command: string,
+    args: string[],
+    stdin: string | undefined,
+    timeoutMs: number,
+  ): Promise<ProcessResult> {
+    return await new Promise<ProcessResult>((resolve) => {
+      const child = spawn(command, args, {
         env: this.env,
         stdio: ["pipe", "pipe", "pipe"],
       });
@@ -92,13 +215,12 @@ export class WasmtimeExecutor {
         settled = true;
         child.kill();
         resolve({
-          kind: "runtime_error",
-          message: `Executor timed out after ${input.timeoutMs ?? this.timeoutMs}ms.`,
-          exitCode: null,
+          ok: false,
+          code: null,
           stdout,
           stderr,
         });
-      }, input.timeoutMs ?? this.timeoutMs);
+      }, timeoutMs);
 
       child.stdout.setEncoding("utf8");
       child.stderr.setEncoding("utf8");
@@ -114,11 +236,11 @@ export class WasmtimeExecutor {
         settled = true;
         clearTimeout(timeout);
         resolve({
-          kind: "runtime_error",
-          message: error.message,
-          exitCode: null,
+          ok: false,
+          code: null,
           stdout,
           stderr,
+          error,
         });
       });
 
@@ -126,28 +248,170 @@ export class WasmtimeExecutor {
         if (settled) return;
         settled = true;
         clearTimeout(timeout);
-        if (code !== 0) {
-          resolve({
-            kind: "runtime_error",
-            message: `Executor process exited with code ${code}.`,
-            exitCode: code,
-            stdout,
-            stderr,
-          });
-          return;
-        }
-
-        resolve(normalizeExecutorOutput(stdout, stderr));
+        resolve({
+          ok: code === 0,
+          code,
+          stdout,
+          stderr,
+        });
       });
 
-      child.stdin.write(payload);
+      if (typeof stdin === "string") {
+        child.stdin.write(stdin);
+      }
       child.stdin.end();
     });
   }
+}
 
-  private buildArgs(): string[] {
-    return this.modulePath ? [...this.args, this.modulePath] : [...this.args];
+export function createDefaultWasmtimeExecutor(
+  options: Omit<WasmtimeExecutorOptions, "mode" | "command" | "compilerCommand"> = {},
+): WasmtimeExecutor {
+  return new WasmtimeExecutor({
+    mode: "javy",
+    command: process.env[RLM_WASMTIME_BIN_ENV] ?? "wasmtime",
+    compilerCommand: process.env[RLM_JAVY_BIN_ENV] ?? "javy",
+    env: process.env,
+    ...options,
+  });
+}
+
+function buildJavyRuntimeSource(code: string): string {
+  return `
+function readInput() {
+  const chunkSize = 1024;
+  const inputChunks = [];
+  let totalBytes = 0;
+
+  while (true) {
+    const buffer = new Uint8Array(chunkSize);
+    const bytesRead = Javy.IO.readSync(0, buffer);
+    totalBytes += bytesRead;
+    if (bytesRead === 0) {
+      break;
+    }
+    inputChunks.push(buffer.subarray(0, bytesRead));
   }
+
+  const finalBuffer = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of inputChunks) {
+    finalBuffer.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  if (finalBuffer.length === 0) {
+    return {};
+  }
+
+  return JSON.parse(new TextDecoder().decode(finalBuffer));
+}
+
+function writeOutput(output) {
+  const encoded = new TextEncoder().encode(JSON.stringify(output));
+  Javy.IO.writeSync(1, encoded);
+}
+
+function writeError(message) {
+  const encoded = new TextEncoder().encode(String(message));
+  Javy.IO.writeSync(2, encoded);
+}
+
+function stringifyValue(value) {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  const json = JSON.stringify(value);
+  return typeof json === "string" ? json : String(value);
+}
+
+const input = readInput();
+const bindings = input.bindings && typeof input.bindings === "object" ? input.bindings : {};
+const state = {
+  kind: "completed",
+  variables: {},
+  logs: [],
+};
+
+globalThis.bindings = bindings;
+globalThis.get = function get(name) {
+  const key = String(name);
+  if (Object.prototype.hasOwnProperty.call(state.variables, key)) {
+    return state.variables[key];
+  }
+  return bindings[key];
+};
+globalThis.set = function set(name, value) {
+  state.variables[String(name)] = stringifyValue(value);
+  return state.variables[String(name)];
+};
+globalThis.setFinal = function setFinal(value) {
+  state.kind = "completed";
+  state.finalResult = stringifyValue(value);
+  delete state.subcall;
+  return state.finalResult;
+};
+globalThis.setSummary = function setSummary(value) {
+  state.summary = value;
+  return state.summary;
+};
+globalThis.subcall = function subcall(prompt, storeAs) {
+  state.kind = "subcall";
+  state.subcall = {
+    prompt: stringifyValue(prompt),
+    storeAs: stringifyValue(storeAs),
+  };
+  return state.subcall;
+};
+globalThis.log = function log(...values) {
+  state.logs.push(values.map((value) => stringifyValue(value)).join(" "));
+};
+
+try {
+  const userProgram = new Function(
+    "bindings",
+    "get",
+    "set",
+    "setFinal",
+    "setSummary",
+    "subcall",
+    "log",
+    ${JSON.stringify(code)},
+  );
+  userProgram(bindings, globalThis.get, globalThis.set, globalThis.setFinal, globalThis.setSummary, globalThis.subcall, globalThis.log);
+  writeOutput(state);
+} catch (error) {
+  writeError(error instanceof Error ? error.stack ?? error.message : String(error));
+  throw error;
+}
+`;
+}
+
+function processFailure(
+  message: string,
+  result: ProcessResult,
+  timeoutMs: number,
+): RlmExecutorResult {
+  if (result.code === null && !result.error) {
+    return {
+      kind: "runtime_error",
+      message: `Executor timed out after ${timeoutMs}ms.`,
+      exitCode: null,
+      stdout: result.stdout,
+      stderr: result.stderr,
+    };
+  }
+
+  return {
+    kind: "runtime_error",
+    message: result.error
+      ? `${message} ${result.error.message}`
+      : `${message} code ${result.code}.`,
+    exitCode: result.code,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  };
 }
 
 function normalizeExecutorOutput(stdout: string, stderr: string): RlmExecutorResult {

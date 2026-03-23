@@ -66,9 +66,41 @@
             exec ${pkgs.bun}/bin/bun ${./skills/chrome-cdp/scripts/cdp.mjs} "$@"
           '';
 
+          javyAsset = {
+            x86_64-linux = {
+              file = "javy-x86_64-linux-v8.1.0.gz";
+              hash = "sha256-BDN0tGB2zUQIGCwCpvG54lWAZon1tLGaRGc0vg98em0=";
+            };
+            aarch64-linux = {
+              file = "javy-arm-linux-v8.1.0.gz";
+              hash = "sha256-3LLNKW/LqCemHpdQutttEqERNGSD5vP+TL8ofmL7Klo=";
+            };
+            aarch64-darwin = {
+              file = "javy-arm-macos-v8.1.0.gz";
+              hash = "sha256-7y/Ppj1s/KJn/UTE3kf/vFhgcJEcd+SCwoOyHvOuaB4=";
+            };
+          }.${system};
+
+          rlm-javy = pkgs.stdenvNoCC.mkDerivation {
+            pname = "rlm-javy";
+            version = "8.1.0";
+            src = pkgs.fetchurl {
+              url = "https://github.com/bytecodealliance/javy/releases/download/v8.1.0/${javyAsset.file}";
+              hash = javyAsset.hash;
+            };
+            nativeBuildInputs = [ pkgs.autoPatchelfHook pkgs.gzip ];
+            buildInputs = [ pkgs.stdenv.cc.cc.lib ];
+            dontUnpack = true;
+            installPhase = ''
+              mkdir -p $out/bin
+              gunzip -c "$src" > $out/bin/javy
+              chmod +x $out/bin/javy
+            '';
+          };
+
         in
         rec {
-          inherit chrome-cdp;
+          inherit chrome-cdp rlm-javy;
 
           resources = pkgs.stdenv.mkDerivation (_: {
             name = "duskpi-resources";
@@ -137,6 +169,8 @@
               wrapProgram $out/bin/pi \
                 --set SSL_CERT_FILE ${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt \
                 --set NODE_EXTRA_CA_CERTS ${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt \
+                --set-default RLM_WASMTIME_BIN ${pkgs.wasmtime}/bin/wasmtime \
+                --set-default RLM_JAVY_BIN ${rlm-javy}/bin/javy \
                 --add-flags "--extension $out/extensions/bug-fix/index.ts" \
                 --add-flags "--extension $out/extensions/owasp-fix/index.ts" \
                 --add-flags "--extension $out/extensions/refactor/index.ts" \
