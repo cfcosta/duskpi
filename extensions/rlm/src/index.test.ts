@@ -13,7 +13,7 @@ import type {
   SessionSwitchEvent,
 } from "../../../packages/workflow-core/src/index";
 import rlmExtension, { registerRlmExtension } from "../index";
-import { RLM_COMMAND_DESCRIPTION } from "./workflow";
+import { RLM_COMMAND_DESCRIPTION, RlmWorkflow } from "./workflow";
 
 interface Harness {
   commands: Record<string, { description: string; handler: (args: unknown, ctx: ExtensionContext) => unknown }>;
@@ -464,6 +464,136 @@ test("/rlm schedules a hidden child turn for subcall actions and resumes the par
   assert.match(inspectAfterResume, /"variableCount": 1/);
   assert.match(inspectAfterResume, /"variableNames": \[/);
   assert.match(inspectAfterResume, /"chunk_1"/);
+});
+
+test("/rlm stops when subcalls exceed the recursion depth budget", async () => {
+  const harness = createHarness((api) => registerRlmExtension(api, new RlmWorkflow(api, {
+    maxRecursionDepth: 0,
+  })));
+  const notePath = createNoteFile("alpha beta gamma delta epsilon");
+  const ctx = createContext() as ExtensionContext & {
+    notifications?: Array<{ message: string; level?: string }>;
+  };
+
+  await harness.commands.rlm?.handler(`${notePath} inspect`, ctx);
+  const prompt = String(harness.sentUserMessages[0]?.content ?? "");
+
+  harness.listeners.agent_end?.(
+    {
+      messages: [
+        buildTextMessage("user", prompt),
+        buildTextMessage(
+          "assistant",
+          '{"action":"subcall","prompt":"Summarize the chunk.","storeAs":"chunk_1"}',
+        ),
+      ],
+    },
+    ctx,
+  );
+
+  assert.equal(harness.sentMessages.length, 0);
+  assert.deepEqual(ctx.notifications, [
+    {
+      message: "RLM stopped: exceeded max recursion depth (0).",
+      level: "error",
+    },
+  ]);
+});
+
+test("/rlm stops when actions exceed the iteration budget", async () => {
+  const harness = createHarness((api) => registerRlmExtension(api, new RlmWorkflow(api, {
+    maxIterations: 1,
+  })));
+  const notePath = createNoteFile("alpha beta gamma delta epsilon");
+  const ctx = createContext() as ExtensionContext & {
+    notifications?: Array<{ message: string; level?: string }>;
+  };
+
+  await harness.commands.rlm?.handler(`${notePath} inspect`, ctx);
+  const prompt = String(harness.sentUserMessages[0]?.content ?? "");
+
+  harness.listeners.agent_end?.(
+    {
+      messages: [
+        buildTextMessage("user", prompt),
+        buildTextMessage("assistant", '{"action":"inspect_document"}'),
+      ],
+    },
+    ctx,
+  );
+
+  assert.equal(harness.sentMessages.length, 1);
+  const followUp = String(harness.sentMessages[0]?.message.content ?? "");
+
+  harness.listeners.agent_end?.(
+    {
+      messages: [
+        buildTextMessage("custom", followUp),
+        buildTextMessage("assistant", '{"action":"inspect_document"}'),
+      ],
+    },
+    ctx,
+  );
+
+  assert.equal(harness.sentMessages.length, 1);
+  assert.deepEqual(ctx.notifications, [
+    {
+      message: "RLM stopped: exceeded max iteration budget (1).",
+      level: "error",
+    },
+  ]);
+});
+
+test("/rlm retries malformed assistant output once and then stops with a clear error", async () => {
+  const harness = createHarness((api) => registerRlmExtension(api, new RlmWorkflow(api, {
+    maxMalformedOutputRetries: 1,
+  })));
+  const notePath = createNoteFile("alpha beta gamma delta epsilon");
+  const ctx = createContext() as ExtensionContext & {
+    notifications?: Array<{ message: string; level?: string }>;
+  };
+
+  await harness.commands.rlm?.handler(`${notePath} inspect`, ctx);
+  const prompt = String(harness.sentUserMessages[0]?.content ?? "");
+
+  harness.listeners.agent_end?.(
+    {
+      messages: [
+        buildTextMessage("user", prompt),
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "   " }],
+        },
+      ],
+    },
+    ctx,
+  );
+
+  assert.equal(harness.sentMessages.length, 1);
+  const retryPrompt = String(harness.sentMessages[0]?.message.content ?? "");
+  assert.match(retryPrompt, /workflow-request-id:rlm-2/);
+
+  harness.listeners.agent_end?.(
+    {
+      messages: [
+        buildTextMessage("custom", retryPrompt),
+        buildTextMessage("assistant", "not json"),
+      ],
+    },
+    ctx,
+  );
+
+  assert.equal(harness.sentMessages.length, 1);
+  assert.deepEqual(ctx.notifications, [
+    {
+      message: "RLM response was empty or invalid. Retrying (1/1).",
+      level: "warning",
+    },
+    {
+      message: "RLM stopped: assistant action output remained malformed.",
+      level: "error",
+    },
+  ]);
 });
 
 test("/rlm finishes when the assistant returns final_result", async () => {

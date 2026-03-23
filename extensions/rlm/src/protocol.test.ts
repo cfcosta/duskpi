@@ -5,6 +5,10 @@ import {
   RLM_PROTOCOL_ACTIONS,
   parseAssistantAction,
 } from "./protocol";
+import {
+  DEFAULT_RLM_MAX_RESULT_CHARS,
+  DEFAULT_RLM_MAX_SLICE_CHARS,
+} from "./request";
 
 test("parseAssistantAction accepts inspect_document", () => {
   const result = parseAssistantAction('{"action":"inspect_document"}');
@@ -121,4 +125,31 @@ test("parseAssistantAction rejects prose-wrapped payloads instead of guessing", 
   }
 
   assert.equal(result.error.code, "invalid_json");
+});
+
+test("parseAssistantAction rejects read_segment requests above the max slice budget", () => {
+  const result = parseAssistantAction(
+    `{"action":"read_segment","offset":0,"length":${DEFAULT_RLM_MAX_SLICE_CHARS + 1}}`,
+  );
+  assert.equal(result.ok, false);
+  if (result.ok) {
+    throw new Error("expected slice budget failure");
+  }
+
+  assert.equal(result.error.code, "invalid_payload");
+  assert.match(result.error.message, new RegExp(`${DEFAULT_RLM_MAX_SLICE_CHARS}`));
+});
+
+test("parseAssistantAction rejects final_result payloads above the max result budget", () => {
+  const oversized = "x".repeat(DEFAULT_RLM_MAX_RESULT_CHARS + 1);
+  const result = parseAssistantAction(
+    JSON.stringify({ action: "final_result", result: oversized }),
+  );
+  assert.equal(result.ok, false);
+  if (result.ok) {
+    throw new Error("expected result budget failure");
+  }
+
+  assert.equal(result.error.code, "invalid_payload");
+  assert.match(result.error.message, new RegExp(`${DEFAULT_RLM_MAX_RESULT_CHARS}`));
 });

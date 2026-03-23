@@ -14,7 +14,13 @@ import {
 } from "../../../packages/workflow-core/src/index";
 import { RlmDocumentEnvironment } from "./environment";
 import { parseAssistantAction, type RlmAssistantAction } from "./protocol";
-import { resolveRlmRequest, type RlmRequest } from "./request";
+import {
+  DEFAULT_RLM_MAX_ITERATIONS,
+  DEFAULT_RLM_MAX_MALFORMED_OUTPUT_RETRIES,
+  DEFAULT_RLM_MAX_RECURSION_DEPTH,
+  resolveRlmRequest,
+  type RlmRequest,
+} from "./request";
 
 export const RLM_COMMAND_DESCRIPTION =
   "Run the Recursive Language Model workflow scaffold for long documents and notes";
@@ -28,6 +34,7 @@ type PendingResponse =
       kind: "child";
       storeAs: string;
       prompt: string;
+      depth: number;
     };
 
 interface ActiveRunState {
@@ -36,6 +43,15 @@ interface ActiveRunState {
   pendingRequestId: string;
   awaitingResponse: boolean;
   pending: PendingResponse;
+  pendingPrompt: string;
+  iterationCount: number;
+  malformedOutputRetries: number;
+}
+
+export interface RlmWorkflowOptions {
+  maxIterations?: number;
+  maxRecursionDepth?: number;
+  maxMalformedOutputRetries?: number;
 }
 
 interface RlmSubcallAction {
@@ -47,8 +63,19 @@ interface RlmSubcallAction {
 export class RlmWorkflow {
   private state?: ActiveRunState;
   private requestSequence = 0;
+  private readonly maxIterations: number;
+  private readonly maxRecursionDepth: number;
+  private readonly maxMalformedOutputRetries: number;
 
-  constructor(private readonly api: ExtensionAPI) {}
+  constructor(
+    private readonly api: ExtensionAPI,
+    options: RlmWorkflowOptions = {},
+  ) {
+    this.maxIterations = options.maxIterations ?? DEFAULT_RLM_MAX_ITERATIONS;
+    this.maxRecursionDepth = options.maxRecursionDepth ?? DEFAULT_RLM_MAX_RECURSION_DEPTH;
+    this.maxMalformedOutputRetries =
+      options.maxMalformedOutputRetries ?? DEFAULT_RLM_MAX_MALFORMED_OUTPUT_RETRIES;
+  }
 
   async handleCommand(args: unknown, ctx: ExtensionContext): Promise<void> {
     if (this.state?.awaitingResponse) {
@@ -72,6 +99,9 @@ export class RlmWorkflow {
       pendingRequestId: requestId,
       awaitingResponse: true,
       pending: { kind: "root" },
+      pendingPrompt: prompt,
+      iterationCount: 0,
+      malformedOutputRetries: 0,
     };
 
     this.api.sendUserMessage(`${prompt}\n\n${requestIdMarker(requestId)}`);
@@ -92,10 +122,28 @@ export class RlmWorkflow {
 
     const assistantResult = getLastAssistantTextResult(messages);
     if (assistantResult.kind !== "ok") {
-      ctx.ui.notify("RLM stopped: assistant action output was missing or invalid.", "error");
+      this.handleMalformedOutput(
+        ctx,
+        "RLM response was empty or invalid.",
+        "RLM stopped: assistant action output remained empty or invalid.",
+      );
+      return;
+    }
+
+    if (!this.state) {
+      return;
+    }
+
+    if (this.state.iterationCount + 1 > this.maxIterations) {
+      ctx.ui.notify(
+        `RLM stopped: exceeded max iteration budget (${this.maxIterations}).`,
+        "error",
+      );
       this.state = undefined;
       return;
     }
+
+    this.state.iterationCount += 1;
 
     if (this.state.pending.kind === "child") {
       this.handleChildAgentEnd(assistantResult.text, ctx);
@@ -110,8 +158,15 @@ export class RlmWorkflow {
 
     const action = parseAssistantAction(assistantResult.text);
     if (!action.ok) {
-      ctx.ui.notify(action.error.message, "error");
-      this.state = undefined;
+      this.handleMalformedOutput(
+        ctx,
+        `RLM could not parse the assistant action: ${action.error.message}`,
+        "RLM stopped: assistant action output remained malformed.",
+      );
+      return;
+    }
+
+    if (!this.state) {
       return;
     }
 
@@ -157,12 +212,21 @@ export class RlmWorkflow {
     }
 
     const action = parseAssistantAction(text);
-    if (!action.ok || action.value.kind !== "final_result") {
-      ctx.ui.notify(
-        "RLM stopped: child sub-call must resolve to a final_result action.",
-        "error",
+    if (!action.ok) {
+      this.handleMalformedOutput(
+        ctx,
+        `RLM child sub-call returned malformed output: ${action.error.message}`,
+        "RLM stopped: child sub-call output remained malformed.",
       );
-      this.state = undefined;
+      return;
+    }
+
+    if (action.value.kind !== "final_result") {
+      this.handleMalformedOutput(
+        ctx,
+        "RLM child sub-call must resolve to a final_result action.",
+        "RLM stopped: child sub-call never produced a final_result action.",
+      );
       return;
     }
 
@@ -185,11 +249,22 @@ export class RlmWorkflow {
       return;
     }
 
+    const nextDepth = this.state.pending.kind === "child" ? this.state.pending.depth + 1 : 1;
+    if (nextDepth > this.maxRecursionDepth) {
+      ctx.ui.notify(
+        `RLM stopped: exceeded max recursion depth (${this.maxRecursionDepth}).`,
+        "error",
+      );
+      this.state = undefined;
+      return;
+    }
+
     const childPrompt = buildChildPrompt(action.prompt, action.storeAs);
     this.sendHiddenPrompt(childPrompt, ctx, {
       kind: "child",
       storeAs: action.storeAs,
       prompt: action.prompt,
+      depth: nextDepth,
     });
   }
 
@@ -247,6 +322,63 @@ export class RlmWorkflow {
       );
     } catch {
       ctx.ui.notify("RLM stopped: failed to send follow-up prompt.", "error");
+      this.state = undefined;
+      return;
+    }
+
+    this.state.pendingRequestId = requestId;
+    this.state.awaitingResponse = true;
+    this.state.pending = pending;
+    this.state.pendingPrompt = prompt;
+    this.state.malformedOutputRetries = 0;
+  }
+
+  private handleMalformedOutput(
+    ctx: ExtensionContext,
+    retryMessage: string,
+    stopMessage: string,
+  ): void {
+    if (!this.state) {
+      return;
+    }
+
+    if (this.state.malformedOutputRetries < this.maxMalformedOutputRetries) {
+      this.state.malformedOutputRetries += 1;
+      ctx.ui.notify(
+        `${retryMessage} Retrying (${this.state.malformedOutputRetries}/${this.maxMalformedOutputRetries}).`,
+        "warning",
+      );
+      this.resendPendingPrompt(ctx);
+      return;
+    }
+
+    ctx.ui.notify(stopMessage, "error");
+    this.state = undefined;
+  }
+
+  private resendPendingPrompt(ctx: ExtensionContext): void {
+    if (!this.state) {
+      return;
+    }
+
+    const requestId = this.nextRequestId();
+    const pending = this.state.pending;
+    const prompt = this.state.pendingPrompt;
+
+    try {
+      this.api.sendMessage(
+        {
+          customType: RLM_INTERNAL_MESSAGE_TYPE,
+          content: `${prompt}\n\n${requestIdMarker(requestId)}`,
+          display: false,
+        },
+        {
+          triggerTurn: true,
+          deliverAs: "followUp",
+        },
+      );
+    } catch {
+      ctx.ui.notify("RLM stopped: failed to resend the pending prompt.", "error");
       this.state = undefined;
       return;
     }

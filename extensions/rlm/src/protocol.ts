@@ -1,3 +1,8 @@
+import {
+  DEFAULT_RLM_MAX_RESULT_CHARS,
+  DEFAULT_RLM_MAX_SLICE_CHARS,
+} from "./request";
+
 export const RLM_PROTOCOL_ACTIONS = [
   "inspect_document",
   "read_segment",
@@ -110,6 +115,13 @@ function parseReadSegmentAction(payload: Record<string, unknown>): RlmAssistantA
     return failure("invalid_payload", "read_segment requires a positive integer 'length'.");
   }
 
+  if (length > DEFAULT_RLM_MAX_SLICE_CHARS) {
+    return failure(
+      "invalid_payload",
+      `read_segment length must be <= ${DEFAULT_RLM_MAX_SLICE_CHARS} characters.`,
+    );
+  }
+
   return {
     ok: true,
     value: {
@@ -153,11 +165,19 @@ function parseFinalResultAction(payload: Record<string, unknown>): RlmAssistantA
     return failure("invalid_payload", "final_result requires a non-empty string 'result'.");
   }
 
+  const normalizedResult = result.trim();
+  if (normalizedResult.length > DEFAULT_RLM_MAX_RESULT_CHARS) {
+    return failure(
+      "invalid_payload",
+      `final_result must be <= ${DEFAULT_RLM_MAX_RESULT_CHARS} characters.`,
+    );
+  }
+
   return {
     ok: true,
     value: {
       kind: "final_result",
-      result: result.trim(),
+      result: normalizedResult,
     },
   };
 }
