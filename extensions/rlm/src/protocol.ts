@@ -3,6 +3,27 @@ import {
   DEFAULT_RLM_MAX_SLICE_CHARS,
 } from "./request";
 
+export type RlmAssistantProgramLanguage = "javascript";
+
+export interface RlmAssistantProgram {
+  language: RlmAssistantProgramLanguage;
+  code: string;
+}
+
+export type RlmAssistantProgramParseErrorCode =
+  | "empty_output"
+  | "invalid_program"
+  | "multiple_blocks";
+
+export interface RlmAssistantProgramParseError {
+  code: RlmAssistantProgramParseErrorCode;
+  message: string;
+}
+
+export type RlmAssistantProgramParseResult =
+  | { ok: true; value: RlmAssistantProgram }
+  | { ok: false; error: RlmAssistantProgramParseError };
+
 export const RLM_PROTOCOL_ACTIONS = [
   "inspect_document",
   "read_segment",
@@ -55,6 +76,50 @@ export type RlmAssistantActionParseResult =
   | { ok: false; error: RlmAssistantActionParseError };
 
 export const DEFAULT_SEARCH_MAX_RESULTS = 5;
+
+export function parseAssistantProgram(text: string): RlmAssistantProgramParseResult {
+  const normalized = text.trim();
+  if (normalized.length === 0) {
+    return programFailure("empty_output", "Assistant program output was empty.");
+  }
+
+  const fencedBlocks = [...normalized.matchAll(/```([a-zA-Z]*)\s*([\s\S]*?)```/g)];
+  if (fencedBlocks.length > 1) {
+    return programFailure(
+      "multiple_blocks",
+      "Assistant program output must contain exactly one JavaScript code block.",
+    );
+  }
+
+  if (fencedBlocks.length === 1) {
+    const match = fencedBlocks[0]!;
+    const language = (match[1] ?? "").trim().toLowerCase();
+    const code = (match[2] ?? "").trim();
+    const withoutBlock = normalized.replace(match[0], "").trim();
+
+    if (withoutBlock.length > 0) {
+      return programFailure(
+        "invalid_program",
+        "Assistant program output must not include prose outside the JavaScript code block.",
+      );
+    }
+
+    if (!["", "js", "javascript"].includes(language)) {
+      return programFailure(
+        "invalid_program",
+        `Assistant program block must be fenced as JavaScript; received '${language || "plain"}'.`,
+      );
+    }
+
+    if (code.length === 0) {
+      return programFailure("invalid_program", "Assistant JavaScript code block was empty.");
+    }
+
+    return validateJavaScriptProgram(code);
+  }
+
+  return validateJavaScriptProgram(normalized);
+}
 
 export function parseAssistantAction(text: string): RlmAssistantActionParseResult {
   const normalized = text.trim();
@@ -182,6 +247,27 @@ function parseFinalResultAction(payload: Record<string, unknown>): RlmAssistantA
   };
 }
 
+function validateJavaScriptProgram(code: string): RlmAssistantProgramParseResult {
+  try {
+    // eslint-disable-next-line no-new-func
+    new Function(code);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "invalid JavaScript syntax";
+    return programFailure(
+      "invalid_program",
+      `Assistant program output must be valid JavaScript: ${message}`,
+    );
+  }
+
+  return {
+    ok: true,
+    value: {
+      language: "javascript",
+      code,
+    },
+  };
+}
+
 function extractJsonPayload(text: string): RlmAssistantActionParseResult | { ok: true; value: string } {
   const fencedMatch = text.match(/^```(?:json)?\s*([\s\S]*?)```$/i);
   if (fencedMatch) {
@@ -204,6 +290,16 @@ function extractJsonPayload(text: string): RlmAssistantActionParseResult | { ok:
     "invalid_json",
     "Assistant action output must be a JSON object or a fenced ```json block.",
   );
+}
+
+function programFailure(
+  code: RlmAssistantProgramParseErrorCode,
+  message: string,
+): RlmAssistantProgramParseResult {
+  return {
+    ok: false,
+    error: { code, message },
+  };
 }
 
 function failure(

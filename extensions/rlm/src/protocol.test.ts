@@ -4,11 +4,68 @@ import {
   DEFAULT_SEARCH_MAX_RESULTS,
   RLM_PROTOCOL_ACTIONS,
   parseAssistantAction,
+  parseAssistantProgram,
 } from "./protocol";
 import {
   DEFAULT_RLM_MAX_RESULT_CHARS,
   DEFAULT_RLM_MAX_SLICE_CHARS,
 } from "./request";
+
+test("parseAssistantProgram accepts a fenced js block", () => {
+  const result = parseAssistantProgram('```js\nconst summary = env.get("intro");\nsetFinal(summary);\n```');
+  assert.deepEqual(result, {
+    ok: true,
+    value: {
+      language: "javascript",
+      code: 'const summary = env.get("intro");\nsetFinal(summary);',
+    },
+  });
+});
+
+test("parseAssistantProgram accepts a raw JavaScript program", () => {
+  const result = parseAssistantProgram('const metadata = inspect();\nset("count", metadata.lineCount);');
+  assert.equal(result.ok, true);
+  if (!result.ok) {
+    throw new Error("expected JavaScript program parsing to succeed");
+  }
+
+  assert.equal(result.value.language, "javascript");
+  assert.match(result.value.code, /inspect\(\)/);
+});
+
+test("parseAssistantProgram rejects prose-wrapped code explicitly", () => {
+  const result = parseAssistantProgram(
+    'Here is the program you asked for:\n```js\nsetFinal("done");\n```',
+  );
+  assert.equal(result.ok, false);
+  if (result.ok) {
+    throw new Error("expected parse failure");
+  }
+
+  assert.equal(result.error.code, "invalid_program");
+  assert.match(result.error.message, /must not include prose/i);
+});
+
+test("parseAssistantProgram rejects multiple code blocks explicitly", () => {
+  const result = parseAssistantProgram('```js\nset("a", 1);\n```\n```js\nset("b", 2);\n```');
+  assert.equal(result.ok, false);
+  if (result.ok) {
+    throw new Error("expected parse failure");
+  }
+
+  assert.equal(result.error.code, "multiple_blocks");
+});
+
+test("parseAssistantProgram rejects invalid JavaScript explicitly", () => {
+  const result = parseAssistantProgram('```js\nconst broken = ;\n```');
+  assert.equal(result.ok, false);
+  if (result.ok) {
+    throw new Error("expected parse failure");
+  }
+
+  assert.equal(result.error.code, "invalid_program");
+  assert.match(result.error.message, /valid JavaScript/i);
+});
 
 test("parseAssistantAction accepts inspect_document", () => {
   const result = parseAssistantAction('{"action":"inspect_document"}');
