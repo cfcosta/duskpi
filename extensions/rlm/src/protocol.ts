@@ -150,7 +150,7 @@ export function parseAssistantAction(text: string): RlmAssistantActionParseResul
 
   switch (action) {
     case "inspect_document":
-      return { ok: true, value: { kind: "inspect_document" } };
+      return parseInspectDocumentAction(parsed);
     case "read_segment":
       return parseReadSegmentAction(parsed);
     case "search_document":
@@ -162,7 +162,29 @@ export function parseAssistantAction(text: string): RlmAssistantActionParseResul
   }
 }
 
+function parseInspectDocumentAction(
+  payload: Record<string, unknown>,
+): RlmAssistantActionParseResult {
+  const extraKeys = getUnexpectedKeys(payload, ["action"]);
+  if (extraKeys.length > 0) {
+    return failure(
+      "invalid_payload",
+      `inspect_document does not accept extra keys: ${extraKeys.join(", ")}. Use exactly {"action":"inspect_document"}.`,
+    );
+  }
+
+  return { ok: true, value: { kind: "inspect_document" } };
+}
+
 function parseReadSegmentAction(payload: Record<string, unknown>): RlmAssistantActionParseResult {
+  const extraKeys = getUnexpectedKeys(payload, ["action", "offset", "length"]);
+  if (extraKeys.length > 0) {
+    return failure(
+      "invalid_payload",
+      `read_segment only accepts action, offset, and length. Unsupported keys: ${extraKeys.join(", ")}.`,
+    );
+  }
+
   const offset = payload.offset;
   const length = payload.length;
 
@@ -194,6 +216,14 @@ function parseReadSegmentAction(payload: Record<string, unknown>): RlmAssistantA
 function parseSearchDocumentAction(
   payload: Record<string, unknown>,
 ): RlmAssistantActionParseResult {
+  const extraKeys = getUnexpectedKeys(payload, ["action", "query", "maxResults"]);
+  if (extraKeys.length > 0) {
+    return failure(
+      "invalid_payload",
+      `search_document only accepts action, query, and optional maxResults. Unsupported keys: ${extraKeys.join(", ")}.`,
+    );
+  }
+
   const query = payload.query;
   const maxResults = payload.maxResults;
 
@@ -219,6 +249,14 @@ function parseSearchDocumentAction(
 }
 
 function parseFinalResultAction(payload: Record<string, unknown>): RlmAssistantActionParseResult {
+  const extraKeys = getUnexpectedKeys(payload, ["action", "result"]);
+  if (extraKeys.length > 0) {
+    return failure(
+      "invalid_payload",
+      `final_result only accepts action and result. Unsupported keys: ${extraKeys.join(", ")}.`,
+    );
+  }
+
   const result = payload.result;
   if (typeof result !== "string" || result.trim().length === 0) {
     return failure("invalid_payload", "final_result requires a non-empty string 'result'.");
@@ -306,6 +344,11 @@ function failure(
     ok: false,
     error: { code, message },
   };
+}
+
+function getUnexpectedKeys(payload: Record<string, unknown>, allowedKeys: string[]): string[] {
+  const allowed = new Set(allowedKeys);
+  return Object.keys(payload).filter((key) => !allowed.has(key)).sort();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

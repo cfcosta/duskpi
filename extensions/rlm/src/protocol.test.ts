@@ -115,6 +115,36 @@ test("parseAssistantAction accepts final_result from a fenced json block", () =>
   });
 });
 
+test("parseAssistantAction rejects inspect_document payloads with unsupported keys", () => {
+  const result = parseAssistantAction(
+    '{"action":"inspect_document","path":"/tmp/workspace.md"}',
+  );
+  assert.equal(result.ok, false);
+  if (result.ok) {
+    throw new Error("expected parse failure");
+  }
+
+  assert.equal(result.error.code, "invalid_payload");
+  assert.match(result.error.message, /does not accept extra keys/i);
+  assert.match(result.error.message, /path/);
+});
+
+test("parseAssistantAction rejects read_segment payloads with path or line-based keys", () => {
+  const result = parseAssistantAction(
+    '{"action":"read_segment","path":"/tmp/workspace.md","startLine":1,"endLine":200,"offset":0,"length":100}',
+  );
+  assert.equal(result.ok, false);
+  if (result.ok) {
+    throw new Error("expected parse failure");
+  }
+
+  assert.equal(result.error.code, "invalid_payload");
+  assert.match(result.error.message, /unsupported keys/i);
+  assert.match(result.error.message, /path/);
+  assert.match(result.error.message, /startLine/);
+  assert.match(result.error.message, /endLine/);
+});
+
 test("RLM_PROTOCOL_ACTIONS lists the initial v1 action set", () => {
   assert.deepEqual(
     [...RLM_PROTOCOL_ACTIONS],

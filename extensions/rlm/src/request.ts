@@ -6,7 +6,7 @@ import { parseRlmArgs, type ParsedRlmArgs } from "./args";
 export const DEFAULT_RLM_MAX_BYTES = 8 * 1024 * 1024;
 export const DEFAULT_RLM_MAX_SLICE_CHARS = 4_000;
 export const DEFAULT_RLM_MAX_RESULT_CHARS = 12_000;
-export const DEFAULT_RLM_MAX_ITERATIONS = 12;
+export const DEFAULT_RLM_MAX_ITERATIONS = 24;
 export const DEFAULT_RLM_MAX_RECURSION_DEPTH = 1;
 export const DEFAULT_RLM_MAX_MALFORMED_OUTPUT_RETRIES = 1;
 export const DEFAULT_SUPPORTED_EXTENSIONS = [".md", ".markdown", ".mdx", ".txt", ".rst"];
