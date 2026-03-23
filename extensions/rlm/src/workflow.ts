@@ -18,6 +18,7 @@ import {
   DEFAULT_RLM_MAX_ITERATIONS,
   DEFAULT_RLM_MAX_MALFORMED_OUTPUT_RETRIES,
   DEFAULT_RLM_MAX_RECURSION_DEPTH,
+  DEFAULT_RLM_MAX_SLICE_CHARS,
   resolveRlmRequest,
   type RlmRequest,
 } from "./request";
@@ -133,6 +134,7 @@ export class RlmWorkflow {
         ctx,
         "RLM response was empty or invalid.",
         "RLM stopped: assistant action output remained empty or invalid.",
+        "Assistant output was empty. Return exactly one supported JSON action.",
       );
       return;
     }
@@ -166,6 +168,7 @@ export class RlmWorkflow {
         ctx,
         `RLM could not parse the assistant action: ${action.error.message}`,
         "RLM stopped: assistant action output remained malformed.",
+        action.error.message,
       );
       return;
     }
@@ -231,6 +234,7 @@ export class RlmWorkflow {
         ctx,
         `RLM child sub-call returned malformed output: ${action.error.message}`,
         "RLM stopped: child sub-call output remained malformed.",
+        action.error.message,
       );
       return;
     }
@@ -240,6 +244,7 @@ export class RlmWorkflow {
         ctx,
         "RLM child sub-call must resolve to a final_result action.",
         "RLM stopped: child sub-call never produced a final_result action.",
+        'Child sub-calls must return exactly {"action":"final_result","result":"..."}.',
       );
       return;
     }
@@ -360,6 +365,7 @@ export class RlmWorkflow {
     ctx: ExtensionContext,
     retryMessage: string,
     stopMessage: string,
+    repairHint: string,
   ): void {
     if (!this.state) {
       return;
@@ -371,7 +377,7 @@ export class RlmWorkflow {
         `${retryMessage} Retrying (${this.state.malformedOutputRetries}/${this.maxMalformedOutputRetries}).`,
         "warning",
       );
-      this.resendPendingPrompt(ctx);
+      this.sendRepairPrompt(ctx, repairHint);
       return;
     }
 
@@ -379,20 +385,19 @@ export class RlmWorkflow {
     this.clearState(ctx);
   }
 
-  private resendPendingPrompt(ctx: ExtensionContext): void {
+  private sendRepairPrompt(ctx: ExtensionContext, repairHint: string): void {
     if (!this.state) {
       return;
     }
 
+    const repairPrompt = buildRepairPrompt(this.state.pending, repairHint);
     const requestId = this.nextRequestId();
-    const pending = this.state.pending;
-    const prompt = this.state.pendingPrompt;
 
     try {
       this.api.sendMessage(
         {
           customType: RLM_INTERNAL_MESSAGE_TYPE,
-          content: `${prompt}\n\n${requestIdMarker(requestId)}`,
+          content: `${repairPrompt}\n\n${requestIdMarker(requestId)}`,
           display: false,
         },
         {
@@ -401,14 +406,14 @@ export class RlmWorkflow {
         },
       );
     } catch {
-      ctx.ui.notify("RLM stopped: failed to resend the pending prompt.", "error");
+      ctx.ui.notify("RLM stopped: failed to send the repair prompt.", "error");
       this.clearState(ctx);
       return;
     }
 
     this.state.pendingRequestId = requestId;
     this.state.awaitingResponse = true;
-    this.state.pending = pending;
+    this.state.pendingPrompt = repairPrompt;
     this.updateStatus(ctx);
   }
 
@@ -457,6 +462,24 @@ function buildObservationPrompt(observation: unknown): string {
   ].join("\n\n");
 }
 
+function buildRepairPrompt(pending: PendingResponse, repairHint: string): string {
+  if (pending.kind === "child") {
+    return [
+      "Your previous child sub-call response was invalid.",
+      `Error: ${repairHint}`,
+      'Return exactly one JSON object: {"action":"final_result","result":"..."}',
+      "Do not include prose or any unsupported keys.",
+    ].join("\n\n");
+  }
+
+  return [
+    "Your previous RLM action was invalid.",
+    `Error: ${repairHint}`,
+    "Return exactly one corrected JSON action now.",
+    ...buildActionContractLines(),
+  ].join("\n\n");
+}
+
 function buildChildPrompt(prompt: string, storeAs: string): string {
   return [
     "Recursive child sub-call.",
@@ -490,7 +513,7 @@ function buildActionContractLines(): string[] {
   return [
     "Available actions and exact schemas:",
     '- {"action":"inspect_document"}',
-    '- {"action":"read_segment","offset":0,"length":400}',
+    `- {"action":"read_segment","offset":0,"length":400} (length must be <= ${DEFAULT_RLM_MAX_SLICE_CHARS})`,
     '- {"action":"search_document","query":"your query","maxResults":5}',
     '- {"action":"subcall","prompt":"your subtask","storeAs":"variable_name"}',
     '- {"action":"final_result","result":"your final answer"}',

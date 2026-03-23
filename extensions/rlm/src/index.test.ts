@@ -618,10 +618,10 @@ test("/rlm retries malformed assistant output once and then stops with a clear e
     {
       messages: [
         buildTextMessage("user", prompt),
-        {
-          role: "assistant",
-          content: [{ type: "text", text: "   " }],
-        },
+        buildTextMessage(
+          "assistant",
+          '{"action":"read_segment","offset":0,"length":12000}',
+        ),
       ],
     },
     ctx,
@@ -630,6 +630,9 @@ test("/rlm retries malformed assistant output once and then stops with a clear e
   assert.equal(harness.sentMessages.length, 1);
   const retryPrompt = String(harness.sentMessages[0]?.message.content ?? "");
   assert.match(retryPrompt, /workflow-request-id:rlm-2/);
+  assert.match(retryPrompt, /previous RLM action was invalid/i);
+  assert.match(retryPrompt, /length must be <= 4000 characters/i);
+  assert.match(retryPrompt, /Return exactly one corrected JSON action now/i);
 
   harness.listeners.agent_end?.(
     {
@@ -644,7 +647,7 @@ test("/rlm retries malformed assistant output once and then stops with a clear e
   assert.equal(harness.sentMessages.length, 1);
   assert.deepEqual(ctx.notifications, [
     {
-      message: "RLM response was empty or invalid. Retrying (1/1).",
+      message: "RLM could not parse the assistant action: read_segment length must be <= 4000 characters. Retrying (1/1).",
       level: "warning",
     },
     {
