@@ -176,7 +176,7 @@ export class RlmWorkflow {
 
     if (action.value.kind === "final_result") {
       this.state.environment.setFinalResult(action.value.result);
-      ctx.ui.notify(`RLM final result ready for ${this.state.request.path}.`, "info");
+      ctx.ui.notify(`RLM final result ready at ${this.state.request.finalFilePath}.`, "info");
       this.clearState(ctx);
       return;
     }
@@ -246,6 +246,10 @@ export class RlmWorkflow {
 
     const childFrame = this.state.pending;
     this.state.environment.setVariable(childFrame.storeAs, action.value.result);
+    this.state.environment.appendScratchpadEntry(
+      `subcall:${childFrame.storeAs}`,
+      action.value.result,
+    );
 
     const observation = {
       type: "subcall_result",
@@ -417,7 +421,7 @@ export class RlmWorkflow {
     const phase = this.state.pending.kind === "child" ? "child" : "root";
     ctx.ui.setStatus(
       RLM_STATUS_KEY,
-      `RLM ${phase}: ${this.state.request.path} (${this.state.iterationCount}/${this.maxIterations})`,
+      `RLM ${phase}: ${formatQuestionLabel(this.state.request.question)} (${this.state.iterationCount}/${this.maxIterations})`,
     );
   }
 
@@ -434,18 +438,19 @@ export class RlmWorkflow {
 
 function buildInitialPrompt(metadata: ReturnType<RlmDocumentEnvironment["getMetadata"]>): string {
   return [
-    "You are operating inside a Recursive Language Model-style document environment.",
-    "The full document is not in your context window.",
+    "You are operating inside a Recursive Language Model-style workspace environment.",
+    "This run started from a question, and the extension created workspace files for task, scratchpad, and final output.",
+    "The full workspace snapshot is not in your context window.",
     "Choose exactly one next action and return only a JSON object or a fenced ```json block.",
     "Available actions: inspect_document, read_segment, search_document, subcall, final_result.",
-    "Document metadata:",
+    "Workspace metadata:",
     JSON.stringify(metadata, null, 2),
   ].join("\n\n");
 }
 
 function buildObservationPrompt(observation: unknown): string {
   return [
-    "Observation from the document environment.",
+    "Observation from the workspace environment.",
     "Choose exactly one next action and return only a JSON object or a fenced ```json block.",
     JSON.stringify(observation, null, 2),
   ].join("\n\n");
@@ -472,10 +477,19 @@ function buildRlmSystemPrompt(pending: PendingResponse): string {
 
   return [
     "[RLM MODE ACTIVE]",
-    "Operate over the extension-managed document environment.",
+    "Operate over the extension-managed workspace environment.",
     "Do not respond with prose.",
     "Return exactly one JSON action at a time.",
   ].join("\n");
+}
+
+function formatQuestionLabel(question: string): string {
+  const normalized = question.trim().replace(/\s+/g, " ");
+  if (normalized.length <= 48) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, 45)}...`;
 }
 
 function parseSubcallAction(text: string): { ok: true; value: RlmSubcallAction } | { ok: false } {

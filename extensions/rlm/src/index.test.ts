@@ -1,9 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import os from "node:os";
-import path from "node:path";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -128,15 +125,10 @@ function extractRequestId(prompt: string): string | undefined {
   return match?.[1]?.trim();
 }
 
-function createNoteFile(content: string): string {
-  const tempDir = mkdtempSync(path.join(os.tmpdir(), "rlm-index-test-"));
-  const notePath = path.join(tempDir, "example.md");
-  writeFileSync(notePath, content, "utf8");
-  return notePath;
-}
-
-function getFixturePath(name: string): string {
-  return fileURLToPath(new URL(`./__fixtures__/${name}`, import.meta.url));
+function extractMetadataPath(prompt: string, fieldName: string): string | undefined {
+  const escapedName = fieldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = prompt.match(new RegExp(`"${escapedName}":\\s*"([^"]+)"`));
+  return match?.[1];
 }
 
 test("registerRlmExtension wires /rlm and forwards all workflow handlers", async () => {
@@ -236,7 +228,7 @@ test("registerRlmExtension wires /rlm and forwards all workflow handlers", async
   assert.ok(listeners.session_compact);
   assert.ok(listeners.session_shutdown);
 
-  assert.equal(commands.rlm?.handler("notes.md", ctx), "command-result");
+  assert.equal(commands.rlm?.handler("what changed?", ctx), "command-result");
   assert.equal(listeners.tool_call?.({ toolName: "read" }, ctx), "tool-result");
   assert.equal(listeners.agent_end?.({ messages: ["done"] }, ctx), "agent-end-result");
   assert.deepEqual(listeners.before_agent_start?.({ systemPrompt: "base" }, ctx), {
@@ -269,46 +261,52 @@ test("registerRlmExtension wires /rlm and forwards all workflow handlers", async
   );
 });
 
-test("/rlm starts a run by sending a metadata-only initial prompt", async () => {
+test("/rlm starts a run from a question and sends workspace metadata only", async () => {
   const harness = createHarness();
-  const notePath = createNoteFile(
-    [
-      "Recursive Language Models keep the prompt outside the root context.",
-      "The controller interacts with metadata and bounded reads.",
-      "This sentence is here to make the file longer than the preview window.",
-      "SENTINEL_FULL_DOCUMENT_TAIL_DO_NOT_LEAK",
-    ].join("\n"),
-  );
   const ctx = createContext();
 
-  await harness.commands.rlm?.handler(`${notePath} summarize the note`, ctx);
+  await harness.commands.rlm?.handler(
+    "summarize the recursive workflow without leaking the full workspace",
+    ctx,
+  );
 
   assert.equal(harness.sentUserMessages.length, 1);
   assert.equal(harness.sentMessages.length, 0);
   const prompt = String(harness.sentUserMessages[0]?.content ?? "");
-  assert.match(prompt, /Document metadata:/);
-  assert.match(prompt, /"path":/);
-  assert.match(prompt, /"question": "summarize the note"/);
+  assert.match(prompt, /Workspace metadata:/);
+  assert.match(
+    prompt,
+    /"question": "summarize the recursive workflow without leaking the full workspace"/,
+  );
+  assert.match(prompt, /"taskFilePath":/);
+  assert.match(prompt, /"scratchpadFilePath":/);
+  assert.match(prompt, /"finalFilePath":/);
   assert.match(prompt, /workflow-request-id:rlm-1/);
-  assert.doesNotMatch(prompt, /SENTINEL_FULL_DOCUMENT_TAIL_DO_NOT_LEAK/);
+  assert.doesNotMatch(prompt, /No notes yet\./);
   assert.deepEqual((ctx as ExtensionContext & { notifications?: unknown[] }).notifications, []);
 });
 
 test("/rlm sets status during an active run and clears it on completion", async () => {
   const harness = createHarness();
-  const notePath = createNoteFile("alpha beta gamma delta epsilon");
   const ctx = createContext() as ExtensionContext & {
     notifications?: Array<{ message: string; level?: string }>;
     statuses?: Array<{ key: string; value: string | undefined }>;
   };
 
-  await harness.commands.rlm?.handler(`${notePath} conclude`, ctx);
+  await harness.commands.rlm?.handler("draft a synthesis of the main tradeoffs", ctx);
 
   assert.ok(
-    ctx.statuses?.some((entry) => entry.key === "rlm" && /RLM root:/.test(entry.value ?? "")),
+    ctx.statuses?.some(
+      (entry) =>
+        entry.key === "rlm" &&
+        /RLM root: draft a synthesis of the main tradeoffs/.test(entry.value ?? ""),
+    ),
   );
 
   const prompt = String(harness.sentUserMessages[0]?.content ?? "");
+  const finalFilePath = extractMetadataPath(prompt, "finalFilePath");
+  assert.ok(finalFilePath);
+
   harness.listeners.agent_end?.(
     {
       messages: [
@@ -320,6 +318,7 @@ test("/rlm sets status during an active run and clears it on completion", async 
   );
 
   assert.deepEqual(ctx.statuses?.at(-1), { key: "rlm", value: undefined });
+  assert.match(readFileSync(finalFilePath!, "utf8"), /done/);
 });
 
 test("/rlm resets active state on session lifecycle events", async () => {
@@ -330,12 +329,11 @@ test("/rlm resets active state on session lifecycle events", async () => {
     ["session_shutdown", { reason: "shutdown" }],
   ] as const) {
     const harness = createHarness();
-    const notePath = createNoteFile("alpha beta gamma delta epsilon");
     const ctx = createContext() as ExtensionContext & {
       statuses?: Array<{ key: string; value: string | undefined }>;
     };
 
-    await harness.commands.rlm?.handler(`${notePath} inspect`, ctx);
+    await harness.commands.rlm?.handler("inspect the workspace state", ctx);
     assert.ok(
       ctx.statuses?.some((entry) => entry.key === "rlm" && typeof entry.value === "string"),
     );
@@ -361,10 +359,9 @@ test("/rlm resets active state on session lifecycle events", async () => {
 
 test("/rlm ignores agent_end payloads with mismatched request ids", async () => {
   const harness = createHarness();
-  const notePath = createNoteFile("alpha beta gamma delta epsilon zeta eta theta");
   const ctx = createContext();
 
-  await harness.commands.rlm?.handler(`${notePath} inspect`, ctx);
+  await harness.commands.rlm?.handler("inspect the generated workspace", ctx);
   const prompt = String(harness.sentUserMessages[0]?.content ?? "");
 
   harness.listeners.agent_end?.(
@@ -386,10 +383,9 @@ test("/rlm ignores agent_end payloads with mismatched request ids", async () => 
 
 test("/rlm executes inspect_document and sends a follow-up observation", async () => {
   const harness = createHarness();
-  const notePath = createNoteFile("alpha beta gamma delta epsilon zeta eta theta");
   const ctx = createContext();
 
-  await harness.commands.rlm?.handler(`${notePath} inspect`, ctx);
+  await harness.commands.rlm?.handler("inspect the workspace", ctx);
   const prompt = String(harness.sentUserMessages[0]?.content ?? "");
 
   harness.listeners.agent_end?.(
@@ -415,21 +411,18 @@ test("/rlm executes inspect_document and sends a follow-up observation", async (
   assert.match(followUp, /workflow-request-id:rlm-2/);
 });
 
-test("/rlm executes read_segment and search_document actions", async () => {
+test("/rlm executes read_segment and search_document actions over the workspace", async () => {
   const harness = createHarness();
-  const notePath = createNoteFile(
-    "Recursive Language Models support bounded reads. Search should find recursion in this document.",
-  );
   const ctx = createContext();
 
-  await harness.commands.rlm?.handler(`${notePath} inspect`, ctx);
+  await harness.commands.rlm?.handler("recursion should appear in the workspace question", ctx);
   const initialPrompt = String(harness.sentUserMessages[0]?.content ?? "");
 
   harness.listeners.agent_end?.(
     {
       messages: [
         buildTextMessage("user", initialPrompt),
-        buildTextMessage("assistant", '{"action":"read_segment","offset":10,"length":24}'),
+        buildTextMessage("assistant", '{"action":"read_segment","offset":0,"length":120}'),
       ],
     },
     ctx,
@@ -438,7 +431,7 @@ test("/rlm executes read_segment and search_document actions", async () => {
   assert.equal(harness.sentMessages.length, 1);
   const readFollowUp = String(harness.sentMessages[0]?.message.content ?? "");
   assert.match(readFollowUp, /"type": "read_segment"/);
-  assert.match(readFollowUp, /Language Models support/);
+  assert.match(readFollowUp, /RLM Workspace/);
 
   harness.listeners.agent_end?.(
     {
@@ -457,20 +450,19 @@ test("/rlm executes read_segment and search_document actions", async () => {
   const searchFollowUp = String(harness.sentMessages[1]?.message.content ?? "");
   assert.match(searchFollowUp, /"type": "search_document"/);
   assert.match(searchFollowUp, /"totalMatches": 1/);
-  assert.match(searchFollowUp, /recursion in this document/i);
+  assert.match(searchFollowUp, /recursion should appear in the workspace question/i);
 });
 
-test("/rlm schedules a hidden child turn for subcall actions and resumes the parent", async () => {
+test("/rlm schedules a hidden child turn, updates the scratchpad, and resumes the parent", async () => {
   const harness = createHarness();
-  const notePath = createNoteFile(
-    "Recursive Language Models keep the prompt outside the root context so child calls can summarize slices.",
-  );
   const ctx = createContext() as ExtensionContext & {
     notifications?: Array<{ message: string; level?: string }>;
   };
 
-  await harness.commands.rlm?.handler(`${notePath} inspect`, ctx);
+  await harness.commands.rlm?.handler("summarize the introduction in one sentence", ctx);
   const initialPrompt = String(harness.sentUserMessages[0]?.content ?? "");
+  const scratchpadFilePath = extractMetadataPath(initialPrompt, "scratchpadFilePath");
+  assert.ok(scratchpadFilePath);
 
   harness.listeners.agent_end?.(
     {
@@ -478,7 +470,7 @@ test("/rlm schedules a hidden child turn for subcall actions and resumes the par
         buildTextMessage("user", initialPrompt),
         buildTextMessage(
           "assistant",
-          '{"action":"subcall","prompt":"Summarize the first chunk in one sentence.","storeAs":"chunk_1"}',
+          '{"action":"subcall","prompt":"Summarize the first workspace section in one sentence.","storeAs":"chunk_1"}',
         ),
       ],
     },
@@ -494,29 +486,10 @@ test("/rlm schedules a hidden child turn for subcall actions and resumes the par
   harness.listeners.agent_end?.(
     {
       messages: [
-        buildTextMessage(
-          "custom",
-          childPrompt.replace("workflow-request-id:rlm-2", "workflow-request-id:rlm-999"),
-        ),
-        buildTextMessage(
-          "assistant",
-          '{"action":"final_result","result":"This child summary should be ignored."}',
-        ),
-      ],
-    },
-    ctx,
-  );
-
-  assert.equal(harness.sentMessages.length, 1);
-  assert.deepEqual(ctx.notifications, []);
-
-  harness.listeners.agent_end?.(
-    {
-      messages: [
         buildTextMessage("custom", childPrompt),
         buildTextMessage(
           "assistant",
-          '{"action":"final_result","result":"The first chunk says the prompt stays outside the root context."}',
+          '{"action":"final_result","result":"The first workspace section says the run starts from a question and stores intermediate summaries in files."}',
         ),
       ],
     },
@@ -527,25 +500,10 @@ test("/rlm schedules a hidden child turn for subcall actions and resumes the par
   const parentResume = String(harness.sentMessages[1]?.message.content ?? "");
   assert.match(parentResume, /"type": "subcall_result"/);
   assert.match(parentResume, /"storeAs": "chunk_1"/);
-  assert.match(parentResume, /prompt stays outside the root context/);
+  assert.match(parentResume, /intermediate summaries in files/);
   assert.match(parentResume, /workflow-request-id:rlm-3/);
-
-  harness.listeners.agent_end?.(
-    {
-      messages: [
-        buildTextMessage("custom", parentResume),
-        buildTextMessage("assistant", '{"action":"inspect_document"}'),
-      ],
-    },
-    ctx,
-  );
-
-  assert.equal(harness.sentMessages.length, 3);
-  const inspectAfterResume = String(harness.sentMessages[2]?.message.content ?? "");
-  assert.match(inspectAfterResume, /"type": "inspect_document"/);
-  assert.match(inspectAfterResume, /"variableCount": 1/);
-  assert.match(inspectAfterResume, /"variableNames": \[/);
-  assert.match(inspectAfterResume, /"chunk_1"/);
+  assert.match(readFileSync(scratchpadFilePath!, "utf8"), /subcall:chunk_1/);
+  assert.match(readFileSync(scratchpadFilePath!, "utf8"), /intermediate summaries in files/);
 });
 
 test("/rlm stops when subcalls exceed the recursion depth budget", async () => {
@@ -557,12 +515,11 @@ test("/rlm stops when subcalls exceed the recursion depth budget", async () => {
       }),
     ),
   );
-  const notePath = createNoteFile("alpha beta gamma delta epsilon");
   const ctx = createContext() as ExtensionContext & {
     notifications?: Array<{ message: string; level?: string }>;
   };
 
-  await harness.commands.rlm?.handler(`${notePath} inspect`, ctx);
+  await harness.commands.rlm?.handler("summarize the workspace", ctx);
   const prompt = String(harness.sentUserMessages[0]?.content ?? "");
 
   harness.listeners.agent_end?.(
@@ -596,12 +553,11 @@ test("/rlm stops when actions exceed the iteration budget", async () => {
       }),
     ),
   );
-  const notePath = createNoteFile("alpha beta gamma delta epsilon");
   const ctx = createContext() as ExtensionContext & {
     notifications?: Array<{ message: string; level?: string }>;
   };
 
-  await harness.commands.rlm?.handler(`${notePath} inspect`, ctx);
+  await harness.commands.rlm?.handler("inspect the workspace", ctx);
   const prompt = String(harness.sentUserMessages[0]?.content ?? "");
 
   harness.listeners.agent_end?.(
@@ -645,12 +601,11 @@ test("/rlm retries malformed assistant output once and then stops with a clear e
       }),
     ),
   );
-  const notePath = createNoteFile("alpha beta gamma delta epsilon");
   const ctx = createContext() as ExtensionContext & {
     notifications?: Array<{ message: string; level?: string }>;
   };
 
-  await harness.commands.rlm?.handler(`${notePath} inspect`, ctx);
+  await harness.commands.rlm?.handler("inspect the workspace", ctx);
   const prompt = String(harness.sentUserMessages[0]?.content ?? "");
 
   harness.listeners.agent_end?.(
@@ -693,19 +648,22 @@ test("/rlm retries malformed assistant output once and then stops with a clear e
   ]);
 });
 
-test("/rlm completes an end-to-end recursive workflow over a long note fixture", async () => {
+test("/rlm completes an end-to-end recursive workflow over the generated workspace", async () => {
   const harness = createHarness();
-  const notePath = getFixturePath("long-note.md");
   const ctx = createContext() as ExtensionContext & {
     notifications?: Array<{ message: string; level?: string }>;
   };
 
-  await harness.commands.rlm?.handler(`${notePath} summarize the note`, ctx);
+  await harness.commands.rlm?.handler(
+    "write a final synthesis about recursive workspace control",
+    ctx,
+  );
 
   assert.equal(harness.sentUserMessages.length, 1);
   const initialPrompt = String(harness.sentUserMessages[0]?.content ?? "");
-  assert.match(initialPrompt, /Document metadata:/);
-  assert.doesNotMatch(initialPrompt, /SENTINEL_END_TO_END_LONG_NOTE_DO_NOT_LEAK_IN_INITIAL_PROMPT/);
+  const finalFilePath = extractMetadataPath(initialPrompt, "finalFilePath");
+  assert.ok(finalFilePath);
+  assert.match(initialPrompt, /Workspace metadata:/);
 
   harness.listeners.agent_end?.(
     {
@@ -713,7 +671,7 @@ test("/rlm completes an end-to-end recursive workflow over a long note fixture",
         buildTextMessage("user", initialPrompt),
         buildTextMessage(
           "assistant",
-          '{"action":"subcall","prompt":"Summarize the introduction and key idea in one sentence.","storeAs":"intro_summary"}',
+          '{"action":"subcall","prompt":"Summarize the task and workspace layout in one sentence.","storeAs":"intro_summary"}',
         ),
       ],
     },
@@ -722,7 +680,6 @@ test("/rlm completes an end-to-end recursive workflow over a long note fixture",
 
   assert.equal(harness.sentMessages.length, 1);
   const childPrompt = String(harness.sentMessages[0]?.message.content ?? "");
-  assert.match(childPrompt, /Recursive child sub-call/);
   assert.match(childPrompt, /Store target: intro_summary/);
 
   harness.listeners.agent_end?.(
@@ -731,7 +688,7 @@ test("/rlm completes an end-to-end recursive workflow over a long note fixture",
         buildTextMessage("custom", childPrompt),
         buildTextMessage(
           "assistant",
-          '{"action":"final_result","result":"The note says the root should start from metadata, read bounded slices on demand, and reuse stored summaries."}',
+          '{"action":"final_result","result":"The workspace starts from a question, tracks scratchpad notes, and stores reusable summaries for later reasoning."}',
         ),
       ],
     },
@@ -741,75 +698,26 @@ test("/rlm completes an end-to-end recursive workflow over a long note fixture",
   assert.equal(harness.sentMessages.length, 2);
   const parentResume = String(harness.sentMessages[1]?.message.content ?? "");
   assert.match(parentResume, /"type": "subcall_result"/);
-  assert.match(parentResume, /"storeAs": "intro_summary"/);
-  assert.match(parentResume, /reuse stored summaries/);
+  assert.match(parentResume, /intro_summary/);
 
   harness.listeners.agent_end?.(
     {
       messages: [
         buildTextMessage("custom", parentResume),
-        buildTextMessage("assistant", '{"action":"inspect_document"}'),
-      ],
-    },
-    ctx,
-  );
-
-  assert.equal(harness.sentMessages.length, 3);
-  const inspectObservation = String(harness.sentMessages[2]?.message.content ?? "");
-  assert.match(inspectObservation, /"type": "inspect_document"/);
-  assert.match(inspectObservation, /"variableCount": 1/);
-  assert.match(inspectObservation, /"intro_summary"/);
-
-  harness.listeners.agent_end?.(
-    {
-      messages: [
-        buildTextMessage("custom", inspectObservation),
         buildTextMessage(
           "assistant",
-          '{"action":"final_result","result":"Final answer: the note recommends metadata-first control, bounded reads, and reuse of the stored intro_summary variable for later reasoning."}',
+          '{"action":"final_result","result":"Final answer: start from a question, create workspace files, and let recursive summaries accumulate in scratchpad and final outputs."}',
         ),
       ],
     },
     ctx,
   );
 
-  assert.equal(harness.sentMessages.length, 3);
   assert.deepEqual(ctx.notifications, [
     {
-      message: `RLM final result ready for ${notePath}.`,
+      message: `RLM final result ready at ${finalFilePath}.`,
       level: "info",
     },
   ]);
-});
-
-test("/rlm finishes when the assistant returns final_result", async () => {
-  const harness = createHarness();
-  const notePath = createNoteFile("alpha beta gamma delta epsilon");
-  const ctx = createContext() as ExtensionContext & {
-    notifications?: Array<{ message: string; level?: string }>;
-  };
-
-  await harness.commands.rlm?.handler(`${notePath} conclude`, ctx);
-  const prompt = String(harness.sentUserMessages[0]?.content ?? "");
-
-  harness.listeners.agent_end?.(
-    {
-      messages: [
-        buildTextMessage("user", prompt),
-        buildTextMessage(
-          "assistant",
-          '{"action":"final_result","result":"The document argues for bounded environment access."}',
-        ),
-      ],
-    },
-    ctx,
-  );
-
-  assert.equal(harness.sentMessages.length, 0);
-  assert.deepEqual(ctx.notifications, [
-    {
-      message: `RLM final result ready for ${notePath}.`,
-      level: "info",
-    },
-  ]);
+  assert.match(readFileSync(finalFilePath!, "utf8"), /create workspace files/);
 });

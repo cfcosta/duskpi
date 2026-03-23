@@ -1,4 +1,10 @@
+import { writeFileSync } from "node:fs";
 import type { RlmRequest } from "./request";
+import {
+  buildFinalFileContent,
+  buildScratchpadFileContent,
+  buildWorkspaceRootContent,
+} from "./request";
 
 export const DEFAULT_METADATA_PREVIEW_CHARS = 240;
 export const DEFAULT_SEARCH_CONTEXT_CHARS = 80;
@@ -12,6 +18,10 @@ export interface RlmDocumentMetadata {
   charLength: number;
   lineCount: number;
   question?: string;
+  workspaceDir: string;
+  taskFilePath: string;
+  scratchpadFilePath: string;
+  finalFilePath: string;
   preview: string;
   previewTruncated: boolean;
   variableCount: number;
@@ -53,28 +63,41 @@ export interface RlmDocumentSearchOptions {
   caseSensitive?: boolean;
 }
 
+interface ScratchpadEntry {
+  title: string;
+  content: string;
+}
+
 export class RlmDocumentEnvironment {
   private readonly variables = new Map<string, string>();
   private finalResult?: string;
+  private readonly scratchpadEntries: ScratchpadEntry[] = [];
 
-  constructor(private readonly request: RlmRequest) {}
+  constructor(private readonly request: RlmRequest) {
+    this.syncWorkspaceFiles();
+  }
 
   getMetadata(options: { previewChars?: number } = {}): RlmDocumentMetadata {
     const previewChars = normalizeNonNegativeInteger(
       options.previewChars,
       DEFAULT_METADATA_PREVIEW_CHARS,
     );
-    const preview = this.request.content.slice(0, previewChars);
-    const previewTruncated = preview.length < this.request.content.length;
+    const content = this.getCurrentContent();
+    const preview = content.slice(0, previewChars);
+    const previewTruncated = preview.length < content.length;
 
     return {
       path: this.request.path,
       absolutePath: this.request.absolutePath,
       extension: this.request.extension,
-      sizeBytes: this.request.sizeBytes,
-      charLength: this.request.content.length,
-      lineCount: countLines(this.request.content),
+      sizeBytes: Buffer.byteLength(content, "utf8"),
+      charLength: content.length,
+      lineCount: countLines(content),
       question: this.request.question,
+      workspaceDir: this.request.workspaceDir,
+      taskFilePath: this.request.taskFilePath,
+      scratchpadFilePath: this.request.scratchpadFilePath,
+      finalFilePath: this.request.finalFilePath,
       preview,
       previewTruncated,
       variableCount: this.variables.size,
@@ -84,13 +107,14 @@ export class RlmDocumentEnvironment {
   }
 
   readSegment(offset: number, length: number): RlmDocumentSegment {
+    const content = this.getCurrentContent();
     const requestedOffset = normalizeNonNegativeInteger(offset, 0);
     const requestedLength = normalizeNonNegativeInteger(length, 0);
-    const maxOffset = this.request.content.length;
+    const maxOffset = content.length;
     const start = Math.min(requestedOffset, maxOffset);
     const requestedEnd = requestedOffset + requestedLength;
     const endOffset = Math.min(requestedEnd, maxOffset);
-    const text = this.request.content.slice(start, endOffset);
+    const text = content.slice(start, endOffset);
 
     return {
       requestedOffset,
@@ -123,8 +147,8 @@ export class RlmDocumentEnvironment {
       options.contextChars,
       DEFAULT_SEARCH_CONTEXT_CHARS,
     );
-
-    const haystack = caseSensitive ? this.request.content : this.request.content.toLowerCase();
+    const content = this.getCurrentContent();
+    const haystack = caseSensitive ? content : content.toLowerCase();
     const needle = caseSensitive ? normalizedQuery : normalizedQuery.toLowerCase();
 
     const hits: RlmDocumentSearchHit[] = [];
@@ -140,14 +164,11 @@ export class RlmDocumentEnvironment {
       totalMatches += 1;
       if (hits.length < maxResults) {
         const contextStart = Math.max(0, index - contextChars);
-        const contextEnd = Math.min(
-          this.request.content.length,
-          index + normalizedQuery.length + contextChars,
-        );
+        const contextEnd = Math.min(content.length, index + normalizedQuery.length + contextChars);
         hits.push({
           index,
-          match: this.request.content.slice(index, index + normalizedQuery.length),
-          context: this.request.content.slice(contextStart, contextEnd),
+          match: content.slice(index, index + normalizedQuery.length),
+          context: content.slice(contextStart, contextEnd),
           contextStart,
           contextEnd,
         });
@@ -167,6 +188,7 @@ export class RlmDocumentEnvironment {
   setVariable(name: string, value: string): void {
     const normalizedName = normalizeVariableName(name);
     this.variables.set(normalizedName, value);
+    this.syncWorkspaceFiles();
   }
 
   getVariable(name: string): string | undefined {
@@ -177,12 +199,62 @@ export class RlmDocumentEnvironment {
     return [...this.variables.keys()].sort();
   }
 
+  appendScratchpadEntry(title: string, content: string): void {
+    const normalizedTitle = title.trim();
+    const normalizedContent = content.trim();
+    if (normalizedTitle.length === 0 || normalizedContent.length === 0) {
+      throw new Error("RLM scratchpad entries require a non-empty title and content.");
+    }
+
+    this.scratchpadEntries.push({
+      title: normalizedTitle,
+      content: normalizedContent,
+    });
+    this.syncWorkspaceFiles();
+  }
+
   setFinalResult(value: string): void {
     this.finalResult = value;
+    this.syncWorkspaceFiles();
   }
 
   getFinalResult(): string | undefined {
     return this.finalResult;
+  }
+
+  private getCurrentContent(): string {
+    return buildWorkspaceRootContent({
+      question: this.request.question,
+      taskFilePath: this.request.taskFilePath,
+      scratchpadFilePath: this.request.scratchpadFilePath,
+      finalFilePath: this.request.finalFilePath,
+      scratchpadEntries: this.scratchpadEntries,
+      finalResult: this.finalResult,
+      variableNames: this.listVariableNames(),
+    });
+  }
+
+  private syncWorkspaceFiles(): void {
+    writeFileSync(
+      this.request.taskFilePath,
+      `# RLM Task\n\n## Question\n\n${this.request.question.trim()}`,
+      "utf8",
+    );
+    writeFileSync(
+      this.request.scratchpadFilePath,
+      buildScratchpadFileContent(
+        this.request.question,
+        this.scratchpadEntries,
+        this.listVariableNames(),
+      ),
+      "utf8",
+    );
+    writeFileSync(
+      this.request.finalFilePath,
+      buildFinalFileContent(this.request.question, this.finalResult),
+      "utf8",
+    );
+    writeFileSync(this.request.absolutePath, this.getCurrentContent(), "utf8");
   }
 }
 

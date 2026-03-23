@@ -2,125 +2,71 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync } from "node:fs";
 import { parseRlmArgs } from "./args";
 import { resolveRlmRequest } from "./request";
 
-test("parseRlmArgs parses a path with an optional question", () => {
-  const parsed = parseRlmArgs("notes/plan.md summarize the architecture");
+test("parseRlmArgs treats the full command body as the question", () => {
+  const parsed = parseRlmArgs("summarize the architecture tradeoffs");
   assert.deepEqual(parsed, {
     ok: true,
     value: {
-      raw: "notes/plan.md summarize the architecture",
-      path: "notes/plan.md",
-      question: "summarize the architecture",
+      raw: "summarize the architecture tradeoffs",
+      question: "summarize the architecture tradeoffs",
     },
   });
 });
 
-test("parseRlmArgs supports quoted paths with spaces", () => {
-  const parsed = parseRlmArgs('"~/Notes/Long Note.md" find the main thesis');
-  assert.deepEqual(parsed, {
-    ok: true,
-    value: {
-      raw: '"~/Notes/Long Note.md" find the main thesis',
-      path: "~/Notes/Long Note.md",
-      question: "find the main thesis",
-    },
-  });
-});
-
-test("resolveRlmRequest rejects a missing path", async () => {
+test("resolveRlmRequest rejects a missing question", async () => {
   const result = await resolveRlmRequest("   ");
   assert.equal(result.ok, false);
   if (result.ok) {
     throw new Error("expected request parsing to fail");
   }
 
-  assert.equal(result.error.code, "missing_path");
+  assert.equal(result.error.code, "missing_question");
 });
 
-test("resolveRlmRequest reports unreadable files", async () => {
-  const tempDir = mkdtempSync(path.join(os.tmpdir(), "rlm-request-unreadable-"));
-  const filePath = path.join(tempDir, "note.md");
-  writeFileSync(filePath, "# hidden\n", "utf8");
-
-  const result = await resolveRlmRequest(filePath, {
-    readFileImpl: async () => {
-      const error = new Error("permission denied") as Error & { code?: string };
-      error.code = "EACCES";
-      throw error;
+test("resolveRlmRequest reports workspace creation failures", async () => {
+  const result = await resolveRlmRequest("map the main contradictions", {
+    mkdtempImpl: async () => {
+      throw new Error("permission denied");
     },
   });
 
   assert.equal(result.ok, false);
   if (result.ok) {
-    throw new Error("expected unreadable request to fail");
+    throw new Error("expected workspace creation to fail");
   }
 
-  assert.equal(result.error.code, "unreadable");
+  assert.equal(result.error.code, "workspace_init_failed");
 });
 
-test("resolveRlmRequest rejects unsupported input types", async () => {
-  const tempDir = mkdtempSync(path.join(os.tmpdir(), "rlm-request-type-"));
-  const filePath = path.join(tempDir, "image.png");
-  writeFileSync(filePath, "not really a png", "utf8");
-
-  const result = await resolveRlmRequest(filePath);
-  assert.equal(result.ok, false);
-  if (result.ok) {
-    throw new Error("expected unsupported type to fail");
-  }
-
-  assert.equal(result.error.code, "unsupported_input_type");
-});
-
-test("resolveRlmRequest rejects empty files", async () => {
-  const tempDir = mkdtempSync(path.join(os.tmpdir(), "rlm-request-empty-"));
-  const filePath = path.join(tempDir, "empty.md");
-  writeFileSync(filePath, "", "utf8");
-
-  const result = await resolveRlmRequest(filePath);
-  assert.equal(result.ok, false);
-  if (result.ok) {
-    throw new Error("expected empty file to fail");
-  }
-
-  assert.equal(result.error.code, "empty_input");
-});
-
-test("resolveRlmRequest rejects files over the configured size limit", async () => {
-  const tempDir = mkdtempSync(path.join(os.tmpdir(), "rlm-request-size-"));
-  const filePath = path.join(tempDir, "large.md");
-  writeFileSync(filePath, "1234567890", "utf8");
-
-  const result = await resolveRlmRequest(filePath, { maxBytes: 5 });
-  assert.equal(result.ok, false);
-  if (result.ok) {
-    throw new Error("expected oversized file to fail");
-  }
-
-  assert.equal(result.error.code, "too_large");
-});
-
-test("resolveRlmRequest returns a normalized request for valid markdown input", async () => {
+test("resolveRlmRequest creates a normalized workspace-backed request", async () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "rlm-request-valid-"));
-  const notesDir = path.join(tempDir, "notes");
-  mkdirSync(notesDir);
-  const filePath = path.join(notesDir, "example.md");
-  writeFileSync(filePath, "# Example\n\nA valid note.\n", "utf8");
+  const workspacesDir = path.join(tempDir, "workspaces");
+  mkdirSync(workspacesDir);
 
-  const result = await resolveRlmRequest(`${path.relative(tempDir, filePath)} summarize`, {
+  const result = await resolveRlmRequest("summarize the recursive workflow", {
     cwd: tempDir,
+    workspaceParentDir: workspacesDir,
   });
   assert.equal(result.ok, true);
   if (!result.ok) {
     throw new Error("expected valid request to succeed");
   }
 
-  assert.equal(result.value.path, path.relative(tempDir, filePath));
-  assert.equal(result.value.absolutePath, filePath);
-  assert.equal(result.value.question, "summarize");
+  assert.equal(result.value.question, "summarize the recursive workflow");
   assert.equal(result.value.extension, ".md");
-  assert.match(result.value.content, /A valid note/);
+  assert.match(result.value.absolutePath, /workspace\.md$/);
+  assert.match(result.value.taskFilePath, /task\.md$/);
+  assert.match(result.value.scratchpadFilePath, /scratchpad\.md$/);
+  assert.match(result.value.finalFilePath, /final\.md$/);
+  assert.match(result.value.content, /question-first run/);
+  assert.match(result.value.content, /summarize the recursive workflow/);
+
+  assert.match(readFileSync(result.value.taskFilePath, "utf8"), /summarize the recursive workflow/);
+  assert.match(readFileSync(result.value.scratchpadFilePath, "utf8"), /No notes yet/i);
+  assert.match(readFileSync(result.value.finalFilePath, "utf8"), /Pending final answer/i);
+  assert.equal(readFileSync(result.value.absolutePath, "utf8"), result.value.content);
 });
