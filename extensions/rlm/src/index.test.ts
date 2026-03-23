@@ -133,6 +133,43 @@ function createQueuedExecutor(results: RlmExecutorResult[]) {
   };
 }
 
+function createPersistentMockExecutor() {
+  const state: { prefix?: string } = {};
+  return {
+    executor: {
+      async execute(input: Record<string, unknown>): Promise<RlmExecutorResult> {
+        const program = input.program as { code?: unknown } | undefined;
+        const code = typeof program?.code === "string" ? program.code : "";
+
+        if (code.includes("const prefix = 'live';") && code.includes("finish(value)")) {
+          state.prefix = "live";
+          return {
+            kind: "completed",
+            variables: { stage: "live:ready" },
+            logs: [],
+            summary: undefined,
+          };
+        }
+
+        if (code.includes("setFinal(finish('done'));")) {
+          return {
+            kind: "completed",
+            variables: { Final: `${state.prefix ?? "missing"}:done` },
+            logs: [],
+            summary: undefined,
+          };
+        }
+
+        return {
+          kind: "runtime_error",
+          message: `unexpected mock program: ${code}`,
+          exitCode: null,
+        };
+      },
+    },
+  };
+}
+
 function buildTextMessage(role: "user" | "assistant" | "custom", text: string) {
   return {
     role,
@@ -708,6 +745,61 @@ test("/rlm retries executor failures once and then can recover", async () => {
       level: "info",
     },
   ]);
+});
+
+test("/rlm keeps the JavaScript repl live across follow-up turns within a frame", async () => {
+  const { executor } = createPersistentMockExecutor();
+  const harness = createHarness((api) =>
+    registerRlmExtension(api, new RlmWorkflow(api, { executor })),
+  );
+  const ctx = createContext() as ExtensionContext & {
+    notifications?: Array<{ message: string; level?: string }>;
+  };
+
+  await harness.commands.rlm?.handler("keep a live repl across iterations", ctx);
+
+  const initialPrompt = String(harness.sentUserMessages[0]?.content ?? "");
+  const finalFilePath = extractMetadataPath(initialPrompt, "finalFilePath");
+  assert.ok(finalFilePath);
+
+  await harness.listeners.agent_end?.(
+    {
+      messages: [
+        buildTextMessage("user", initialPrompt),
+        buildTextMessage(
+          "assistant",
+          [
+            "const prefix = 'live';",
+            "function finish(value) { return `${prefix}:${value}`; }",
+            "set('stage', finish('ready'));",
+          ].join("\n"),
+        ),
+      ],
+    },
+    ctx,
+  );
+
+  assert.equal(harness.sentMessages.length, 1);
+  const followUpPrompt = String(harness.sentMessages[0]?.message.content ?? "");
+  assert.match(followUpPrompt, /Execution feedback metadata/);
+
+  await harness.listeners.agent_end?.(
+    {
+      messages: [
+        buildTextMessage("custom", followUpPrompt),
+        buildTextMessage("assistant", "setFinal(finish('done'));"),
+      ],
+    },
+    ctx,
+  );
+
+  assert.deepEqual(ctx.notifications, [
+    {
+      message: `RLM final result ready at ${finalFilePath}.`,
+      level: "info",
+    },
+  ]);
+  assert.match(readFileSync(finalFilePath!, "utf8"), /live:done/);
 });
 
 test("/rlm completes an end-to-end recursive workflow over the generated workspace", async () => {

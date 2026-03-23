@@ -4,7 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import {
+  createDefaultRlmExecutor,
   createDefaultWasmtimeExecutor,
+  PersistentWasmtimeExecutor,
   RLM_JAVY_BIN_ENV,
   RLM_WASMTIME_BIN_ENV,
   WasmtimeExecutor,
@@ -48,8 +50,6 @@ function createMockWasmtimeRuntime(): string {
 
     const modulePath = process.argv[2];
     const source = fs.readFileSync(modulePath, "utf8");
-    const stdin = fs.readFileSync(0);
-    let offset = 0;
 
     globalThis.Javy = {
       IO: {
@@ -57,15 +57,10 @@ function createMockWasmtimeRuntime(): string {
           if (fd !== 0) {
             return 0;
           }
-          const remaining = stdin.subarray(offset, offset + buffer.length);
-          buffer.set(remaining);
-          offset += remaining.length;
-          return remaining.length;
+          return fs.readSync(0, buffer, 0, buffer.length, null);
         },
         writeSync(fd, buffer) {
-          const chunk = Buffer.from(buffer);
-          fs.writeFileSync(fd === 2 ? 2 : 1, chunk);
-          return chunk.length;
+          return fs.writeSync(fd === 2 ? 2 : 1, buffer, 0, buffer.length, null);
         },
       },
     };
@@ -73,6 +68,90 @@ function createMockWasmtimeRuntime(): string {
     new Function(source)();
   `);
 }
+
+test("createDefaultRlmExecutor returns a persistent wasmtime executor", () => {
+  const executor = createDefaultRlmExecutor();
+  assert.equal(executor instanceof PersistentWasmtimeExecutor, true);
+  executor.dispose();
+});
+
+test("PersistentWasmtimeExecutor keeps a live repl across executions", async () => {
+  const compilerPath = createMockJavyCompiler();
+  const runtimePath = createMockWasmtimeRuntime();
+  const executor = new PersistentWasmtimeExecutor({
+    command: process.execPath,
+    args: ["run", runtimePath],
+    compilerCommand: process.execPath,
+    compilerArgs: ["run", compilerPath],
+  });
+
+  const first = await executor.execute({
+    program: createProgram(
+      [
+        "const prefix = 'alpha';",
+        "function joinWithPrefix(value) { return `${prefix}:${value}`; }",
+        "log(joinWithPrefix('one'));",
+        "set('stage', joinWithPrefix('ready'));",
+      ].join("\n"),
+    ),
+    bindings: { Prompt: "demo", variables: {} },
+  });
+
+  assert.deepEqual(first, {
+    kind: "completed",
+    finalResult: undefined,
+    variables: { stage: "alpha:ready" },
+    logs: ["alpha:one"],
+    summary: undefined,
+  });
+
+  const second = await executor.execute({
+    program: createProgram("setFinal(joinWithPrefix('two'));"),
+    bindings: { Prompt: "demo", variables: { stage: "alpha:ready" } },
+  });
+
+  assert.deepEqual(second, {
+    kind: "completed",
+    finalResult: "alpha:two",
+    variables: { Final: "alpha:two" },
+    logs: [],
+    summary: undefined,
+  });
+
+  executor.dispose();
+});
+
+test("PersistentWasmtimeExecutor forks isolated child repls", async () => {
+  const compilerPath = createMockJavyCompiler();
+  const runtimePath = createMockWasmtimeRuntime();
+  const parent = new PersistentWasmtimeExecutor({
+    command: process.execPath,
+    args: ["run", runtimePath],
+    compilerCommand: process.execPath,
+    compilerArgs: ["run", compilerPath],
+  });
+  await parent.execute({
+    program: createProgram("const shared = 'root';"),
+    bindings: { variables: {} },
+  });
+
+  const child = parent.fork();
+  const result = await child.execute({
+    program: createProgram("setFinal(typeof shared);"),
+    bindings: { variables: {} },
+  });
+
+  assert.deepEqual(result, {
+    kind: "completed",
+    finalResult: "undefined",
+    variables: { Final: "undefined" },
+    logs: [],
+    summary: undefined,
+  });
+
+  child.dispose();
+  parent.dispose();
+});
 
 test("createDefaultWasmtimeExecutor uses env-configured javy and wasmtime paths", () => {
   const previousWasmtime = process.env[RLM_WASMTIME_BIN_ENV];

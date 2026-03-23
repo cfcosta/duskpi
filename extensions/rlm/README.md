@@ -16,7 +16,7 @@ The current implementation is now closer to the paper's core loop:
 - the root model sees only bounded prompt metadata, not the full prompt contents
 - the full prompt is stored externally as `Prompt` inside the execution environment
 - the assistant must return JavaScript programs, not tool-style JSON actions
-- each turn executes code in a persistent frame environment with symbolic variables
+- each frame now keeps a live JavaScript REPL across iterations inside the Wasmtime/Javy sandbox, so top-level declarations persist in addition to symbolic variables
 - recursive sub-calls are requested from code via `subcall(prompt, storeAs)`
 - child results are stored symbolically in parent variables
 - final answers are produced by setting the `Final` variable
@@ -37,7 +37,7 @@ The current implementation is now closer to the paper's core loop:
 - `src/request.ts` — workspace creation and normalized request model
 - `src/protocol.ts` — assistant program parsing
 - `src/environment.ts` — persistent frame environment and workspace syncing
-- `src/executor.ts` — Wasmtime/Javy-backed JavaScript executor
+- `src/executor.ts` — persistent Wasmtime/Javy-backed JavaScript REPL executor and runtime path
 - `src/index.test.ts` — controller and lifecycle regression coverage
 - `src/request.test.ts` — request parsing and workspace creation coverage
 - `src/protocol.test.ts` — program parser coverage

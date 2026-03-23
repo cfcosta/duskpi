@@ -13,7 +13,7 @@ import {
   type TurnEndEvent,
 } from "../../../packages/workflow-core/src/index";
 import {
-  createDefaultWasmtimeExecutor,
+  createDefaultRlmExecutor,
   type RlmExecutorInput,
   type RlmExecutorResult,
 } from "./executor";
@@ -40,6 +40,8 @@ const RESULT_PREVIEW_CHARS = 0;
 
 interface RlmExecutorLike {
   execute(input: RlmExecutorInput): Promise<RlmExecutorResult>;
+  fork?(): RlmExecutorLike;
+  dispose?(): void;
 }
 
 interface RlmFrameState {
@@ -47,6 +49,7 @@ interface RlmFrameState {
   depth: number;
   label: string;
   environment: RlmPromptEnvironment;
+  executor: RlmExecutorLike;
   storeAs?: string;
 }
 
@@ -65,6 +68,7 @@ export interface RlmWorkflowOptions {
   maxRecursionDepth?: number;
   maxMalformedOutputRetries?: number;
   executor?: RlmExecutorLike;
+  executorFactory?: () => RlmExecutorLike;
 }
 
 export class RlmWorkflow {
@@ -73,7 +77,7 @@ export class RlmWorkflow {
   private readonly maxIterations: number;
   private readonly maxRecursionDepth: number;
   private readonly maxMalformedOutputRetries: number;
-  private readonly executor: RlmExecutorLike;
+  private readonly executorFactory: () => RlmExecutorLike;
 
   constructor(
     private readonly api: ExtensionAPI,
@@ -83,7 +87,9 @@ export class RlmWorkflow {
     this.maxRecursionDepth = options.maxRecursionDepth ?? DEFAULT_RLM_MAX_RECURSION_DEPTH;
     this.maxMalformedOutputRetries =
       options.maxMalformedOutputRetries ?? DEFAULT_RLM_MAX_MALFORMED_OUTPUT_RETRIES;
-    this.executor = options.executor ?? createDefaultWasmtimeExecutor();
+    this.executorFactory =
+      options.executorFactory ??
+      (options.executor ? () => options.executor! : () => createDefaultRlmExecutor());
   }
 
   async handleCommand(args: unknown, ctx: ExtensionContext): Promise<void> {
@@ -107,6 +113,7 @@ export class RlmWorkflow {
       depth: 0,
       label: request.value.question,
       environment,
+      executor: this.createFrameExecutor(),
     };
     const prompt = buildFrameStartPrompt(frame, {
       reason: "initial",
@@ -177,7 +184,7 @@ export class RlmWorkflow {
 
     this.state.iterationCount += 1;
 
-    const execution = await this.executor.execute({
+    const execution = await frame.executor.execute({
       program: program.value,
       bindings: frame.environment.getExecutionBindings(),
     });
@@ -299,6 +306,7 @@ export class RlmWorkflow {
         execution.subcall.prompt,
         `child:${execution.subcall.storeAs}`,
       ),
+      executor: this.createFrameExecutor(parent.executor),
     };
 
     this.state.frames.push(childFrame);
@@ -334,6 +342,7 @@ export class RlmWorkflow {
       return;
     }
 
+    this.disposeExecutor(completedChild.executor);
     parent.environment.setVariable(completedChild.storeAs, finalValue);
     if (parent.kind === "root") {
       parent.environment.appendScratchpadEntry(
@@ -461,8 +470,26 @@ export class RlmWorkflow {
   }
 
   private clearState(ctx: ExtensionContext): void {
+    const frames = this.state?.frames ?? [];
+    const uniqueExecutors = new Set<RlmExecutorLike>(frames.map((frame) => frame.executor));
+    for (const executor of uniqueExecutors) {
+      this.disposeExecutor(executor);
+    }
+
     this.state = undefined;
     this.updateStatus(ctx);
+  }
+
+  private createFrameExecutor(parentExecutor?: RlmExecutorLike): RlmExecutorLike {
+    return parentExecutor?.fork ? parentExecutor.fork() : this.executorFactory();
+  }
+
+  private disposeExecutor(executor: RlmExecutorLike): void {
+    try {
+      executor.dispose?.();
+    } catch {
+      // Best-effort cleanup only.
+    }
   }
 
   private getCurrentFrame(): RlmFrameState | undefined {
@@ -587,6 +614,7 @@ function buildRlmSystemPrompt(frame: RlmFrameState): string {
     "Operate as a recursive language model over an external prompt variable.",
     "Return exactly one JavaScript program.",
     "Do not return prose, JSON actions, or markdown commentary.",
+    "The JavaScript REPL is live within the current frame across iterations, so top-level declarations persist.",
     "Store the final answer by setting the variable Final, e.g. set('Final', answer) or setFinal(answer).",
     "Use subcall(prompt, storeAs) only when symbolic recursion is useful.",
   ].join("\n");
@@ -595,6 +623,7 @@ function buildRlmSystemPrompt(frame: RlmFrameState): string {
 function buildProgramContractLines(frame: RlmFrameState): string[] {
   return [
     "Execution helpers available inside your JavaScript program:",
+    "- The JavaScript REPL stays live across iterations within the current frame; top-level declarations and globals persist unless you overwrite them.",
     "- get(name): read the external Prompt, existing variables, or metadata bindings.",
     "- set(name, value): persist a string variable in the frame environment.",
     "- setFinal(value): alias for writing Final.",
