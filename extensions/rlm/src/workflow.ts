@@ -12,39 +12,49 @@ import {
   type ToolCallEvent,
   type TurnEndEvent,
 } from "../../../packages/workflow-core/src/index";
-import { RlmDocumentEnvironment } from "./environment";
-import { parseAssistantAction, type RlmAssistantAction } from "./protocol";
+import {
+  createDefaultWasmtimeExecutor,
+  type RlmExecutorInput,
+  type RlmExecutorResult,
+} from "./executor";
+import { RlmPromptEnvironment } from "./environment";
+import { parseAssistantProgram } from "./protocol";
 import {
   DEFAULT_RLM_MAX_ITERATIONS,
   DEFAULT_RLM_MAX_MALFORMED_OUTPUT_RETRIES,
   DEFAULT_RLM_MAX_RECURSION_DEPTH,
-  DEFAULT_RLM_MAX_SLICE_CHARS,
   resolveRlmRequest,
   type RlmRequest,
 } from "./request";
 
 export const RLM_COMMAND_DESCRIPTION =
-  "Run the Recursive Language Model workflow scaffold for long documents and notes";
+  "Run the Recursive Language Model workflow scaffold for long prompts and notes";
 
 const RLM_INTERNAL_MESSAGE_TYPE = "rlm-internal";
 const RLM_STATUS_KEY = "rlm";
 const INITIAL_PREVIEW_CHARS = 160;
+const OBSERVATION_PREVIEW_CHARS = 240;
+const LOG_PREVIEW_CHARS = 240;
+const SUMMARY_PREVIEW_CHARS = 240;
+const RESULT_PREVIEW_CHARS = 0;
 
-type PendingResponse =
-  | { kind: "root" }
-  | {
-      kind: "child";
-      storeAs: string;
-      prompt: string;
-      depth: number;
-    };
+interface RlmExecutorLike {
+  execute(input: RlmExecutorInput): Promise<RlmExecutorResult>;
+}
+
+interface RlmFrameState {
+  kind: "root" | "child";
+  depth: number;
+  label: string;
+  environment: RlmPromptEnvironment;
+  storeAs?: string;
+}
 
 interface ActiveRunState {
   request: RlmRequest;
-  environment: RlmDocumentEnvironment;
+  frames: RlmFrameState[];
   pendingRequestId: string;
   awaitingResponse: boolean;
-  pending: PendingResponse;
   pendingPrompt: string;
   iterationCount: number;
   malformedOutputRetries: number;
@@ -54,12 +64,7 @@ export interface RlmWorkflowOptions {
   maxIterations?: number;
   maxRecursionDepth?: number;
   maxMalformedOutputRetries?: number;
-}
-
-interface RlmSubcallAction {
-  kind: "subcall";
-  prompt: string;
-  storeAs: string;
+  executor?: RlmExecutorLike;
 }
 
 export class RlmWorkflow {
@@ -68,6 +73,7 @@ export class RlmWorkflow {
   private readonly maxIterations: number;
   private readonly maxRecursionDepth: number;
   private readonly maxMalformedOutputRetries: number;
+  private readonly executor: RlmExecutorLike;
 
   constructor(
     private readonly api: ExtensionAPI,
@@ -77,6 +83,7 @@ export class RlmWorkflow {
     this.maxRecursionDepth = options.maxRecursionDepth ?? DEFAULT_RLM_MAX_RECURSION_DEPTH;
     this.maxMalformedOutputRetries =
       options.maxMalformedOutputRetries ?? DEFAULT_RLM_MAX_MALFORMED_OUTPUT_RETRIES;
+    this.executor = options.executor ?? createDefaultWasmtimeExecutor();
   }
 
   async handleCommand(args: unknown, ctx: ExtensionContext): Promise<void> {
@@ -94,18 +101,24 @@ export class RlmWorkflow {
       return;
     }
 
-    const environment = new RlmDocumentEnvironment(request.value);
-    const prompt = buildInitialPrompt(
-      environment.getMetadata({ previewChars: INITIAL_PREVIEW_CHARS }),
-    );
+    const environment = RlmPromptEnvironment.fromRequest(request.value);
+    const frame: RlmFrameState = {
+      kind: "root",
+      depth: 0,
+      label: request.value.question,
+      environment,
+    };
+    const prompt = buildFrameStartPrompt(frame, {
+      reason: "initial",
+      metadata: environment.getPromptMetadata({ previewChars: INITIAL_PREVIEW_CHARS }),
+    });
     const requestId = this.nextRequestId();
 
     this.state = {
       request: request.value,
-      environment,
+      frames: [frame],
       pendingRequestId: requestId,
       awaitingResponse: true,
-      pending: { kind: "root" },
       pendingPrompt: prompt,
       iterationCount: 0,
       malformedOutputRetries: 0,
@@ -117,7 +130,7 @@ export class RlmWorkflow {
 
   handleToolCall(_event: ToolCallEvent, _ctx: ExtensionContext): void {}
 
-  handleAgentEnd(event: AgentEndEvent, ctx: ExtensionContext): void {
+  async handleAgentEnd(event: AgentEndEvent, ctx: ExtensionContext): Promise<void> {
     if (!this.state || !this.state.awaitingResponse) {
       return;
     }
@@ -133,13 +146,9 @@ export class RlmWorkflow {
       this.handleMalformedOutput(
         ctx,
         "RLM response was empty or invalid.",
-        "RLM stopped: assistant action output remained empty or invalid.",
-        "Assistant output was empty. Return exactly one supported JSON action.",
+        "RLM stopped: assistant program output remained empty or invalid.",
+        "Return exactly one JavaScript program and no prose.",
       );
-      return;
-    }
-
-    if (!this.state) {
       return;
     }
 
@@ -149,55 +158,67 @@ export class RlmWorkflow {
       return;
     }
 
-    this.state.iterationCount += 1;
-
-    if (this.state.pending.kind === "child") {
-      this.handleChildAgentEnd(assistantResult.text, ctx);
-      return;
-    }
-
-    const parsedSubcall = parseSubcallAction(assistantResult.text);
-    if (parsedSubcall.ok) {
-      this.scheduleChildSubcall(parsedSubcall.value, ctx);
-      return;
-    }
-
-    const action = parseAssistantAction(assistantResult.text);
-    if (!action.ok) {
+    const program = parseAssistantProgram(assistantResult.text);
+    if (!program.ok) {
       this.handleMalformedOutput(
         ctx,
-        `RLM could not parse the assistant action: ${action.error.message}`,
-        "RLM stopped: assistant action output remained malformed.",
-        action.error.message,
+        `RLM could not parse the assistant program: ${program.error.message}`,
+        "RLM stopped: assistant program output remained malformed.",
+        program.error.message,
       );
       return;
     }
 
-    if (!this.state) {
-      return;
-    }
-
-    if (action.value.kind === "final_result") {
-      this.state.environment.setFinalResult(action.value.result);
-      ctx.ui.notify(`RLM final result ready at ${this.state.request.finalFilePath}.`, "info");
+    const frame = this.getCurrentFrame();
+    if (!frame) {
       this.clearState(ctx);
       return;
     }
 
-    const observation = this.executeAction(action.value);
-    this.sendObservationFollowUp(observation, ctx, { kind: "root" });
+    this.state.iterationCount += 1;
+
+    const execution = await this.executor.execute({
+      program: program.value,
+      bindings: frame.environment.getExecutionBindings(),
+    });
+
+    if (execution.kind === "runtime_error" || execution.kind === "invalid_output") {
+      this.handleMalformedOutput(
+        ctx,
+        `RLM program execution failed: ${execution.message}`,
+        "RLM stopped: program execution remained invalid.",
+        execution.message,
+      );
+      return;
+    }
+
+    this.applyExecutionState(frame, execution);
+
+    if (execution.kind === "subcall") {
+      this.scheduleChildFrame(frame, execution, ctx);
+      return;
+    }
+
+    const finalValue = frame.environment.getFinalResult();
+    if (typeof finalValue === "string" && finalValue.length > 0) {
+      this.finishCompletedFrame(frame, finalValue, ctx);
+      return;
+    }
+
+    this.sendObservationFollowUp(buildExecutionObservationPrompt(frame, execution), ctx);
   }
 
   handleBeforeAgentStart(
     event: BeforeAgentStartEvent,
     _ctx: ExtensionContext,
   ): void | { systemPrompt: string } {
-    if (!this.state) {
+    const frame = this.getCurrentFrame();
+    if (!this.state || !frame) {
       return undefined;
     }
 
     return {
-      systemPrompt: `${event.systemPrompt}\n\n${buildRlmSystemPrompt(this.state.pending)}`,
+      systemPrompt: `${event.systemPrompt}\n\n${buildRlmSystemPrompt(frame)}`,
     };
   }
 
@@ -223,56 +244,43 @@ export class RlmWorkflow {
     this.clearState(ctx);
   }
 
-  private handleChildAgentEnd(text: string, ctx: ExtensionContext): void {
-    if (!this.state || this.state.pending.kind !== "child") {
-      return;
-    }
+  private applyExecutionState(
+    frame: RlmFrameState,
+    execution: Extract<RlmExecutorResult, { kind: "completed" | "subcall" }>,
+  ): void {
+    const applied = frame.environment.applyVariableUpdates(execution.variables);
+    const logs = summarizeLogs(execution.logs);
+    const summary = summarizeSummary(execution.summary);
 
-    const action = parseAssistantAction(text);
-    if (!action.ok) {
-      this.handleMalformedOutput(
-        ctx,
-        `RLM child sub-call returned malformed output: ${action.error.message}`,
-        "RLM stopped: child sub-call output remained malformed.",
-        action.error.message,
+    if (frame.kind === "root") {
+      const noteLines = [
+        `result: ${execution.kind}`,
+        `updatedVariables: ${applied.updatedVariableNames.length > 0 ? applied.updatedVariableNames.join(", ") : "none"}`,
+        `logCount: ${execution.logs.length}`,
+      ];
+      if (logs.preview.length > 0) {
+        noteLines.push(`logPreview: ${logs.preview}`);
+      }
+      if (summary.present) {
+        noteLines.push(`summaryPreview: ${summary.preview}`);
+      }
+      frame.environment.appendScratchpadEntry(
+        `iter-${this.state?.iterationCount ?? 0}`,
+        noteLines.join("\n"),
       );
-      return;
     }
-
-    if (action.value.kind !== "final_result") {
-      this.handleMalformedOutput(
-        ctx,
-        "RLM child sub-call must resolve to a final_result action.",
-        "RLM stopped: child sub-call never produced a final_result action.",
-        'Child sub-calls must return exactly {"action":"final_result","result":"..."}.',
-      );
-      return;
-    }
-
-    const childFrame = this.state.pending;
-    this.state.environment.setVariable(childFrame.storeAs, action.value.result);
-    this.state.environment.appendScratchpadEntry(
-      `subcall:${childFrame.storeAs}`,
-      action.value.result,
-    );
-
-    const observation = {
-      type: "subcall_result",
-      storeAs: childFrame.storeAs,
-      prompt: childFrame.prompt,
-      result: action.value.result,
-      variableNames: this.state.environment.listVariableNames(),
-    };
-
-    this.sendObservationFollowUp(observation, ctx, { kind: "root" });
   }
 
-  private scheduleChildSubcall(action: RlmSubcallAction, ctx: ExtensionContext): void {
+  private scheduleChildFrame(
+    parent: RlmFrameState,
+    execution: Extract<RlmExecutorResult, { kind: "subcall" }>,
+    ctx: ExtensionContext,
+  ): void {
     if (!this.state) {
       return;
     }
 
-    const nextDepth = this.state.pending.kind === "child" ? this.state.pending.depth + 1 : 1;
+    const nextDepth = parent.depth + 1;
     if (nextDepth > this.maxRecursionDepth) {
       ctx.ui.notify(
         `RLM stopped: exceeded max recursion depth (${this.maxRecursionDepth}).`,
@@ -282,53 +290,69 @@ export class RlmWorkflow {
       return;
     }
 
-    const childPrompt = buildChildPrompt(action.prompt, action.storeAs);
-    this.sendHiddenPrompt(childPrompt, ctx, {
+    const childFrame: RlmFrameState = {
       kind: "child",
-      storeAs: action.storeAs,
-      prompt: action.prompt,
       depth: nextDepth,
-    });
+      label: execution.subcall.storeAs,
+      storeAs: execution.subcall.storeAs,
+      environment: RlmPromptEnvironment.fromPrompt(
+        execution.subcall.prompt,
+        `child:${execution.subcall.storeAs}`,
+      ),
+    };
+
+    this.state.frames.push(childFrame);
+    this.sendHiddenPrompt(
+      buildFrameStartPrompt(childFrame, {
+        reason: "subcall",
+        metadata: childFrame.environment.getPromptMetadata({ previewChars: INITIAL_PREVIEW_CHARS }),
+        storeAs: execution.subcall.storeAs,
+      }),
+      ctx,
+    );
   }
 
-  private executeAction(action: RlmAssistantAction): unknown {
-    if (!this.state) {
-      return undefined;
-    }
-
-    switch (action.kind) {
-      case "inspect_document":
-        return {
-          type: "inspect_document",
-          metadata: this.state.environment.getMetadata(),
-        };
-      case "read_segment":
-        return {
-          type: "read_segment",
-          segment: this.state.environment.readSegment(action.offset, action.length),
-        };
-      case "search_document":
-        return {
-          type: "search_document",
-          result: this.state.environment.search(action.query, {
-            maxResults: action.maxResults,
-          }),
-        };
-      case "final_result":
-        return undefined;
-    }
-  }
-
-  private sendObservationFollowUp(
-    observation: unknown,
+  private finishCompletedFrame(
+    frame: RlmFrameState,
+    finalValue: string,
     ctx: ExtensionContext,
-    nextPending: PendingResponse,
   ): void {
-    const prompt = buildObservationPrompt(observation);
-    this.sendHiddenPrompt(prompt, ctx, nextPending);
+    if (!this.state) {
+      return;
+    }
+
+    if (frame.kind === "root") {
+      ctx.ui.notify(`RLM final result ready at ${this.state.request.finalFilePath}.`, "info");
+      this.clearState(ctx);
+      return;
+    }
+
+    const completedChild = this.state.frames.pop();
+    const parent = this.getCurrentFrame();
+    if (!completedChild || !parent || !completedChild.storeAs) {
+      this.clearState(ctx);
+      return;
+    }
+
+    parent.environment.setVariable(completedChild.storeAs, finalValue);
+    if (parent.kind === "root") {
+      parent.environment.appendScratchpadEntry(
+        `subcall:${completedChild.storeAs}`,
+        `Stored child response in variable '${completedChild.storeAs}' (${finalValue.length} chars).`,
+      );
+    }
+
+    this.sendObservationFollowUp(
+      buildChildCompletionPrompt(parent, completedChild.storeAs, finalValue),
+      ctx,
+    );
   }
 
-  private sendHiddenPrompt(prompt: string, ctx: ExtensionContext, pending: PendingResponse): void {
+  private sendObservationFollowUp(prompt: string, ctx: ExtensionContext): void {
+    this.sendHiddenPrompt(prompt, ctx);
+  }
+
+  private sendHiddenPrompt(prompt: string, ctx: ExtensionContext): void {
     if (!this.state) {
       return;
     }
@@ -355,7 +379,6 @@ export class RlmWorkflow {
 
     this.state.pendingRequestId = requestId;
     this.state.awaitingResponse = true;
-    this.state.pending = pending;
     this.state.pendingPrompt = prompt;
     this.state.malformedOutputRetries = 0;
     this.updateStatus(ctx);
@@ -390,7 +413,13 @@ export class RlmWorkflow {
       return;
     }
 
-    const repairPrompt = buildRepairPrompt(this.state.pending, repairHint);
+    const frame = this.getCurrentFrame();
+    if (!frame) {
+      this.clearState(ctx);
+      return;
+    }
+
+    const repairPrompt = buildRepairPrompt(frame, repairHint);
     const requestId = this.nextRequestId();
 
     try {
@@ -418,15 +447,16 @@ export class RlmWorkflow {
   }
 
   private updateStatus(ctx: ExtensionContext): void {
-    if (!this.state) {
+    const frame = this.getCurrentFrame();
+    if (!this.state || !frame) {
       ctx.ui.setStatus(RLM_STATUS_KEY, undefined);
       return;
     }
 
-    const phase = this.state.pending.kind === "child" ? "child" : "root";
+    const phase = frame.kind === "child" ? `child:d${frame.depth}` : "root";
     ctx.ui.setStatus(
       RLM_STATUS_KEY,
-      `RLM ${phase}: ${formatQuestionLabel(this.state.request.question)} (${this.state.iterationCount}/${this.maxIterations})`,
+      `RLM ${phase}: ${formatLabel(frame.label)} (${this.state.iterationCount}/${this.maxIterations})`,
     );
   }
 
@@ -435,158 +465,199 @@ export class RlmWorkflow {
     this.updateStatus(ctx);
   }
 
+  private getCurrentFrame(): RlmFrameState | undefined {
+    return this.state?.frames.at(-1);
+  }
+
   private nextRequestId(): string {
     this.requestSequence += 1;
     return `rlm-${this.requestSequence}`;
   }
 }
 
-function buildInitialPrompt(metadata: ReturnType<RlmDocumentEnvironment["getMetadata"]>): string {
+function buildFrameStartPrompt(
+  frame: RlmFrameState,
+  input: {
+    reason: "initial" | "subcall";
+    metadata: ReturnType<RlmPromptEnvironment["getPromptMetadata"]>;
+    storeAs?: string;
+  },
+): string {
+  const intro =
+    input.reason === "initial"
+      ? "You are operating inside a Recursive Language Model environment."
+      : `Recursive child sub-call active. Store the eventual response in '${input.storeAs ?? "result"}' at the parent frame.`;
+
   return [
-    "You are operating inside a Recursive Language Model-style workspace environment.",
-    "This run started from a question, and the extension created workspace files for task, scratchpad, final output, and imported sources.",
-    "The full workspace snapshot is not in your context window.",
-    "Choose exactly one next action and return only a JSON object or a fenced ```json block.",
-    ...buildActionContractLines(),
-    "Workspace metadata:",
-    JSON.stringify(metadata, null, 2),
+    intro,
+    "The full prompt lives outside your context window as the variable Prompt inside the execution environment.",
+    "Write exactly one JavaScript program and no prose.",
+    ...buildProgramContractLines(frame),
+    "Prompt metadata:",
+    JSON.stringify(input.metadata, null, 2),
   ].join("\n\n");
 }
 
-function buildObservationPrompt(observation: unknown): string {
+function buildExecutionObservationPrompt(
+  frame: RlmFrameState,
+  execution: Extract<RlmExecutorResult, { kind: "completed" | "subcall" }>,
+): string {
+  const logs = summarizeLogs(execution.logs);
+  const summary = summarizeSummary(execution.summary);
+  const metadata = frame.environment.getPromptMetadata({ previewChars: OBSERVATION_PREVIEW_CHARS });
+
   return [
-    "Observation from the workspace environment.",
-    "Choose exactly one next action and return only a JSON object or a fenced ```json block.",
-    ...buildActionContractLines(),
-    JSON.stringify(observation, null, 2),
+    "Execution feedback metadata.",
+    "Only compact metadata from the last execution is shown here. Use code to inspect Prompt and variables symbolically.",
+    "Write exactly one JavaScript program and no prose.",
+    ...buildProgramContractLines(frame),
+    JSON.stringify(
+      {
+        phase: "execution_feedback",
+        frame: {
+          kind: frame.kind,
+          depth: frame.depth,
+          label: frame.label,
+        },
+        prompt: metadata,
+        execution: {
+          result: execution.kind,
+          updatedVariableNames: Object.keys(execution.variables).sort(),
+          logs,
+          summary,
+        },
+      },
+      null,
+      2,
+    ),
   ].join("\n\n");
 }
 
-function buildRepairPrompt(pending: PendingResponse, repairHint: string): string {
-  if (pending.kind === "child") {
-    return [
-      "Your previous child sub-call response was invalid.",
-      `Error: ${repairHint}`,
-      'Return exactly one JSON object: {"action":"final_result","result":"..."}',
-      "Do not include prose or any unsupported keys.",
-    ].join("\n\n");
-  }
+function buildChildCompletionPrompt(
+  parent: RlmFrameState,
+  storeAs: string,
+  result: string,
+): string {
+  const metadata = parent.environment.getPromptMetadata({
+    previewChars: OBSERVATION_PREVIEW_CHARS,
+  });
 
   return [
-    "Your previous RLM action was invalid.",
+    "Child sub-call completed.",
+    "The child response is stored symbolically in the parent environment. Use code to read it through get(name).",
+    "Write exactly one JavaScript program and no prose.",
+    ...buildProgramContractLines(parent),
+    JSON.stringify(
+      {
+        phase: "child_completed",
+        frame: {
+          kind: parent.kind,
+          depth: parent.depth,
+          label: parent.label,
+        },
+        prompt: metadata,
+        child: {
+          storedAs: storeAs,
+          resultChars: result.length,
+          preview: result.slice(0, RESULT_PREVIEW_CHARS),
+          previewTruncated: RESULT_PREVIEW_CHARS < result.length,
+        },
+      },
+      null,
+      2,
+    ),
+  ].join("\n\n");
+}
+
+function buildRepairPrompt(frame: RlmFrameState, repairHint: string): string {
+  return [
+    frame.kind === "child"
+      ? "Your previous child-frame JavaScript program was invalid."
+      : "Your previous RLM JavaScript program was invalid.",
     `Error: ${repairHint}`,
-    "Return exactly one corrected JSON action now.",
-    ...buildActionContractLines(),
+    "Return exactly one corrected JavaScript program now.",
+    "Do not include prose.",
+    ...buildProgramContractLines(frame),
   ].join("\n\n");
 }
 
-function buildChildPrompt(prompt: string, storeAs: string): string {
+function buildRlmSystemPrompt(frame: RlmFrameState): string {
   return [
-    "Recursive child sub-call.",
-    `Solve the subtask below and return exactly one final_result JSON action. Store target: ${storeAs}.`,
-    "Do not call tools or return prose.",
-    "Subtask:",
-    prompt,
-  ].join("\n\n");
-}
-
-function buildRlmSystemPrompt(pending: PendingResponse): string {
-  if (pending.kind === "child") {
-    return [
-      "[RLM CHILD SUBCALL ACTIVE]",
-      "Return exactly one JSON action of type final_result.",
-      'Schema: {"action":"final_result","result":"..."}',
-      "Do not return prose or any other action type.",
-    ].join("\n");
-  }
-
-  return [
-    "[RLM MODE ACTIVE]",
-    "Operate over the extension-managed workspace environment.",
-    "Do not respond with prose.",
-    "Return exactly one JSON action at a time.",
-    "Do not invent path, startLine, endLine, or any unsupported fields.",
+    frame.kind === "child" ? "[RLM CHILD FRAME ACTIVE]" : "[RLM ROOT FRAME ACTIVE]",
+    "Operate as a recursive language model over an external prompt variable.",
+    "Return exactly one JavaScript program.",
+    "Do not return prose, JSON actions, or markdown commentary.",
+    "Store the final answer by setting the variable Final, e.g. set('Final', answer) or setFinal(answer).",
+    "Use subcall(prompt, storeAs) only when symbolic recursion is useful.",
   ].join("\n");
 }
 
-function buildActionContractLines(): string[] {
+function buildProgramContractLines(frame: RlmFrameState): string[] {
   return [
-    "Available actions and exact schemas:",
-    '- {"action":"inspect_document"}',
-    `- {"action":"read_segment","offset":0,"length":400} (length must be <= ${DEFAULT_RLM_MAX_SLICE_CHARS})`,
-    '- {"action":"search_document","query":"your query","maxResults":5}',
-    '- {"action":"subcall","prompt":"your subtask","storeAs":"variable_name"}',
-    '- {"action":"final_result","result":"your final answer"}',
-    "Do not include path, startLine, endLine, file names, or any unsupported keys.",
-    "read_segment is character-based and uses offset/length only.",
+    "Execution helpers available inside your JavaScript program:",
+    "- get(name): read the external Prompt, existing variables, or metadata bindings.",
+    "- set(name, value): persist a string variable in the frame environment.",
+    "- setFinal(value): alias for writing Final.",
+    "- setSummary(value): emit a compact execution summary for the next turn.",
+    "- log(...values): emit compact stdout-style logs.",
+    "- subcall(prompt, storeAs): request a recursive child frame that returns into storeAs.",
+    "Recommended pattern: const P = String(get('Prompt') ?? '');",
+    frame.kind === "child"
+      ? "Child frames should usually either set Final or launch another permitted subcall."
+      : "Root frames should build intermediate variables symbolically and set Final when done.",
+    "Keep summaries and logs short; they are surfaced back only as bounded metadata.",
   ];
 }
 
-function formatQuestionLabel(question: string): string {
-  const normalized = question.trim().replace(/\s+/g, " ");
+function summarizeLogs(logs: string[]): {
+  count: number;
+  totalChars: number;
+  preview: string;
+  truncated: boolean;
+} {
+  const combined = logs.join("\n");
+  const preview = combined.slice(0, LOG_PREVIEW_CHARS);
+  return {
+    count: logs.length,
+    totalChars: combined.length,
+    preview,
+    truncated: preview.length < combined.length,
+  };
+}
+
+function summarizeSummary(summary: unknown): {
+  present: boolean;
+  charLength: number;
+  preview: string;
+  truncated: boolean;
+} {
+  if (typeof summary === "undefined") {
+    return {
+      present: false,
+      charLength: 0,
+      preview: "",
+      truncated: false,
+    };
+  }
+
+  const text = typeof summary === "string" ? summary : JSON.stringify(summary);
+  const normalized = typeof text === "string" ? text : String(summary);
+  const preview = normalized.slice(0, SUMMARY_PREVIEW_CHARS);
+  return {
+    present: true,
+    charLength: normalized.length,
+    preview,
+    truncated: preview.length < normalized.length,
+  };
+}
+
+function formatLabel(label: string): string {
+  const normalized = label.trim().replace(/\s+/g, " ");
   if (normalized.length <= 48) {
     return normalized;
   }
 
   return `${normalized.slice(0, 45)}...`;
-}
-
-function parseSubcallAction(text: string): { ok: true; value: RlmSubcallAction } | { ok: false } {
-  const normalized = text.trim();
-  if (normalized.length === 0) {
-    return { ok: false };
-  }
-
-  const payload = extractJsonPayload(normalized);
-  if (!payload) {
-    return { ok: false };
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(payload);
-  } catch {
-    return { ok: false };
-  }
-
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    return { ok: false };
-  }
-
-  const candidate = parsed as { action?: unknown; prompt?: unknown; storeAs?: unknown };
-  if (candidate.action !== "subcall") {
-    return { ok: false };
-  }
-
-  if (typeof candidate.prompt !== "string" || candidate.prompt.trim().length === 0) {
-    return { ok: false };
-  }
-
-  if (typeof candidate.storeAs !== "string" || candidate.storeAs.trim().length === 0) {
-    return { ok: false };
-  }
-
-  return {
-    ok: true,
-    value: {
-      kind: "subcall",
-      prompt: candidate.prompt.trim(),
-      storeAs: candidate.storeAs.trim(),
-    },
-  };
-}
-
-function extractJsonPayload(text: string): string | undefined {
-  const fencedMatch = text.match(/^```(?:json)?\s*([\s\S]*?)```$/i);
-  if (fencedMatch) {
-    return fencedMatch[1]?.trim() || undefined;
-  }
-
-  if (text.startsWith("{") && text.endsWith("}")) {
-    return text;
-  }
-
-  return undefined;
 }
 
 function requestIdMarker(requestId: string): string {

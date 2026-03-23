@@ -1,12 +1,12 @@
-import test from "node:test";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { parseRlmArgs } from "./args";
-import { resolveRlmRequest } from "./request";
+import { buildPromptContent, resolveRlmRequest } from "./request";
 
-test("parseRlmArgs treats the full command body as the question", () => {
+test("parseRlmArgs treats the full command body as the input prompt", () => {
   const parsed = parseRlmArgs("summarize the architecture tradeoffs");
   assert.deepEqual(parsed, {
     ok: true,
@@ -17,7 +17,7 @@ test("parseRlmArgs treats the full command body as the question", () => {
   });
 });
 
-test("resolveRlmRequest rejects a missing question", async () => {
+test("resolveRlmRequest rejects a missing prompt", async () => {
   const result = await resolveRlmRequest("   ");
   assert.equal(result.ok, false);
   if (result.ok) {
@@ -42,7 +42,24 @@ test("resolveRlmRequest reports workspace creation failures", async () => {
   assert.equal(result.error.code, "workspace_init_failed");
 });
 
-test("resolveRlmRequest auto-imports referenced local markdown sources into the workspace", async () => {
+test("buildPromptContent appends imported source contents into the external prompt", () => {
+  const prompt = buildPromptContent("check ./paper.md", [
+    {
+      path: "./paper.md",
+      absolutePath: "/tmp/paper.md",
+      extension: ".md",
+      sizeBytes: 12,
+      content: "Recursive Language Models use recursive calls.",
+    },
+  ]);
+
+  assert.match(prompt, /RLM Input Prompt/);
+  assert.match(prompt, /check \.\/paper\.md/);
+  assert.match(prompt, /Imported Sources/);
+  assert.match(prompt, /Recursive Language Models use recursive calls/);
+});
+
+test("resolveRlmRequest auto-imports referenced local markdown sources into the prompt and workspace", async () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "rlm-request-source-"));
   const sourcePath = path.join(tempDir, "paper.md");
   writeFileSync(sourcePath, "# Paper\n\nRecursive Language Models use recursive calls.", "utf8");
@@ -58,8 +75,8 @@ test("resolveRlmRequest auto-imports referenced local markdown sources into the 
 
   assert.equal(result.value.importedSources.length, 1);
   assert.equal(result.value.importedSources[0]?.absolutePath, sourcePath);
+  assert.match(result.value.promptContent, /Recursive Language Models use recursive calls/);
   assert.match(result.value.content, /Imported Sources/);
-  assert.match(result.value.content, /Recursive Language Models use recursive calls/);
   assert.match(
     readFileSync(result.value.sourcesFilePath, "utf8"),
     /Recursive Language Models use recursive calls/,
@@ -88,7 +105,8 @@ test("resolveRlmRequest creates a normalized workspace-backed request", async ()
   assert.match(result.value.finalFilePath, /final\.md$/);
   assert.match(result.value.sourcesFilePath, /sources\.md$/);
   assert.deepEqual(result.value.importedSources, []);
-  assert.match(result.value.content, /question-first run/);
+  assert.match(result.value.promptContent, /RLM Input Prompt/);
+  assert.match(result.value.content, /persistent environment used by \/rlm/i);
   assert.match(result.value.content, /summarize the recursive workflow/);
 
   assert.match(readFileSync(result.value.taskFilePath, "utf8"), /summarize the recursive workflow/);

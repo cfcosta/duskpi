@@ -1,4 +1,4 @@
-import test from "node:test";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import {
   DEFAULT_SEARCH_MAX_RESULTS,
@@ -116,9 +116,7 @@ test("parseAssistantAction accepts final_result from a fenced json block", () =>
 });
 
 test("parseAssistantAction rejects inspect_document payloads with unsupported keys", () => {
-  const result = parseAssistantAction(
-    '{"action":"inspect_document","path":"/tmp/workspace.md"}',
-  );
+  const result = parseAssistantAction('{"action":"inspect_document","path":"/tmp/workspace.md"}');
   assert.equal(result.ok, false);
   if (result.ok) {
     throw new Error("expected parse failure");

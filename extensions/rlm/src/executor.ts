@@ -328,6 +328,8 @@ function stringifyValue(value) {
 
 const input = readInput();
 const bindings = input.bindings && typeof input.bindings === "object" ? input.bindings : {};
+const persistedVariables =
+  bindings.variables && typeof bindings.variables === "object" ? bindings.variables : {};
 const state = {
   kind: "completed",
   variables: {},
@@ -340,17 +342,26 @@ globalThis.get = function get(name) {
   if (Object.prototype.hasOwnProperty.call(state.variables, key)) {
     return state.variables[key];
   }
+  if (Object.prototype.hasOwnProperty.call(persistedVariables, key)) {
+    return persistedVariables[key];
+  }
   return bindings[key];
 };
 globalThis.set = function set(name, value) {
-  state.variables[String(name)] = stringifyValue(value);
-  return state.variables[String(name)];
+  const key = String(name);
+  state.variables[key] = stringifyValue(value);
+  if (key === "Final") {
+    state.finalResult = state.variables[key];
+  }
+  return state.variables[key];
 };
 globalThis.setFinal = function setFinal(value) {
   state.kind = "completed";
-  state.finalResult = stringifyValue(value);
+  const finalValue = stringifyValue(value);
+  state.variables.Final = finalValue;
+  state.finalResult = finalValue;
   delete state.subcall;
-  return state.finalResult;
+  return finalValue;
 };
 globalThis.setSummary = function setSummary(value) {
   state.summary = value;
@@ -358,6 +369,8 @@ globalThis.setSummary = function setSummary(value) {
 };
 globalThis.subcall = function subcall(prompt, storeAs) {
   state.kind = "subcall";
+  delete state.finalResult;
+  delete state.variables.Final;
   state.subcall = {
     prompt: stringifyValue(prompt),
     storeAs: stringifyValue(storeAs),

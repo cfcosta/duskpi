@@ -1,4 +1,4 @@
-import test from "node:test";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -12,6 +12,7 @@ import type {
   SessionForkEvent,
   SessionSwitchEvent,
 } from "../../../packages/workflow-core/src/index";
+import type { RlmExecutorResult } from "./executor";
 import rlmExtension, { registerRlmExtension } from "../index";
 import { RLM_COMMAND_DESCRIPTION, RlmWorkflow } from "./workflow";
 
@@ -115,16 +116,28 @@ function createHarness(register = rlmExtension): Harness {
   };
 }
 
+function createQueuedExecutor(results: RlmExecutorResult[]) {
+  const calls: Array<Record<string, unknown>> = [];
+  return {
+    calls,
+    executor: {
+      async execute(input: Record<string, unknown>): Promise<RlmExecutorResult> {
+        calls.push(input);
+        const next = results.shift();
+        if (!next) {
+          throw new Error("executor queue exhausted");
+        }
+        return next;
+      },
+    },
+  };
+}
+
 function buildTextMessage(role: "user" | "assistant" | "custom", text: string) {
   return {
     role,
     content: [{ type: "text", text }],
   };
-}
-
-function extractRequestId(prompt: string): string | undefined {
-  const match = prompt.match(/<!--\s*workflow-request-id:([^>]+)\s*-->/i);
-  return match?.[1]?.trim();
 }
 
 function extractMetadataPath(prompt: string, fieldName: string): string | undefined {
@@ -263,37 +276,46 @@ test("registerRlmExtension wires /rlm and forwards all workflow handlers", async
   );
 });
 
-test("/rlm starts a run from a question and sends workspace metadata only", async () => {
-  const harness = createHarness();
+test("/rlm starts a run from prompt metadata only", async () => {
+  const { executor } = createQueuedExecutor([]);
+  const harness = createHarness((api) =>
+    registerRlmExtension(api, new RlmWorkflow(api, { executor })),
+  );
   const ctx = createContext();
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "rlm-index-source-"));
   const sourcePath = path.join(tempDir, "paper.md");
   writeFileSync(sourcePath, "# Paper\n\nSENTINEL_IMPORTED_SOURCE_DO_NOT_LEAK", "utf8");
 
   await harness.commands.rlm?.handler(
-    `summarize ${sourcePath} without leaking the full workspace`,
+    `summarize ${sourcePath} without leaking the full prompt`,
     ctx,
   );
 
   assert.equal(harness.sentUserMessages.length, 1);
   assert.equal(harness.sentMessages.length, 0);
   const prompt = String(harness.sentUserMessages[0]?.content ?? "");
-  assert.match(prompt, /Workspace metadata:/);
-  assert.match(prompt, /"question": "summarize/);
-  assert.match(prompt, /"taskFilePath":/);
-  assert.match(prompt, /"scratchpadFilePath":/);
-  assert.match(prompt, /"finalFilePath":/);
-  assert.match(prompt, /"sourcesFilePath":/);
+  assert.match(prompt, /full prompt lives outside your context window/i);
+  assert.match(prompt, /Prompt metadata:/);
+  assert.match(prompt, /"label": "summarize/);
+  assert.match(prompt, /"promptCharLength":/);
   assert.match(prompt, /"importedSourceCount": 1/);
-  assert.match(prompt, /"importedSourcePaths": \[/);
+  assert.match(prompt, /set\('Final', answer\)|setFinal/);
   assert.match(prompt, /workflow-request-id:rlm-1/);
-  assert.match(prompt, /"action":"read_segment","offset":0,"length":400/);
   assert.doesNotMatch(prompt, /SENTINEL_IMPORTED_SOURCE_DO_NOT_LEAK/);
-  assert.deepEqual((ctx as ExtensionContext & { notifications?: unknown[] }).notifications, []);
 });
 
 test("/rlm sets status during an active run and clears it on completion", async () => {
-  const harness = createHarness();
+  const { executor } = createQueuedExecutor([
+    {
+      kind: "completed",
+      variables: { Final: "done" },
+      logs: [],
+      summary: undefined,
+    },
+  ]);
+  const harness = createHarness((api) =>
+    registerRlmExtension(api, new RlmWorkflow(api, { executor })),
+  );
   const ctx = createContext() as ExtensionContext & {
     notifications?: Array<{ message: string; level?: string }>;
     statuses?: Array<{ key: string; value: string | undefined }>;
@@ -303,9 +325,7 @@ test("/rlm sets status during an active run and clears it on completion", async 
 
   assert.ok(
     ctx.statuses?.some(
-      (entry) =>
-        entry.key === "rlm" &&
-        /RLM root: draft a synthesis of the main tradeoffs/.test(entry.value ?? ""),
+      (entry) => entry.key === "rlm" && /RLM root: draft a synthesis/.test(entry.value ?? ""),
     ),
   );
 
@@ -313,11 +333,11 @@ test("/rlm sets status during an active run and clears it on completion", async 
   const finalFilePath = extractMetadataPath(prompt, "finalFilePath");
   assert.ok(finalFilePath);
 
-  harness.listeners.agent_end?.(
+  await harness.listeners.agent_end?.(
     {
       messages: [
         buildTextMessage("user", prompt),
-        buildTextMessage("assistant", '{"action":"final_result","result":"done"}'),
+        buildTextMessage("assistant", 'setFinal("done");'),
       ],
     },
     ctx,
@@ -334,7 +354,10 @@ test("/rlm resets active state on session lifecycle events", async () => {
     ["session_compact", { compactionEntry: { id: "compact-1" }, fromExtension: true }],
     ["session_shutdown", { reason: "shutdown" }],
   ] as const) {
-    const harness = createHarness();
+    const { executor } = createQueuedExecutor([]);
+    const harness = createHarness((api) =>
+      registerRlmExtension(api, new RlmWorkflow(api, { executor })),
+    );
     const ctx = createContext() as ExtensionContext & {
       statuses?: Array<{ key: string; value: string | undefined }>;
     };
@@ -349,11 +372,11 @@ test("/rlm resets active state on session lifecycle events", async () => {
     assert.deepEqual(ctx.statuses?.at(-1), { key: "rlm", value: undefined });
 
     const prompt = String(harness.sentUserMessages[0]?.content ?? "");
-    harness.listeners.agent_end?.(
+    await harness.listeners.agent_end?.(
       {
         messages: [
           buildTextMessage("user", prompt),
-          buildTextMessage("assistant", '{"action":"inspect_document"}'),
+          buildTextMessage("assistant", 'setSummary("noop");'),
         ],
       },
       ctx,
@@ -364,20 +387,23 @@ test("/rlm resets active state on session lifecycle events", async () => {
 });
 
 test("/rlm ignores agent_end payloads with mismatched request ids", async () => {
-  const harness = createHarness();
+  const { executor } = createQueuedExecutor([]);
+  const harness = createHarness((api) =>
+    registerRlmExtension(api, new RlmWorkflow(api, { executor })),
+  );
   const ctx = createContext();
 
   await harness.commands.rlm?.handler("inspect the generated workspace", ctx);
   const prompt = String(harness.sentUserMessages[0]?.content ?? "");
 
-  harness.listeners.agent_end?.(
+  await harness.listeners.agent_end?.(
     {
       messages: [
         buildTextMessage(
           "user",
           prompt.replace("workflow-request-id:rlm-1", "workflow-request-id:rlm-mismatch"),
         ),
-        buildTextMessage("assistant", '{"action":"inspect_document"}'),
+        buildTextMessage("assistant", 'setSummary("ignored");'),
       ],
     },
     ctx,
@@ -387,97 +413,37 @@ test("/rlm ignores agent_end payloads with mismatched request ids", async () => 
   assert.deepEqual((ctx as ExtensionContext & { notifications?: unknown[] }).notifications, []);
 });
 
-test("/rlm executes inspect_document and sends a follow-up observation", async () => {
-  const harness = createHarness();
+test("/rlm schedules a child frame and resumes the parent symbolically", async () => {
+  const { executor } = createQueuedExecutor([
+    {
+      kind: "subcall",
+      subcall: { prompt: "Summarize the first section.", storeAs: "chunk_1" },
+      variables: { phase: "search" },
+      logs: ["launch child"],
+      summary: "searched prompt",
+    },
+    {
+      kind: "completed",
+      variables: { Final: "The child summary." },
+      logs: ["child done"],
+      summary: undefined,
+    },
+  ]);
+  const harness = createHarness((api) =>
+    registerRlmExtension(api, new RlmWorkflow(api, { executor })),
+  );
   const ctx = createContext();
 
-  await harness.commands.rlm?.handler("inspect the workspace", ctx);
-  const prompt = String(harness.sentUserMessages[0]?.content ?? "");
-
-  harness.listeners.agent_end?.(
-    {
-      messages: [
-        buildTextMessage("user", prompt),
-        buildTextMessage("assistant", '{"action":"inspect_document"}'),
-      ],
-    },
-    ctx,
-  );
-
-  assert.equal(harness.sentMessages.length, 1);
-  assert.equal(harness.sentMessages[0]?.message.customType, "rlm-internal");
-  assert.equal(harness.sentMessages[0]?.message.display, false);
-  assert.deepEqual(harness.sentMessages[0]?.options, {
-    triggerTurn: true,
-    deliverAs: "followUp",
-  });
-  const followUp = String(harness.sentMessages[0]?.message.content ?? "");
-  assert.match(followUp, /"type": "inspect_document"/);
-  assert.match(followUp, /"hasFinalResult": false/);
-  assert.match(followUp, /workflow-request-id:rlm-2/);
-});
-
-test("/rlm executes read_segment and search_document actions over the workspace", async () => {
-  const harness = createHarness();
-  const ctx = createContext();
-
-  await harness.commands.rlm?.handler("recursion should appear in the workspace question", ctx);
-  const initialPrompt = String(harness.sentUserMessages[0]?.content ?? "");
-
-  harness.listeners.agent_end?.(
-    {
-      messages: [
-        buildTextMessage("user", initialPrompt),
-        buildTextMessage("assistant", '{"action":"read_segment","offset":0,"length":120}'),
-      ],
-    },
-    ctx,
-  );
-
-  assert.equal(harness.sentMessages.length, 1);
-  const readFollowUp = String(harness.sentMessages[0]?.message.content ?? "");
-  assert.match(readFollowUp, /"type": "read_segment"/);
-  assert.match(readFollowUp, /RLM Workspace/);
-
-  harness.listeners.agent_end?.(
-    {
-      messages: [
-        buildTextMessage("custom", readFollowUp),
-        buildTextMessage(
-          "assistant",
-          '{"action":"search_document","query":"recursion","maxResults":2}',
-        ),
-      ],
-    },
-    ctx,
-  );
-
-  assert.equal(harness.sentMessages.length, 2);
-  const searchFollowUp = String(harness.sentMessages[1]?.message.content ?? "");
-  assert.match(searchFollowUp, /"type": "search_document"/);
-  assert.match(searchFollowUp, /"totalMatches": 1/);
-  assert.match(searchFollowUp, /recursion should appear in the workspace question/i);
-});
-
-test("/rlm schedules a hidden child turn, updates the scratchpad, and resumes the parent", async () => {
-  const harness = createHarness();
-  const ctx = createContext() as ExtensionContext & {
-    notifications?: Array<{ message: string; level?: string }>;
-  };
-
-  await harness.commands.rlm?.handler("summarize the introduction in one sentence", ctx);
+  await harness.commands.rlm?.handler("summarize the introduction", ctx);
   const initialPrompt = String(harness.sentUserMessages[0]?.content ?? "");
   const scratchpadFilePath = extractMetadataPath(initialPrompt, "scratchpadFilePath");
   assert.ok(scratchpadFilePath);
 
-  harness.listeners.agent_end?.(
+  await harness.listeners.agent_end?.(
     {
       messages: [
         buildTextMessage("user", initialPrompt),
-        buildTextMessage(
-          "assistant",
-          '{"action":"subcall","prompt":"Summarize the first workspace section in one sentence.","storeAs":"chunk_1"}',
-        ),
+        buildTextMessage("assistant", 'subcall("Summarize the first section.", "chunk_1");'),
       ],
     },
     ctx,
@@ -485,18 +451,15 @@ test("/rlm schedules a hidden child turn, updates the scratchpad, and resumes th
 
   assert.equal(harness.sentMessages.length, 1);
   const childPrompt = String(harness.sentMessages[0]?.message.content ?? "");
-  assert.match(childPrompt, /Recursive child sub-call/);
-  assert.match(childPrompt, /Store target: chunk_1/);
+  assert.match(childPrompt, /Recursive child sub-call active/i);
+  assert.match(childPrompt, /chunk_1/);
   assert.match(childPrompt, /workflow-request-id:rlm-2/);
 
-  harness.listeners.agent_end?.(
+  await harness.listeners.agent_end?.(
     {
       messages: [
         buildTextMessage("custom", childPrompt),
-        buildTextMessage(
-          "assistant",
-          '{"action":"final_result","result":"The first workspace section says the run starts from a question and stores intermediate summaries in files."}',
-        ),
+        buildTextMessage("assistant", 'setFinal("The child summary.");'),
       ],
     },
     ctx,
@@ -504,20 +467,33 @@ test("/rlm schedules a hidden child turn, updates the scratchpad, and resumes th
 
   assert.equal(harness.sentMessages.length, 2);
   const parentResume = String(harness.sentMessages[1]?.message.content ?? "");
-  assert.match(parentResume, /"type": "subcall_result"/);
-  assert.match(parentResume, /"storeAs": "chunk_1"/);
-  assert.match(parentResume, /intermediate summaries in files/);
-  assert.match(parentResume, /workflow-request-id:rlm-3/);
+  assert.match(parentResume, /Child sub-call completed/i);
+  assert.match(parentResume, /"storedAs": "chunk_1"/);
+  assert.match(parentResume, /"resultChars": 18/);
+  assert.doesNotMatch(parentResume, /The child summary\./);
   assert.match(readFileSync(scratchpadFilePath!, "utf8"), /subcall:chunk_1/);
-  assert.match(readFileSync(scratchpadFilePath!, "utf8"), /intermediate summaries in files/);
+  assert.match(
+    readFileSync(scratchpadFilePath!, "utf8"),
+    /Stored child response in variable 'chunk_1'/,
+  );
 });
 
 test("/rlm stops when subcalls exceed the recursion depth budget", async () => {
+  const { executor } = createQueuedExecutor([
+    {
+      kind: "subcall",
+      subcall: { prompt: "Summarize chunk", storeAs: "chunk_1" },
+      variables: {},
+      logs: [],
+      summary: undefined,
+    },
+  ]);
   const harness = createHarness((api) =>
     registerRlmExtension(
       api,
       new RlmWorkflow(api, {
         maxRecursionDepth: 0,
+        executor,
       }),
     ),
   );
@@ -528,14 +504,11 @@ test("/rlm stops when subcalls exceed the recursion depth budget", async () => {
   await harness.commands.rlm?.handler("summarize the workspace", ctx);
   const prompt = String(harness.sentUserMessages[0]?.content ?? "");
 
-  harness.listeners.agent_end?.(
+  await harness.listeners.agent_end?.(
     {
       messages: [
         buildTextMessage("user", prompt),
-        buildTextMessage(
-          "assistant",
-          '{"action":"subcall","prompt":"Summarize the chunk.","storeAs":"chunk_1"}',
-        ),
+        buildTextMessage("assistant", 'subcall("Summarize chunk", "chunk_1");'),
       ],
     },
     ctx,
@@ -550,12 +523,21 @@ test("/rlm stops when subcalls exceed the recursion depth budget", async () => {
   ]);
 });
 
-test("/rlm stops when actions exceed the iteration budget", async () => {
+test("/rlm stops when programs exceed the iteration budget", async () => {
+  const { executor } = createQueuedExecutor([
+    {
+      kind: "completed",
+      variables: { note: "first pass" },
+      logs: ["first"],
+      summary: undefined,
+    },
+  ]);
   const harness = createHarness((api) =>
     registerRlmExtension(
       api,
       new RlmWorkflow(api, {
         maxIterations: 1,
+        executor,
       }),
     ),
   );
@@ -566,11 +548,11 @@ test("/rlm stops when actions exceed the iteration budget", async () => {
   await harness.commands.rlm?.handler("inspect the workspace", ctx);
   const prompt = String(harness.sentUserMessages[0]?.content ?? "");
 
-  harness.listeners.agent_end?.(
+  await harness.listeners.agent_end?.(
     {
       messages: [
         buildTextMessage("user", prompt),
-        buildTextMessage("assistant", '{"action":"inspect_document"}'),
+        buildTextMessage("assistant", 'set("note", "first pass");'),
       ],
     },
     ctx,
@@ -579,11 +561,11 @@ test("/rlm stops when actions exceed the iteration budget", async () => {
   assert.equal(harness.sentMessages.length, 1);
   const followUp = String(harness.sentMessages[0]?.message.content ?? "");
 
-  harness.listeners.agent_end?.(
+  await harness.listeners.agent_end?.(
     {
       messages: [
         buildTextMessage("custom", followUp),
-        buildTextMessage("assistant", '{"action":"inspect_document"}'),
+        buildTextMessage("assistant", 'setSummary("again");'),
       ],
     },
     ctx,
@@ -598,12 +580,14 @@ test("/rlm stops when actions exceed the iteration budget", async () => {
   ]);
 });
 
-test("/rlm retries malformed assistant output once and then stops with a clear error", async () => {
+test("/rlm retries malformed assistant programs once and then stops with a clear error", async () => {
+  const { executor } = createQueuedExecutor([]);
   const harness = createHarness((api) =>
     registerRlmExtension(
       api,
       new RlmWorkflow(api, {
         maxMalformedOutputRetries: 1,
+        executor,
       }),
     ),
   );
@@ -614,13 +598,13 @@ test("/rlm retries malformed assistant output once and then stops with a clear e
   await harness.commands.rlm?.handler("inspect the workspace", ctx);
   const prompt = String(harness.sentUserMessages[0]?.content ?? "");
 
-  harness.listeners.agent_end?.(
+  await harness.listeners.agent_end?.(
     {
       messages: [
         buildTextMessage("user", prompt),
         buildTextMessage(
           "assistant",
-          '{"action":"read_segment","offset":0,"length":12000}',
+          'Here is the program you asked for:\n```js\nsetFinal("done");\n```',
         ),
       ],
     },
@@ -630,15 +614,14 @@ test("/rlm retries malformed assistant output once and then stops with a clear e
   assert.equal(harness.sentMessages.length, 1);
   const retryPrompt = String(harness.sentMessages[0]?.message.content ?? "");
   assert.match(retryPrompt, /workflow-request-id:rlm-2/);
-  assert.match(retryPrompt, /previous RLM action was invalid/i);
-  assert.match(retryPrompt, /length must be <= 4000 characters/i);
-  assert.match(retryPrompt, /Return exactly one corrected JSON action now/i);
+  assert.match(retryPrompt, /previous RLM JavaScript program was invalid/i);
+  assert.match(retryPrompt, /must not include prose/i);
 
-  harness.listeners.agent_end?.(
+  await harness.listeners.agent_end?.(
     {
       messages: [
         buildTextMessage("custom", retryPrompt),
-        buildTextMessage("assistant", "not json"),
+        buildTextMessage("assistant", "const broken = ;"),
       ],
     },
     ctx,
@@ -647,18 +630,120 @@ test("/rlm retries malformed assistant output once and then stops with a clear e
   assert.equal(harness.sentMessages.length, 1);
   assert.deepEqual(ctx.notifications, [
     {
-      message: "RLM could not parse the assistant action: read_segment length must be <= 4000 characters. Retrying (1/1).",
+      message:
+        "RLM could not parse the assistant program: Assistant program output must not include prose outside the JavaScript code block. Retrying (1/1).",
       level: "warning",
     },
     {
-      message: "RLM stopped: assistant action output remained malformed.",
+      message: "RLM stopped: assistant program output remained malformed.",
       level: "error",
     },
   ]);
 });
 
+test("/rlm retries executor failures once and then can recover", async () => {
+  const { executor } = createQueuedExecutor([
+    {
+      kind: "runtime_error",
+      message: "Executor timed out after 10000ms.",
+      exitCode: null,
+    },
+    {
+      kind: "completed",
+      variables: { Final: "done" },
+      logs: [],
+      summary: undefined,
+    },
+  ]);
+  const harness = createHarness((api) =>
+    registerRlmExtension(
+      api,
+      new RlmWorkflow(api, {
+        maxMalformedOutputRetries: 1,
+        executor,
+      }),
+    ),
+  );
+  const ctx = createContext() as ExtensionContext & {
+    notifications?: Array<{ message: string; level?: string }>;
+  };
+
+  await harness.commands.rlm?.handler("finish the run", ctx);
+  const prompt = String(harness.sentUserMessages[0]?.content ?? "");
+  const finalFilePath = extractMetadataPath(prompt, "finalFilePath");
+  assert.ok(finalFilePath);
+
+  await harness.listeners.agent_end?.(
+    {
+      messages: [
+        buildTextMessage("user", prompt),
+        buildTextMessage("assistant", 'setFinal("done");'),
+      ],
+    },
+    ctx,
+  );
+
+  assert.equal(harness.sentMessages.length, 1);
+  const retryPrompt = String(harness.sentMessages[0]?.message.content ?? "");
+  assert.match(retryPrompt, /Executor timed out/i);
+
+  await harness.listeners.agent_end?.(
+    {
+      messages: [
+        buildTextMessage("custom", retryPrompt),
+        buildTextMessage("assistant", 'setFinal("done");'),
+      ],
+    },
+    ctx,
+  );
+
+  assert.match(readFileSync(finalFilePath!, "utf8"), /done/);
+  assert.deepEqual(ctx.notifications, [
+    {
+      message: "RLM program execution failed: Executor timed out after 10000ms. Retrying (1/1).",
+      level: "warning",
+    },
+    {
+      message: `RLM final result ready at ${finalFilePath}.`,
+      level: "info",
+    },
+  ]);
+});
+
 test("/rlm completes an end-to-end recursive workflow over the generated workspace", async () => {
-  const harness = createHarness();
+  const { executor } = createQueuedExecutor([
+    {
+      kind: "subcall",
+      subcall: {
+        prompt: "Summarize the task and workspace layout in one sentence.",
+        storeAs: "intro_summary",
+      },
+      variables: { phase: "planning" },
+      logs: ["launch intro_summary"],
+      summary: "prepared child call",
+    },
+    {
+      kind: "completed",
+      variables: {
+        Final:
+          "The workspace starts from a prompt, uses symbolic variables, and returns compact child results.",
+      },
+      logs: ["child finished"],
+      summary: undefined,
+    },
+    {
+      kind: "completed",
+      variables: {
+        Final:
+          "Final answer: treat the prompt as external state, execute code over it, recurse symbolically, and return via Final.",
+      },
+      logs: ["root finished"],
+      summary: "done",
+    },
+  ]);
+  const harness = createHarness((api) =>
+    registerRlmExtension(api, new RlmWorkflow(api, { executor })),
+  );
   const ctx = createContext() as ExtensionContext & {
     notifications?: Array<{ message: string; level?: string }>;
   };
@@ -672,15 +757,15 @@ test("/rlm completes an end-to-end recursive workflow over the generated workspa
   const initialPrompt = String(harness.sentUserMessages[0]?.content ?? "");
   const finalFilePath = extractMetadataPath(initialPrompt, "finalFilePath");
   assert.ok(finalFilePath);
-  assert.match(initialPrompt, /Workspace metadata:/);
+  assert.match(initialPrompt, /Prompt metadata:/);
 
-  harness.listeners.agent_end?.(
+  await harness.listeners.agent_end?.(
     {
       messages: [
         buildTextMessage("user", initialPrompt),
         buildTextMessage(
           "assistant",
-          '{"action":"subcall","prompt":"Summarize the task and workspace layout in one sentence.","storeAs":"intro_summary"}',
+          'subcall("Summarize the task and workspace layout in one sentence.", "intro_summary");',
         ),
       ],
     },
@@ -689,15 +774,15 @@ test("/rlm completes an end-to-end recursive workflow over the generated workspa
 
   assert.equal(harness.sentMessages.length, 1);
   const childPrompt = String(harness.sentMessages[0]?.message.content ?? "");
-  assert.match(childPrompt, /Store target: intro_summary/);
+  assert.match(childPrompt, /intro_summary/);
 
-  harness.listeners.agent_end?.(
+  await harness.listeners.agent_end?.(
     {
       messages: [
         buildTextMessage("custom", childPrompt),
         buildTextMessage(
           "assistant",
-          '{"action":"final_result","result":"The workspace starts from a question, tracks scratchpad notes, and stores reusable summaries for later reasoning."}',
+          'setFinal("The workspace starts from a prompt, uses symbolic variables, and returns compact child results.");',
         ),
       ],
     },
@@ -706,16 +791,17 @@ test("/rlm completes an end-to-end recursive workflow over the generated workspa
 
   assert.equal(harness.sentMessages.length, 2);
   const parentResume = String(harness.sentMessages[1]?.message.content ?? "");
-  assert.match(parentResume, /"type": "subcall_result"/);
+  assert.match(parentResume, /Child sub-call completed/);
   assert.match(parentResume, /intro_summary/);
+  assert.doesNotMatch(parentResume, /The workspace starts from a prompt/);
 
-  harness.listeners.agent_end?.(
+  await harness.listeners.agent_end?.(
     {
       messages: [
         buildTextMessage("custom", parentResume),
         buildTextMessage(
           "assistant",
-          '{"action":"final_result","result":"Final answer: start from a question, create workspace files, and let recursive summaries accumulate in scratchpad and final outputs."}',
+          'setFinal("Final answer: treat the prompt as external state, execute code over it, recurse symbolically, and return via Final.");',
         ),
       ],
     },
@@ -728,5 +814,5 @@ test("/rlm completes an end-to-end recursive workflow over the generated workspa
       level: "info",
     },
   ]);
-  assert.match(readFileSync(finalFilePath!, "utf8"), /create workspace files/);
+  assert.match(readFileSync(finalFilePath!, "utf8"), /recurse symbolically/);
 });

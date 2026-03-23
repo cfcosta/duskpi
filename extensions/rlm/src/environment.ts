@@ -2,6 +2,7 @@ import { writeFileSync } from "node:fs";
 import type { RlmRequest } from "./request";
 import {
   buildFinalFileContent,
+  buildPromptContent,
   buildScratchpadFileContent,
   buildSourcesFileContent,
   buildTaskFileContent,
@@ -9,63 +10,23 @@ import {
 } from "./request";
 
 export const DEFAULT_METADATA_PREVIEW_CHARS = 240;
-export const DEFAULT_SEARCH_CONTEXT_CHARS = 80;
-export const DEFAULT_SEARCH_MAX_RESULTS = 5;
 
-export interface RlmDocumentMetadata {
-  path: string;
-  absolutePath: string;
-  extension: string;
-  sizeBytes: number;
-  charLength: number;
-  lineCount: number;
-  question?: string;
-  workspaceDir: string;
-  taskFilePath: string;
-  scratchpadFilePath: string;
-  finalFilePath: string;
-  sourcesFilePath: string;
+export interface RlmPromptMetadata {
+  label?: string;
+  promptCharLength: number;
+  promptLineCount: number;
+  promptPreview: string;
+  promptPreviewTruncated: boolean;
   importedSourceCount: number;
   importedSourcePaths: string[];
-  preview: string;
-  previewTruncated: boolean;
   variableCount: number;
   variableNames: string[];
   hasFinalResult: boolean;
-}
-
-export interface RlmDocumentSegment {
-  requestedOffset: number;
-  requestedLength: number;
-  offset: number;
-  endOffset: number;
-  text: string;
-  truncated: boolean;
-  startClamped: boolean;
-  endClamped: boolean;
-  hasMoreBefore: boolean;
-  hasMoreAfter: boolean;
-}
-
-export interface RlmDocumentSearchHit {
-  index: number;
-  match: string;
-  context: string;
-  contextStart: number;
-  contextEnd: number;
-}
-
-export interface RlmDocumentSearchResult {
-  query: string;
-  totalMatches: number;
-  truncated: boolean;
-  hits: RlmDocumentSearchHit[];
-}
-
-export interface RlmDocumentSearchOptions {
-  maxResults?: number;
-  contextChars?: number;
-  caseSensitive?: boolean;
+  workspaceDir?: string;
+  taskFilePath?: string;
+  scratchpadFilePath?: string;
+  finalFilePath?: string;
+  sourcesFilePath?: string;
 }
 
 interface ScratchpadEntry {
@@ -73,129 +34,113 @@ interface ScratchpadEntry {
   content: string;
 }
 
-export class RlmDocumentEnvironment {
+export class RlmPromptEnvironment {
   private readonly variables = new Map<string, string>();
   private finalResult?: string;
   private readonly scratchpadEntries: ScratchpadEntry[] = [];
 
-  constructor(private readonly request: RlmRequest) {
+  constructor(
+    private readonly input: {
+      prompt: string;
+      label?: string;
+      request?: RlmRequest;
+    },
+  ) {
     this.syncWorkspaceFiles();
   }
 
-  getMetadata(options: { previewChars?: number } = {}): RlmDocumentMetadata {
+  static fromRequest(request: RlmRequest): RlmPromptEnvironment {
+    return new RlmPromptEnvironment({
+      prompt: request.promptContent,
+      label: request.question,
+      request,
+    });
+  }
+
+  static fromPrompt(prompt: string, label?: string): RlmPromptEnvironment {
+    return new RlmPromptEnvironment({ prompt, label });
+  }
+
+  getPrompt(): string {
+    return this.input.prompt;
+  }
+
+  getLabel(): string | undefined {
+    return this.input.label;
+  }
+
+  getPromptMetadata(options: { previewChars?: number } = {}): RlmPromptMetadata {
     const previewChars = normalizeNonNegativeInteger(
       options.previewChars,
       DEFAULT_METADATA_PREVIEW_CHARS,
     );
-    const content = this.getCurrentContent();
-    const preview = content.slice(0, previewChars);
-    const previewTruncated = preview.length < content.length;
+    const promptPreview = this.input.prompt.slice(0, previewChars);
+    const promptPreviewTruncated = promptPreview.length < this.input.prompt.length;
 
     return {
-      path: this.request.path,
-      absolutePath: this.request.absolutePath,
-      extension: this.request.extension,
-      sizeBytes: Buffer.byteLength(content, "utf8"),
-      charLength: content.length,
-      lineCount: countLines(content),
-      question: this.request.question,
-      workspaceDir: this.request.workspaceDir,
-      taskFilePath: this.request.taskFilePath,
-      scratchpadFilePath: this.request.scratchpadFilePath,
-      finalFilePath: this.request.finalFilePath,
-      sourcesFilePath: this.request.sourcesFilePath,
-      importedSourceCount: this.request.importedSources.length,
-      importedSourcePaths: this.request.importedSources.map((source) => source.path),
-      preview,
-      previewTruncated,
+      label: this.input.label,
+      promptCharLength: this.input.prompt.length,
+      promptLineCount: countLines(this.input.prompt),
+      promptPreview,
+      promptPreviewTruncated,
+      importedSourceCount: this.input.request?.importedSources.length ?? 0,
+      importedSourcePaths: this.input.request?.importedSources.map((source) => source.path) ?? [],
       variableCount: this.variables.size,
-      variableNames: [...this.variables.keys()].sort(),
+      variableNames: this.listVariableNames(),
       hasFinalResult: typeof this.finalResult === "string",
+      workspaceDir: this.input.request?.workspaceDir,
+      taskFilePath: this.input.request?.taskFilePath,
+      scratchpadFilePath: this.input.request?.scratchpadFilePath,
+      finalFilePath: this.input.request?.finalFilePath,
+      sourcesFilePath: this.input.request?.sourcesFilePath,
     };
   }
 
-  readSegment(offset: number, length: number): RlmDocumentSegment {
-    const content = this.getCurrentContent();
-    const requestedOffset = normalizeNonNegativeInteger(offset, 0);
-    const requestedLength = normalizeNonNegativeInteger(length, 0);
-    const maxOffset = content.length;
-    const start = Math.min(requestedOffset, maxOffset);
-    const requestedEnd = requestedOffset + requestedLength;
-    const endOffset = Math.min(requestedEnd, maxOffset);
-    const text = content.slice(start, endOffset);
-
+  getExecutionBindings(): Record<string, unknown> {
     return {
-      requestedOffset,
-      requestedLength,
-      offset: start,
-      endOffset,
-      text,
-      truncated: requestedEnd > maxOffset,
-      startClamped: start !== requestedOffset,
-      endClamped: endOffset !== requestedEnd,
-      hasMoreBefore: start > 0,
-      hasMoreAfter: endOffset < maxOffset,
+      Prompt: this.input.prompt,
+      prompt: this.input.prompt,
+      label: this.input.label,
+      variables: Object.fromEntries(this.variables),
+      metadata: this.getPromptMetadata({ previewChars: 0 }),
+      workspace: this.input.request
+        ? {
+            workspaceDir: this.input.request.workspaceDir,
+            taskFilePath: this.input.request.taskFilePath,
+            scratchpadFilePath: this.input.request.scratchpadFilePath,
+            finalFilePath: this.input.request.finalFilePath,
+            sourcesFilePath: this.input.request.sourcesFilePath,
+          }
+        : undefined,
     };
   }
 
-  search(query: string, options: RlmDocumentSearchOptions = {}): RlmDocumentSearchResult {
-    const normalizedQuery = query.trim();
-    if (normalizedQuery.length === 0) {
-      return {
-        query: normalizedQuery,
-        totalMatches: 0,
-        truncated: false,
-        hits: [],
-      };
+  applyVariableUpdates(values: Record<string, string>): { updatedVariableNames: string[] } {
+    const updatedVariableNames: string[] = [];
+    for (const [name, value] of Object.entries(values)) {
+      const normalizedName = normalizeVariableName(name);
+      this.variables.set(normalizedName, value);
+      if (normalizedName === "Final") {
+        this.finalResult = value;
+      }
+      updatedVariableNames.push(normalizedName);
     }
 
-    const caseSensitive = options.caseSensitive ?? false;
-    const maxResults = normalizePositiveInteger(options.maxResults, DEFAULT_SEARCH_MAX_RESULTS);
-    const contextChars = normalizeNonNegativeInteger(
-      options.contextChars,
-      DEFAULT_SEARCH_CONTEXT_CHARS,
-    );
-    const content = this.getCurrentContent();
-    const haystack = caseSensitive ? content : content.toLowerCase();
-    const needle = caseSensitive ? normalizedQuery : normalizedQuery.toLowerCase();
-
-    const hits: RlmDocumentSearchHit[] = [];
-    let totalMatches = 0;
-    let fromIndex = 0;
-
-    while (fromIndex <= haystack.length) {
-      const index = haystack.indexOf(needle, fromIndex);
-      if (index === -1) {
-        break;
-      }
-
-      totalMatches += 1;
-      if (hits.length < maxResults) {
-        const contextStart = Math.max(0, index - contextChars);
-        const contextEnd = Math.min(content.length, index + normalizedQuery.length + contextChars);
-        hits.push({
-          index,
-          match: content.slice(index, index + normalizedQuery.length),
-          context: content.slice(contextStart, contextEnd),
-          contextStart,
-          contextEnd,
-        });
-      }
-
-      fromIndex = index + Math.max(needle.length, 1);
+    if (updatedVariableNames.length > 0) {
+      this.syncWorkspaceFiles();
     }
 
     return {
-      query: normalizedQuery,
-      totalMatches,
-      truncated: totalMatches > hits.length,
-      hits,
+      updatedVariableNames: updatedVariableNames.sort(),
     };
   }
 
   setVariable(name: string, value: string): void {
     const normalizedName = normalizeVariableName(name);
     this.variables.set(normalizedName, value);
+    if (normalizedName === "Final") {
+      this.finalResult = value;
+    }
     this.syncWorkspaceFiles();
   }
 
@@ -223,49 +168,62 @@ export class RlmDocumentEnvironment {
 
   setFinalResult(value: string): void {
     this.finalResult = value;
+    this.variables.set("Final", value);
     this.syncWorkspaceFiles();
   }
 
   getFinalResult(): string | undefined {
-    return this.finalResult;
-  }
-
-  private getCurrentContent(): string {
-    return buildWorkspaceRootContent({
-      question: this.request.question,
-      taskFilePath: this.request.taskFilePath,
-      scratchpadFilePath: this.request.scratchpadFilePath,
-      finalFilePath: this.request.finalFilePath,
-      sourcesFilePath: this.request.sourcesFilePath,
-      importedSources: this.request.importedSources,
-      scratchpadEntries: this.scratchpadEntries,
-      finalResult: this.finalResult,
-      variableNames: this.listVariableNames(),
-    });
+    return this.finalResult ?? this.variables.get("Final");
   }
 
   private syncWorkspaceFiles(): void {
-    writeFileSync(this.request.taskFilePath, buildTaskFileContent(this.request.question), "utf8");
+    if (!this.input.request) {
+      return;
+    }
+
     writeFileSync(
-      this.request.scratchpadFilePath,
+      this.input.request.taskFilePath,
+      buildTaskFileContent(this.input.request.question),
+      "utf8",
+    );
+    writeFileSync(
+      this.input.request.scratchpadFilePath,
       buildScratchpadFileContent(
-        this.request.question,
+        this.input.request.question,
         this.scratchpadEntries,
         this.listVariableNames(),
       ),
       "utf8",
     );
     writeFileSync(
-      this.request.finalFilePath,
-      buildFinalFileContent(this.request.question, this.finalResult),
+      this.input.request.finalFilePath,
+      buildFinalFileContent(this.input.request.question, this.getFinalResult()),
       "utf8",
     );
     writeFileSync(
-      this.request.sourcesFilePath,
-      buildSourcesFileContent(this.request.importedSources),
+      this.input.request.sourcesFilePath,
+      buildSourcesFileContent(this.input.request.importedSources),
       "utf8",
     );
-    writeFileSync(this.request.absolutePath, this.getCurrentContent(), "utf8");
+    writeFileSync(
+      this.input.request.absolutePath,
+      buildWorkspaceRootContent({
+        question: this.input.request.question,
+        promptContent: buildPromptContent(
+          this.input.request.question,
+          this.input.request.importedSources,
+        ),
+        taskFilePath: this.input.request.taskFilePath,
+        scratchpadFilePath: this.input.request.scratchpadFilePath,
+        finalFilePath: this.input.request.finalFilePath,
+        sourcesFilePath: this.input.request.sourcesFilePath,
+        importedSources: this.input.request.importedSources,
+        scratchpadEntries: this.scratchpadEntries,
+        finalResult: this.getFinalResult(),
+        variableNames: this.listVariableNames(),
+      }),
+      "utf8",
+    );
   }
 }
 
@@ -280,7 +238,7 @@ function countLines(content: string): number {
 function normalizeVariableName(name: string): string {
   const normalized = name.trim();
   if (normalized.length === 0) {
-    throw new Error("RLM document environment variable names must be non-empty.");
+    throw new Error("RLM environment variable names must be non-empty.");
   }
   return normalized;
 }
@@ -291,9 +249,4 @@ function normalizeNonNegativeInteger(value: unknown, fallback: number): number {
   }
 
   return Math.max(0, Math.trunc(value as number));
-}
-
-function normalizePositiveInteger(value: unknown, fallback: number): number {
-  const normalized = normalizeNonNegativeInteger(value, fallback);
-  return normalized > 0 ? normalized : fallback;
 }

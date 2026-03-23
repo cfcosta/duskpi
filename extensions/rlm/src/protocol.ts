@@ -348,7 +348,9 @@ function failure(
 
 function getUnexpectedKeys(payload: Record<string, unknown>, allowedKeys: string[]): string[] {
   const allowed = new Set(allowedKeys);
-  return Object.keys(payload).filter((key) => !allowed.has(key)).sort();
+  return Object.keys(payload)
+    .filter((key) => !allowed.has(key))
+    .sort();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

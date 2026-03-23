@@ -1,4 +1,4 @@
-import test from "node:test";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
@@ -182,7 +182,7 @@ test("WasmtimeExecutor javy mode compiles and runs JavaScript through the runtim
   assert.deepEqual(result, {
     kind: "completed",
     finalResult: "HELLO",
-    variables: { cached: '{"note":"hello"}' },
+    variables: { Final: "HELLO", cached: '{"note":"hello"}' },
     logs: ["note hello"],
     summary: { seen: 1 },
   });

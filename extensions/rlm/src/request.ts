@@ -31,6 +31,7 @@ export interface RlmRequest {
   path: string;
   absolutePath: string;
   question: string;
+  promptContent: string;
   content: string;
   sizeBytes: number;
   extension: string;
@@ -100,6 +101,7 @@ export async function resolveParsedRlmRequest(
     statImpl,
   });
 
+  const promptContent = buildPromptContent(parsed.question, importedSources);
   const taskFilePath = path.join(workspaceDir, "task.md");
   const scratchpadFilePath = path.join(workspaceDir, "scratchpad.md");
   const finalFilePath = path.join(workspaceDir, "final.md");
@@ -107,6 +109,7 @@ export async function resolveParsedRlmRequest(
   const absolutePath = path.join(workspaceDir, "workspace.md");
   const content = buildWorkspaceRootContent({
     question: parsed.question,
+    promptContent,
     taskFilePath,
     scratchpadFilePath,
     finalFilePath,
@@ -140,6 +143,7 @@ export async function resolveParsedRlmRequest(
       path: displayPath(cwd, absolutePath),
       absolutePath,
       question: parsed.question,
+      promptContent,
       content,
       sizeBytes: Buffer.byteLength(content, "utf8"),
       extension: ".md",
@@ -153,8 +157,23 @@ export async function resolveParsedRlmRequest(
   };
 }
 
+export function buildPromptContent(question: string, importedSources: RlmImportedSource[]): string {
+  const sections = ["# RLM Input Prompt", "", question.trim()];
+
+  if (importedSources.length === 0) {
+    return sections.join("\n");
+  }
+
+  sections.push("", "## Imported Sources");
+  for (const source of importedSources) {
+    sections.push("", `### ${source.path}`, "", source.content);
+  }
+
+  return sections.join("\n");
+}
+
 export function buildTaskFileContent(question: string): string {
-  return ["# RLM Task", "", "## Question", "", question.trim()].join("\n");
+  return ["# RLM Prompt", "", "## Input Prompt", "", question.trim()].join("\n");
 }
 
 export function buildScratchpadFileContent(
@@ -162,7 +181,7 @@ export function buildScratchpadFileContent(
   scratchpadEntries: Array<{ title: string; content: string }>,
   variableNames: string[],
 ): string {
-  const sections = ["# RLM Scratchpad", "", "## Question", "", question.trim(), ""];
+  const sections = ["# RLM Scratchpad", "", "## Input Prompt", "", question.trim(), ""];
 
   sections.push("## Variables");
   if (variableNames.length === 0) {
@@ -187,7 +206,7 @@ export function buildFinalFileContent(question: string, finalResult?: string): s
   return [
     "# RLM Final Answer",
     "",
-    "## Question",
+    "## Input Prompt",
     "",
     question.trim(),
     "",
@@ -204,7 +223,7 @@ export function buildSourcesFileContent(importedSources: RlmImportedSource[]): s
     return [
       "# RLM Sources",
       "",
-      "No external source files were auto-imported from the question.",
+      "No external source files were auto-imported from the input prompt.",
     ].join("\n");
   }
 
@@ -229,6 +248,7 @@ export function buildSourcesFileContent(importedSources: RlmImportedSource[]): s
 
 export function buildWorkspaceRootContent(input: {
   question: string;
+  promptContent: string;
   taskFilePath: string;
   scratchpadFilePath: string;
   finalFilePath: string;
@@ -247,7 +267,7 @@ export function buildWorkspaceRootContent(input: {
 
   const importedSourceSummary =
     input.importedSources.length === 0
-      ? "No external source files were imported from the question."
+      ? "No external source files were imported from the input prompt."
       : input.importedSources
           .map((source) => `- ${source.path} (${source.extension}, ${source.sizeBytes} bytes)`)
           .join("\n");
@@ -259,14 +279,28 @@ export function buildWorkspaceRootContent(input: {
           .map((source) => [`### ${source.path}`, "", source.content].join("\n"))
           .join("\n\n");
 
+  const promptPreview = input.promptContent.slice(0, 400);
+  const promptPreviewTruncated = promptPreview.length < input.promptContent.length;
+
   return [
     "# RLM Workspace",
     "",
-    "This workspace was created by /rlm from a question-first run.",
+    "This workspace mirrors the persistent environment used by /rlm.",
     "",
-    "## Question",
+    "## Input Prompt",
     "",
     input.question.trim(),
+    "",
+    "## Root Prompt Metadata",
+    "",
+    `- charLength: ${input.promptContent.length}`,
+    `- lineCount: ${countLines(input.promptContent)}`,
+    `- importedSourceCount: ${input.importedSources.length}`,
+    `- previewTruncated: ${promptPreviewTruncated}`,
+    "",
+    "### Prompt Preview",
+    "",
+    promptPreview,
     "",
     "## Workspace Files",
     "",
@@ -318,6 +352,7 @@ async function detectImportedSources(
     const normalizedCandidate = normalizeQuestionPathCandidate(candidate);
     const absolutePath = path.resolve(options.cwd, expandHomeDirectory(normalizedCandidate));
     const extension = path.extname(absolutePath).toLowerCase();
+
     if (!supportedExtensions.has(extension) || seen.has(absolutePath)) {
       continue;
     }
@@ -373,6 +408,14 @@ function expandHomeDirectory(inputPath: string): string {
 function displayPath(cwd: string, absolutePath: string): string {
   const relativePath = path.relative(cwd, absolutePath);
   return relativePath.length > 0 && !relativePath.startsWith("..") ? relativePath : absolutePath;
+}
+
+function countLines(content: string): number {
+  if (content.length === 0) {
+    return 0;
+  }
+
+  return content.split(/\r?\n/).length;
 }
 
 function failure(code: RlmRequestErrorCode, message: string): RlmRequestResult {
