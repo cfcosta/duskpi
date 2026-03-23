@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -264,9 +266,12 @@ test("registerRlmExtension wires /rlm and forwards all workflow handlers", async
 test("/rlm starts a run from a question and sends workspace metadata only", async () => {
   const harness = createHarness();
   const ctx = createContext();
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "rlm-index-source-"));
+  const sourcePath = path.join(tempDir, "paper.md");
+  writeFileSync(sourcePath, "# Paper\n\nSENTINEL_IMPORTED_SOURCE_DO_NOT_LEAK", "utf8");
 
   await harness.commands.rlm?.handler(
-    "summarize the recursive workflow without leaking the full workspace",
+    `summarize ${sourcePath} without leaking the full workspace`,
     ctx,
   );
 
@@ -274,15 +279,16 @@ test("/rlm starts a run from a question and sends workspace metadata only", asyn
   assert.equal(harness.sentMessages.length, 0);
   const prompt = String(harness.sentUserMessages[0]?.content ?? "");
   assert.match(prompt, /Workspace metadata:/);
-  assert.match(
-    prompt,
-    /"question": "summarize the recursive workflow without leaking the full workspace"/,
-  );
+  assert.match(prompt, /"question": "summarize/);
   assert.match(prompt, /"taskFilePath":/);
   assert.match(prompt, /"scratchpadFilePath":/);
   assert.match(prompt, /"finalFilePath":/);
+  assert.match(prompt, /"sourcesFilePath":/);
+  assert.match(prompt, /"importedSourceCount": 1/);
+  assert.match(prompt, /"importedSourcePaths": \[/);
   assert.match(prompt, /workflow-request-id:rlm-1/);
-  assert.doesNotMatch(prompt, /No notes yet\./);
+  assert.match(prompt, /"action":"read_segment","offset":0,"length":400/);
+  assert.doesNotMatch(prompt, /SENTINEL_IMPORTED_SOURCE_DO_NOT_LEAK/);
   assert.deepEqual((ctx as ExtensionContext & { notifications?: unknown[] }).notifications, []);
 });
 

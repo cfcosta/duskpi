@@ -439,10 +439,10 @@ export class RlmWorkflow {
 function buildInitialPrompt(metadata: ReturnType<RlmDocumentEnvironment["getMetadata"]>): string {
   return [
     "You are operating inside a Recursive Language Model-style workspace environment.",
-    "This run started from a question, and the extension created workspace files for task, scratchpad, and final output.",
+    "This run started from a question, and the extension created workspace files for task, scratchpad, final output, and imported sources.",
     "The full workspace snapshot is not in your context window.",
     "Choose exactly one next action and return only a JSON object or a fenced ```json block.",
-    "Available actions: inspect_document, read_segment, search_document, subcall, final_result.",
+    ...buildActionContractLines(),
     "Workspace metadata:",
     JSON.stringify(metadata, null, 2),
   ].join("\n\n");
@@ -452,6 +452,7 @@ function buildObservationPrompt(observation: unknown): string {
   return [
     "Observation from the workspace environment.",
     "Choose exactly one next action and return only a JSON object or a fenced ```json block.",
+    ...buildActionContractLines(),
     JSON.stringify(observation, null, 2),
   ].join("\n\n");
 }
@@ -471,6 +472,7 @@ function buildRlmSystemPrompt(pending: PendingResponse): string {
     return [
       "[RLM CHILD SUBCALL ACTIVE]",
       "Return exactly one JSON action of type final_result.",
+      'Schema: {"action":"final_result","result":"..."}',
       "Do not return prose or any other action type.",
     ].join("\n");
   }
@@ -480,7 +482,21 @@ function buildRlmSystemPrompt(pending: PendingResponse): string {
     "Operate over the extension-managed workspace environment.",
     "Do not respond with prose.",
     "Return exactly one JSON action at a time.",
+    "Do not invent path, startLine, endLine, or any unsupported fields.",
   ].join("\n");
+}
+
+function buildActionContractLines(): string[] {
+  return [
+    "Available actions and exact schemas:",
+    '- {"action":"inspect_document"}',
+    '- {"action":"read_segment","offset":0,"length":400}',
+    '- {"action":"search_document","query":"your query","maxResults":5}',
+    '- {"action":"subcall","prompt":"your subtask","storeAs":"variable_name"}',
+    '- {"action":"final_result","result":"your final answer"}',
+    "Do not include path, startLine, endLine, file names, or any unsupported keys.",
+    "read_segment is character-based and uses offset/length only.",
+  ];
 }
 
 function formatQuestionLabel(question: string): string {

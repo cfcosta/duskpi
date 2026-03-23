@@ -14,6 +14,7 @@ function createRequest(overrides: Partial<RlmRequest> = {}): RlmRequest {
   const taskFilePath = path.join(workspaceDir, "task.md");
   const scratchpadFilePath = path.join(workspaceDir, "scratchpad.md");
   const finalFilePath = path.join(workspaceDir, "final.md");
+  const sourcesFilePath = path.join(workspaceDir, "sources.md");
 
   return {
     raw: "summarize the recursive workflow",
@@ -27,6 +28,8 @@ function createRequest(overrides: Partial<RlmRequest> = {}): RlmRequest {
     taskFilePath,
     scratchpadFilePath,
     finalFilePath,
+    sourcesFilePath,
+    importedSources: [],
     ...overrides,
   };
 }
@@ -44,6 +47,9 @@ test("getMetadata returns workspace metadata and a bounded preview", () => {
   assert.match(metadata.taskFilePath, /task\.md$/);
   assert.match(metadata.scratchpadFilePath, /scratchpad\.md$/);
   assert.match(metadata.finalFilePath, /final\.md$/);
+  assert.match(metadata.sourcesFilePath, /sources\.md$/);
+  assert.equal(metadata.importedSourceCount, 0);
+  assert.deepEqual(metadata.importedSourcePaths, []);
   assert.equal(metadata.preview.length, 48);
   assert.equal(metadata.previewTruncated, true);
   assert.equal(metadata.variableCount, 1);

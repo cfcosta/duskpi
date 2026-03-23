@@ -1,19 +1,29 @@
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { parseRlmArgs, type ParsedRlmArgs } from "./args";
 
+export const DEFAULT_RLM_MAX_BYTES = 8 * 1024 * 1024;
 export const DEFAULT_RLM_MAX_SLICE_CHARS = 4_000;
 export const DEFAULT_RLM_MAX_RESULT_CHARS = 12_000;
 export const DEFAULT_RLM_MAX_ITERATIONS = 12;
 export const DEFAULT_RLM_MAX_RECURSION_DEPTH = 1;
 export const DEFAULT_RLM_MAX_MALFORMED_OUTPUT_RETRIES = 1;
+export const DEFAULT_SUPPORTED_EXTENSIONS = [".md", ".markdown", ".mdx", ".txt", ".rst"];
 
 export type RlmRequestErrorCode = "missing_question" | "workspace_init_failed";
 
 export interface RlmRequestError {
   code: RlmRequestErrorCode;
   message: string;
+}
+
+export interface RlmImportedSource {
+  path: string;
+  absolutePath: string;
+  extension: string;
+  sizeBytes: number;
+  content: string;
 }
 
 export interface RlmRequest {
@@ -28,6 +38,8 @@ export interface RlmRequest {
   taskFilePath: string;
   scratchpadFilePath: string;
   finalFilePath: string;
+  sourcesFilePath: string;
+  importedSources: RlmImportedSource[];
 }
 
 export type RlmRequestResult =
@@ -37,8 +49,11 @@ export type RlmRequestResult =
 export interface ResolveRlmRequestOptions {
   cwd?: string;
   workspaceParentDir?: string;
+  maxImportedBytes?: number;
   mkdtempImpl?: typeof mkdtemp;
   writeFileImpl?: typeof writeFile;
+  readFileImpl?: typeof readFile;
+  statImpl?: typeof stat;
 }
 
 export async function resolveRlmRequest(
@@ -65,8 +80,11 @@ export async function resolveParsedRlmRequest(
 ): Promise<RlmRequestResult> {
   const cwd = options.cwd ?? process.cwd();
   const workspaceParentDir = options.workspaceParentDir ?? os.tmpdir();
+  const maxImportedBytes = options.maxImportedBytes ?? DEFAULT_RLM_MAX_BYTES;
   const mkdtempImpl = options.mkdtempImpl ?? mkdtemp;
   const writeFileImpl = options.writeFileImpl ?? writeFile;
+  const readFileImpl = options.readFileImpl ?? readFile;
+  const statImpl = options.statImpl ?? stat;
 
   let workspaceDir: string;
   try {
@@ -75,15 +93,25 @@ export async function resolveParsedRlmRequest(
     return failure("workspace_init_failed", "RLM could not create a workspace directory.");
   }
 
+  const importedSources = await detectImportedSources(parsed.question, {
+    cwd,
+    maxImportedBytes,
+    readFileImpl,
+    statImpl,
+  });
+
   const taskFilePath = path.join(workspaceDir, "task.md");
   const scratchpadFilePath = path.join(workspaceDir, "scratchpad.md");
   const finalFilePath = path.join(workspaceDir, "final.md");
+  const sourcesFilePath = path.join(workspaceDir, "sources.md");
   const absolutePath = path.join(workspaceDir, "workspace.md");
   const content = buildWorkspaceRootContent({
     question: parsed.question,
     taskFilePath,
     scratchpadFilePath,
     finalFilePath,
+    sourcesFilePath,
+    importedSources,
     scratchpadEntries: [],
     finalResult: undefined,
     variableNames: [],
@@ -98,6 +126,7 @@ export async function resolveParsedRlmRequest(
         "utf8",
       ),
       writeFileImpl(finalFilePath, buildFinalFileContent(parsed.question), "utf8"),
+      writeFileImpl(sourcesFilePath, buildSourcesFileContent(importedSources), "utf8"),
       writeFileImpl(absolutePath, content, "utf8"),
     ]);
   } catch {
@@ -118,6 +147,8 @@ export async function resolveParsedRlmRequest(
       taskFilePath,
       scratchpadFilePath,
       finalFilePath,
+      sourcesFilePath,
+      importedSources,
     },
   };
 }
@@ -168,11 +199,41 @@ export function buildFinalFileContent(question: string, finalResult?: string): s
   ].join("\n");
 }
 
+export function buildSourcesFileContent(importedSources: RlmImportedSource[]): string {
+  if (importedSources.length === 0) {
+    return [
+      "# RLM Sources",
+      "",
+      "No external source files were auto-imported from the question.",
+    ].join("\n");
+  }
+
+  const sections = ["# RLM Sources"];
+  for (const source of importedSources) {
+    sections.push(
+      "",
+      `## ${source.path}`,
+      "",
+      `- absolutePath: ${source.absolutePath}`,
+      `- extension: ${source.extension}`,
+      `- sizeBytes: ${source.sizeBytes}`,
+      "",
+      "### Content",
+      "",
+      source.content,
+    );
+  }
+
+  return sections.join("\n");
+}
+
 export function buildWorkspaceRootContent(input: {
   question: string;
   taskFilePath: string;
   scratchpadFilePath: string;
   finalFilePath: string;
+  sourcesFilePath: string;
+  importedSources: RlmImportedSource[];
   scratchpadEntries: Array<{ title: string; content: string }>;
   finalResult?: string;
   variableNames: string[];
@@ -183,6 +244,20 @@ export function buildWorkspaceRootContent(input: {
       : input.scratchpadEntries
           .map((entry) => `- ${entry.title}: ${entry.content.trim()}`)
           .join("\n");
+
+  const importedSourceSummary =
+    input.importedSources.length === 0
+      ? "No external source files were imported from the question."
+      : input.importedSources
+          .map((source) => `- ${source.path} (${source.extension}, ${source.sizeBytes} bytes)`)
+          .join("\n");
+
+  const importedSourceContents =
+    input.importedSources.length === 0
+      ? "No imported source contents available."
+      : input.importedSources
+          .map((source) => [`### ${source.path}`, "", source.content].join("\n"))
+          .join("\n\n");
 
   return [
     "# RLM Workspace",
@@ -198,6 +273,11 @@ export function buildWorkspaceRootContent(input: {
     `- task.md: ${input.taskFilePath}`,
     `- scratchpad.md: ${input.scratchpadFilePath}`,
     `- final.md: ${input.finalFilePath}`,
+    `- sources.md: ${input.sourcesFilePath}`,
+    "",
+    "## Imported Sources",
+    "",
+    importedSourceSummary,
     "",
     "## Current Scratchpad State",
     "",
@@ -214,7 +294,80 @@ export function buildWorkspaceRootContent(input: {
     typeof input.finalResult === "string" && input.finalResult.trim().length > 0
       ? input.finalResult.trim()
       : "Pending final answer.",
+    "",
+    "## Imported Source Contents",
+    "",
+    importedSourceContents,
   ].join("\n");
+}
+
+async function detectImportedSources(
+  question: string,
+  options: {
+    cwd: string;
+    maxImportedBytes: number;
+    readFileImpl: typeof readFile;
+    statImpl: typeof stat;
+  },
+): Promise<RlmImportedSource[]> {
+  const supportedExtensions = new Set(DEFAULT_SUPPORTED_EXTENSIONS);
+  const seen = new Set<string>();
+  const importedSources: RlmImportedSource[] = [];
+
+  for (const candidate of extractPathCandidates(question)) {
+    const normalizedCandidate = normalizeQuestionPathCandidate(candidate);
+    const absolutePath = path.resolve(options.cwd, expandHomeDirectory(normalizedCandidate));
+    const extension = path.extname(absolutePath).toLowerCase();
+    if (!supportedExtensions.has(extension) || seen.has(absolutePath)) {
+      continue;
+    }
+
+    try {
+      const fileStat = await options.statImpl(absolutePath);
+      if (!fileStat.isFile() || fileStat.size === 0 || fileStat.size > options.maxImportedBytes) {
+        continue;
+      }
+
+      const content = await options.readFileImpl(absolutePath, "utf8");
+      if (content.trim().length === 0) {
+        continue;
+      }
+
+      importedSources.push({
+        path: normalizedCandidate,
+        absolutePath,
+        extension,
+        sizeBytes: fileStat.size,
+        content,
+      });
+      seen.add(absolutePath);
+    } catch {
+      continue;
+    }
+  }
+
+  return importedSources;
+}
+
+function extractPathCandidates(question: string): string[] {
+  const matches = question.match(/(?:~|\.{1,2}|\/)[^\n"',;:!?]+?\.(?:md|markdown|mdx|txt|rst)/gi);
+  return matches ?? [];
+}
+
+function normalizeQuestionPathCandidate(candidate: string): string {
+  return candidate.trim().replace(/\\ /g, " ");
+}
+
+function expandHomeDirectory(inputPath: string): string {
+  if (inputPath === "~") {
+    return os.homedir();
+  }
+
+  if (inputPath.startsWith("~/") || inputPath.startsWith("~\\")) {
+    return path.join(os.homedir(), inputPath.slice(2));
+  }
+
+  return inputPath;
 }
 
 function displayPath(cwd: string, absolutePath: string): string {

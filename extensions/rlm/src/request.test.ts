@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtempSync, mkdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { parseRlmArgs } from "./args";
 import { resolveRlmRequest } from "./request";
 
@@ -42,6 +42,30 @@ test("resolveRlmRequest reports workspace creation failures", async () => {
   assert.equal(result.error.code, "workspace_init_failed");
 });
 
+test("resolveRlmRequest auto-imports referenced local markdown sources into the workspace", async () => {
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "rlm-request-source-"));
+  const sourcePath = path.join(tempDir, "paper.md");
+  writeFileSync(sourcePath, "# Paper\n\nRecursive Language Models use recursive calls.", "utf8");
+
+  const result = await resolveRlmRequest(`check ${sourcePath} and summarize it`, {
+    cwd: tempDir,
+    workspaceParentDir: tempDir,
+  });
+  assert.equal(result.ok, true);
+  if (!result.ok) {
+    throw new Error("expected valid request to succeed");
+  }
+
+  assert.equal(result.value.importedSources.length, 1);
+  assert.equal(result.value.importedSources[0]?.absolutePath, sourcePath);
+  assert.match(result.value.content, /Imported Sources/);
+  assert.match(result.value.content, /Recursive Language Models use recursive calls/);
+  assert.match(
+    readFileSync(result.value.sourcesFilePath, "utf8"),
+    /Recursive Language Models use recursive calls/,
+  );
+});
+
 test("resolveRlmRequest creates a normalized workspace-backed request", async () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "rlm-request-valid-"));
   const workspacesDir = path.join(tempDir, "workspaces");
@@ -62,6 +86,8 @@ test("resolveRlmRequest creates a normalized workspace-backed request", async ()
   assert.match(result.value.taskFilePath, /task\.md$/);
   assert.match(result.value.scratchpadFilePath, /scratchpad\.md$/);
   assert.match(result.value.finalFilePath, /final\.md$/);
+  assert.match(result.value.sourcesFilePath, /sources\.md$/);
+  assert.deepEqual(result.value.importedSources, []);
   assert.match(result.value.content, /question-first run/);
   assert.match(result.value.content, /summarize the recursive workflow/);
 

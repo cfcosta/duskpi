@@ -3,6 +3,8 @@ import type { RlmRequest } from "./request";
 import {
   buildFinalFileContent,
   buildScratchpadFileContent,
+  buildSourcesFileContent,
+  buildTaskFileContent,
   buildWorkspaceRootContent,
 } from "./request";
 
@@ -22,6 +24,9 @@ export interface RlmDocumentMetadata {
   taskFilePath: string;
   scratchpadFilePath: string;
   finalFilePath: string;
+  sourcesFilePath: string;
+  importedSourceCount: number;
+  importedSourcePaths: string[];
   preview: string;
   previewTruncated: boolean;
   variableCount: number;
@@ -98,6 +103,9 @@ export class RlmDocumentEnvironment {
       taskFilePath: this.request.taskFilePath,
       scratchpadFilePath: this.request.scratchpadFilePath,
       finalFilePath: this.request.finalFilePath,
+      sourcesFilePath: this.request.sourcesFilePath,
+      importedSourceCount: this.request.importedSources.length,
+      importedSourcePaths: this.request.importedSources.map((source) => source.path),
       preview,
       previewTruncated,
       variableCount: this.variables.size,
@@ -228,6 +236,8 @@ export class RlmDocumentEnvironment {
       taskFilePath: this.request.taskFilePath,
       scratchpadFilePath: this.request.scratchpadFilePath,
       finalFilePath: this.request.finalFilePath,
+      sourcesFilePath: this.request.sourcesFilePath,
+      importedSources: this.request.importedSources,
       scratchpadEntries: this.scratchpadEntries,
       finalResult: this.finalResult,
       variableNames: this.listVariableNames(),
@@ -235,11 +245,7 @@ export class RlmDocumentEnvironment {
   }
 
   private syncWorkspaceFiles(): void {
-    writeFileSync(
-      this.request.taskFilePath,
-      `# RLM Task\n\n## Question\n\n${this.request.question.trim()}`,
-      "utf8",
-    );
+    writeFileSync(this.request.taskFilePath, buildTaskFileContent(this.request.question), "utf8");
     writeFileSync(
       this.request.scratchpadFilePath,
       buildScratchpadFileContent(
@@ -252,6 +258,11 @@ export class RlmDocumentEnvironment {
     writeFileSync(
       this.request.finalFilePath,
       buildFinalFileContent(this.request.question, this.finalResult),
+      "utf8",
+    );
+    writeFileSync(
+      this.request.sourcesFilePath,
+      buildSourcesFileContent(this.request.importedSources),
       "utf8",
     );
     writeFileSync(this.request.absolutePath, this.getCurrentContent(), "utf8");
