@@ -140,24 +140,7 @@
       "inputs": {
         "llm-agents": "llm-agents",
         "nixpkgs": "nixpkgs",
-        "skill-design-taste-frontend": "skill-design-taste-frontend",
         "skill-visual-explainer": "skill-visual-explainer"
-      }
-    },
-    "skill-design-taste-frontend": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1774105153,
-        "narHash": "sha256-tn5dRg+ZCjtUY4PgI0lo2vZnER7F9soiHHX8crAZkPM=",
-        "owner": "Leonxlnx",
-        "repo": "taste-skill",
-        "rev": "3158c0214d92e128d4d92db59a1444b1f185f27e",
-        "type": "github"
-      },
-      "original": {
-        "owner": "Leonxlnx",
-        "repo": "taste-skill",
-        "type": "github"
       }
     },
     "skill-visual-explainer": {

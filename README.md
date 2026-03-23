@@ -37,7 +37,6 @@ The default package bundles upstream Pi together with repo-owned resources:
 - **Skills**
   - `autoresearch-create`
   - `chrome-cdp`
-  - `design-taste-frontend`
   - `humanizer`
   - `rust-proptest`
   - `visual-explainer`
@@ -218,7 +217,6 @@ The bundled skills cover common high-value tasks:
 
 - **autoresearch-create** for setting up and launching autonomous optimization loops
 - **chrome-cdp** for inspecting and interacting with your live Chrome, Chromium, or Brave session
-- **design-taste-frontend** for stronger UI/UX and frontend design decisions
 - **humanizer** for making generated text sound less AI-written
 - **rust-proptest** for Rust property testing
 - **visual-explainer** for turning complex technical material into visual HTML explainers
