@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import os from "node:os";
+import path from "node:path";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import type {
   ExtensionAPI,
   ExtensionContext,
@@ -218,6 +221,10 @@ test("default rlm extension registers the command and minimal workflow stub", as
 
   rlmExtension(api);
 
+  const tempDir = mkdtempSync(path.join(os.tmpdir(), "rlm-index-test-"));
+  const notePath = path.join(tempDir, "example.md");
+  writeFileSync(notePath, "# Example\n\nhello world\n", "utf8");
+
   const ctx = createContext() as ExtensionContext & {
     notifications?: Array<{ message: string; level?: string }>;
   };
@@ -226,12 +233,11 @@ test("default rlm extension registers the command and minimal workflow stub", as
   assert.ok(listeners.agent_end);
   assert.ok(listeners.before_agent_start);
 
-  await commands.rlm?.handler("~/Notes/example.md summarize", ctx);
+  await commands.rlm?.handler(`${notePath} summarize this note`, ctx);
 
   assert.deepEqual(ctx.notifications, [
     {
-      message:
-        "RLM scaffold is registered; recursive execution is not implemented yet for: ~/Notes/example.md summarize",
+      message: `RLM scaffold is registered for ${notePath}. Question: summarize this note`,
       level: "info",
     },
   ]);
