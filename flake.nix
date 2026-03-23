@@ -93,7 +93,7 @@
               mkdir -p $out/skills/userinterface-wiki
               cp -rf ${inputs.skill-userinterface-wiki}/skills/* $out/skills/userinterface-wiki/
 
-              cp -rf ${inputs.skill-duckdb-skills}/skills/* $out/skills/
+              cp -rf ${inputs.skill-duckdb-skills}/skills/duckdb-docs $out/skills/duckdb-docs
 
               cp -rf ${./skills}/chrome-cdp $out/skills/chrome-cdp
               cp -rf ${./skills}/autoresearch-create $out/skills/autoresearch-create
