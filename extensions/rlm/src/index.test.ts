@@ -381,6 +381,91 @@ test("/rlm executes read_segment and search_document actions", async () => {
   assert.match(searchFollowUp, /recursion in this document/i);
 });
 
+test("/rlm schedules a hidden child turn for subcall actions and resumes the parent", async () => {
+  const harness = createHarness();
+  const notePath = createNoteFile(
+    "Recursive Language Models keep the prompt outside the root context so child calls can summarize slices.",
+  );
+  const ctx = createContext() as ExtensionContext & {
+    notifications?: Array<{ message: string; level?: string }>;
+  };
+
+  await harness.commands.rlm?.handler(`${notePath} inspect`, ctx);
+  const initialPrompt = String(harness.sentUserMessages[0]?.content ?? "");
+
+  harness.listeners.agent_end?.(
+    {
+      messages: [
+        buildTextMessage("user", initialPrompt),
+        buildTextMessage(
+          "assistant",
+          '{"action":"subcall","prompt":"Summarize the first chunk in one sentence.","storeAs":"chunk_1"}',
+        ),
+      ],
+    },
+    ctx,
+  );
+
+  assert.equal(harness.sentMessages.length, 1);
+  const childPrompt = String(harness.sentMessages[0]?.message.content ?? "");
+  assert.match(childPrompt, /Recursive child sub-call/);
+  assert.match(childPrompt, /Store target: chunk_1/);
+  assert.match(childPrompt, /workflow-request-id:rlm-2/);
+
+  harness.listeners.agent_end?.(
+    {
+      messages: [
+        buildTextMessage("custom", childPrompt.replace("workflow-request-id:rlm-2", "workflow-request-id:rlm-999")),
+        buildTextMessage(
+          "assistant",
+          '{"action":"final_result","result":"This child summary should be ignored."}',
+        ),
+      ],
+    },
+    ctx,
+  );
+
+  assert.equal(harness.sentMessages.length, 1);
+  assert.deepEqual(ctx.notifications, []);
+
+  harness.listeners.agent_end?.(
+    {
+      messages: [
+        buildTextMessage("custom", childPrompt),
+        buildTextMessage(
+          "assistant",
+          '{"action":"final_result","result":"The first chunk says the prompt stays outside the root context."}',
+        ),
+      ],
+    },
+    ctx,
+  );
+
+  assert.equal(harness.sentMessages.length, 2);
+  const parentResume = String(harness.sentMessages[1]?.message.content ?? "");
+  assert.match(parentResume, /"type": "subcall_result"/);
+  assert.match(parentResume, /"storeAs": "chunk_1"/);
+  assert.match(parentResume, /prompt stays outside the root context/);
+  assert.match(parentResume, /workflow-request-id:rlm-3/);
+
+  harness.listeners.agent_end?.(
+    {
+      messages: [
+        buildTextMessage("custom", parentResume),
+        buildTextMessage("assistant", '{"action":"inspect_document"}'),
+      ],
+    },
+    ctx,
+  );
+
+  assert.equal(harness.sentMessages.length, 3);
+  const inspectAfterResume = String(harness.sentMessages[2]?.message.content ?? "");
+  assert.match(inspectAfterResume, /"type": "inspect_document"/);
+  assert.match(inspectAfterResume, /"variableCount": 1/);
+  assert.match(inspectAfterResume, /"variableNames": \[/);
+  assert.match(inspectAfterResume, /"chunk_1"/);
+});
+
 test("/rlm finishes when the assistant returns final_result", async () => {
   const harness = createHarness();
   const notePath = createNoteFile("alpha beta gamma delta epsilon");

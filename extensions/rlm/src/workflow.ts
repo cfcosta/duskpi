@@ -22,11 +22,26 @@ export const RLM_COMMAND_DESCRIPTION =
 const RLM_INTERNAL_MESSAGE_TYPE = "rlm-internal";
 const INITIAL_PREVIEW_CHARS = 160;
 
+type PendingResponse =
+  | { kind: "root" }
+  | {
+      kind: "child";
+      storeAs: string;
+      prompt: string;
+    };
+
 interface ActiveRunState {
   request: RlmRequest;
   environment: RlmDocumentEnvironment;
   pendingRequestId: string;
   awaitingResponse: boolean;
+  pending: PendingResponse;
+}
+
+interface RlmSubcallAction {
+  kind: "subcall";
+  prompt: string;
+  storeAs: string;
 }
 
 export class RlmWorkflow {
@@ -56,6 +71,7 @@ export class RlmWorkflow {
       environment,
       pendingRequestId: requestId,
       awaitingResponse: true,
+      pending: { kind: "root" },
     };
 
     this.api.sendUserMessage(`${prompt}\n\n${requestIdMarker(requestId)}`);
@@ -81,6 +97,17 @@ export class RlmWorkflow {
       return;
     }
 
+    if (this.state.pending.kind === "child") {
+      this.handleChildAgentEnd(assistantResult.text, ctx);
+      return;
+    }
+
+    const parsedSubcall = parseSubcallAction(assistantResult.text);
+    if (parsedSubcall.ok) {
+      this.scheduleChildSubcall(parsedSubcall.value, ctx);
+      return;
+    }
+
     const action = parseAssistantAction(assistantResult.text);
     if (!action.ok) {
       ctx.ui.notify(action.error.message, "error");
@@ -96,7 +123,7 @@ export class RlmWorkflow {
     }
 
     const observation = this.executeAction(action.value);
-    this.sendObservationFollowUp(observation, ctx);
+    this.sendObservationFollowUp(observation, ctx, { kind: "root" });
   }
 
   handleBeforeAgentStart(
@@ -108,7 +135,7 @@ export class RlmWorkflow {
     }
 
     return {
-      systemPrompt: `${event.systemPrompt}\n\n${buildRlmSystemPrompt()}`,
+      systemPrompt: `${event.systemPrompt}\n\n${buildRlmSystemPrompt(this.state.pending)}`,
     };
   }
 
@@ -123,6 +150,48 @@ export class RlmWorkflow {
   handleSessionCompact(_event: SessionCompactEvent, _ctx: ExtensionContext): void {}
 
   handleSessionShutdown(_event: SessionShutdownEvent, _ctx: ExtensionContext): void {}
+
+  private handleChildAgentEnd(text: string, ctx: ExtensionContext): void {
+    if (!this.state || this.state.pending.kind !== "child") {
+      return;
+    }
+
+    const action = parseAssistantAction(text);
+    if (!action.ok || action.value.kind !== "final_result") {
+      ctx.ui.notify(
+        "RLM stopped: child sub-call must resolve to a final_result action.",
+        "error",
+      );
+      this.state = undefined;
+      return;
+    }
+
+    const childFrame = this.state.pending;
+    this.state.environment.setVariable(childFrame.storeAs, action.value.result);
+
+    const observation = {
+      type: "subcall_result",
+      storeAs: childFrame.storeAs,
+      prompt: childFrame.prompt,
+      result: action.value.result,
+      variableNames: this.state.environment.listVariableNames(),
+    };
+
+    this.sendObservationFollowUp(observation, ctx, { kind: "root" });
+  }
+
+  private scheduleChildSubcall(action: RlmSubcallAction, ctx: ExtensionContext): void {
+    if (!this.state) {
+      return;
+    }
+
+    const childPrompt = buildChildPrompt(action.prompt, action.storeAs);
+    this.sendHiddenPrompt(childPrompt, ctx, {
+      kind: "child",
+      storeAs: action.storeAs,
+      prompt: action.prompt,
+    });
+  }
 
   private executeAction(action: RlmAssistantAction): unknown {
     if (!this.state) {
@@ -152,13 +221,17 @@ export class RlmWorkflow {
     }
   }
 
-  private sendObservationFollowUp(observation: unknown, ctx: ExtensionContext): void {
+  private sendObservationFollowUp(observation: unknown, ctx: ExtensionContext, nextPending: PendingResponse): void {
+    const prompt = buildObservationPrompt(observation);
+    this.sendHiddenPrompt(prompt, ctx, nextPending);
+  }
+
+  private sendHiddenPrompt(prompt: string, ctx: ExtensionContext, pending: PendingResponse): void {
     if (!this.state) {
       return;
     }
 
     const requestId = this.nextRequestId();
-    const prompt = buildObservationPrompt(observation);
 
     try {
       this.api.sendMessage(
@@ -180,6 +253,7 @@ export class RlmWorkflow {
 
     this.state.pendingRequestId = requestId;
     this.state.awaitingResponse = true;
+    this.state.pending = pending;
   }
 
   private nextRequestId(): string {
@@ -193,7 +267,7 @@ function buildInitialPrompt(metadata: ReturnType<RlmDocumentEnvironment["getMeta
     "You are operating inside a Recursive Language Model-style document environment.",
     "The full document is not in your context window.",
     "Choose exactly one next action and return only a JSON object or a fenced ```json block.",
-    "Available actions: inspect_document, read_segment, search_document, final_result.",
+    "Available actions: inspect_document, read_segment, search_document, subcall, final_result.",
     "Document metadata:",
     JSON.stringify(metadata, null, 2),
   ].join("\n\n");
@@ -207,13 +281,91 @@ function buildObservationPrompt(observation: unknown): string {
   ].join("\n\n");
 }
 
-function buildRlmSystemPrompt(): string {
+function buildChildPrompt(prompt: string, storeAs: string): string {
+  return [
+    "Recursive child sub-call.",
+    `Solve the subtask below and return exactly one final_result JSON action. Store target: ${storeAs}.`,
+    "Do not call tools or return prose.",
+    "Subtask:",
+    prompt,
+  ].join("\n\n");
+}
+
+function buildRlmSystemPrompt(pending: PendingResponse): string {
+  if (pending.kind === "child") {
+    return [
+      "[RLM CHILD SUBCALL ACTIVE]",
+      "Return exactly one JSON action of type final_result.",
+      "Do not return prose or any other action type.",
+    ].join("\n");
+  }
+
   return [
     "[RLM MODE ACTIVE]",
     "Operate over the extension-managed document environment.",
     "Do not respond with prose.",
     "Return exactly one JSON action at a time.",
   ].join("\n");
+}
+
+function parseSubcallAction(text: string):
+  | { ok: true; value: RlmSubcallAction }
+  | { ok: false } {
+  const normalized = text.trim();
+  if (normalized.length === 0) {
+    return { ok: false };
+  }
+
+  const payload = extractJsonPayload(normalized);
+  if (!payload) {
+    return { ok: false };
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(payload);
+  } catch {
+    return { ok: false };
+  }
+
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return { ok: false };
+  }
+
+  const candidate = parsed as { action?: unknown; prompt?: unknown; storeAs?: unknown };
+  if (candidate.action !== "subcall") {
+    return { ok: false };
+  }
+
+  if (typeof candidate.prompt !== "string" || candidate.prompt.trim().length === 0) {
+    return { ok: false };
+  }
+
+  if (typeof candidate.storeAs !== "string" || candidate.storeAs.trim().length === 0) {
+    return { ok: false };
+  }
+
+  return {
+    ok: true,
+    value: {
+      kind: "subcall",
+      prompt: candidate.prompt.trim(),
+      storeAs: candidate.storeAs.trim(),
+    },
+  };
+}
+
+function extractJsonPayload(text: string): string | undefined {
+  const fencedMatch = text.match(/^```(?:json)?\s*([\s\S]*?)```$/i);
+  if (fencedMatch) {
+    return fencedMatch[1]?.trim() || undefined;
+  }
+
+  if (text.startsWith("{") && text.endsWith("}")) {
+    return text;
+  }
+
+  return undefined;
 }
 
 function requestIdMarker(requestId: string): string {
