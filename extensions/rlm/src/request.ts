@@ -1,7 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
-import { parseRlmArgs, type ParsedRlmArgs } from "./args";
+import { parseRlmArgs, type ParsedRlmArgs, type RlmPromptProfile } from "./args";
 
 export const DEFAULT_RLM_MAX_BYTES = 8 * 1024 * 1024;
 export const DEFAULT_RLM_MAX_SLICE_CHARS = 4_000;
@@ -11,7 +11,10 @@ export const DEFAULT_RLM_MAX_RECURSION_DEPTH = 1;
 export const DEFAULT_RLM_MAX_MALFORMED_OUTPUT_RETRIES = 1;
 export const DEFAULT_SUPPORTED_EXTENSIONS = [".md", ".markdown", ".mdx", ".txt", ".rst"];
 
-export type RlmRequestErrorCode = "missing_question" | "workspace_init_failed";
+export type RlmRequestErrorCode =
+  | "missing_question"
+  | "invalid_prompt_profile"
+  | "workspace_init_failed";
 
 export interface RlmRequestError {
   code: RlmRequestErrorCode;
@@ -26,11 +29,32 @@ export interface RlmImportedSource {
   content: string;
 }
 
+export interface RlmPromptContextChunk {
+  id: string;
+  kind: "task" | "source";
+  label: string;
+  sourcePath?: string;
+  charLength: number;
+  lineCount: number;
+  content: string;
+}
+
+export interface RlmPromptContext {
+  type: "string" | "list[str]";
+  question: string;
+  prompt: string;
+  chunks: RlmPromptContextChunk[];
+  contextLengths: number[];
+  importedSourceCount: number;
+}
+
 export interface RlmRequest {
   raw: string;
   path: string;
   absolutePath: string;
   question: string;
+  promptProfile: RlmPromptProfile;
+  promptContext: RlmPromptContext;
   promptContent: string;
   content: string;
   sizeBytes: number;
@@ -102,6 +126,7 @@ export async function resolveParsedRlmRequest(
   });
 
   const promptContent = buildPromptContent(parsed.question, importedSources);
+  const promptContext = buildPromptContext(parsed.question, importedSources, promptContent);
   const taskFilePath = path.join(workspaceDir, "task.md");
   const scratchpadFilePath = path.join(workspaceDir, "scratchpad.md");
   const finalFilePath = path.join(workspaceDir, "final.md");
@@ -109,6 +134,8 @@ export async function resolveParsedRlmRequest(
   const absolutePath = path.join(workspaceDir, "workspace.md");
   const content = buildWorkspaceRootContent({
     question: parsed.question,
+    promptProfile: parsed.promptProfile,
+    promptContext,
     promptContent,
     taskFilePath,
     scratchpadFilePath,
@@ -122,7 +149,7 @@ export async function resolveParsedRlmRequest(
 
   try {
     await Promise.all([
-      writeFileImpl(taskFilePath, buildTaskFileContent(parsed.question), "utf8"),
+      writeFileImpl(taskFilePath, buildTaskFileContent(parsed.question, parsed.promptProfile), "utf8"),
       writeFileImpl(
         scratchpadFilePath,
         buildScratchpadFileContent(parsed.question, [], []),
@@ -143,6 +170,8 @@ export async function resolveParsedRlmRequest(
       path: displayPath(cwd, absolutePath),
       absolutePath,
       question: parsed.question,
+      promptProfile: parsed.promptProfile,
+      promptContext,
       promptContent,
       content,
       sizeBytes: Buffer.byteLength(content, "utf8"),
@@ -154,6 +183,42 @@ export async function resolveParsedRlmRequest(
       sourcesFilePath,
       importedSources,
     },
+  };
+}
+
+export function buildPromptContext(
+  question: string,
+  importedSources: RlmImportedSource[],
+  promptContent = buildPromptContent(question, importedSources),
+): RlmPromptContext {
+  const trimmedQuestion = question.trim();
+  const chunks: RlmPromptContextChunk[] = [
+    {
+      id: "task",
+      kind: "task",
+      label: "Task prompt",
+      charLength: trimmedQuestion.length,
+      lineCount: countLines(trimmedQuestion),
+      content: trimmedQuestion,
+    },
+    ...importedSources.map((source, index) => ({
+      id: `source_${index + 1}`,
+      kind: "source" as const,
+      label: source.path,
+      sourcePath: source.path,
+      charLength: source.content.length,
+      lineCount: countLines(source.content),
+      content: source.content,
+    })),
+  ];
+
+  return {
+    type: chunks.length <= 1 ? "string" : "list[str]",
+    question: trimmedQuestion,
+    prompt: promptContent,
+    chunks,
+    contextLengths: chunks.map((chunk) => chunk.charLength),
+    importedSourceCount: importedSources.length,
   };
 }
 
@@ -172,8 +237,16 @@ export function buildPromptContent(question: string, importedSources: RlmImporte
   return sections.join("\n");
 }
 
-export function buildTaskFileContent(question: string): string {
-  return ["# RLM Prompt", "", "## Input Prompt", "", question.trim()].join("\n");
+export function buildTaskFileContent(question: string, promptProfile: RlmPromptProfile): string {
+  return [
+    "# RLM Prompt",
+    "",
+    `- promptProfile: ${promptProfile}`,
+    "",
+    "## Input Prompt",
+    "",
+    question.trim(),
+  ].join("\n");
 }
 
 export function buildScratchpadFileContent(
@@ -236,6 +309,8 @@ export function buildSourcesFileContent(importedSources: RlmImportedSource[]): s
       `- absolutePath: ${source.absolutePath}`,
       `- extension: ${source.extension}`,
       `- sizeBytes: ${source.sizeBytes}`,
+      `- charLength: ${source.content.length}`,
+      `- lineCount: ${countLines(source.content)}`,
       "",
       "### Content",
       "",
@@ -248,6 +323,8 @@ export function buildSourcesFileContent(importedSources: RlmImportedSource[]): s
 
 export function buildWorkspaceRootContent(input: {
   question: string;
+  promptProfile: RlmPromptProfile;
+  promptContext: RlmPromptContext;
   promptContent: string;
   taskFilePath: string;
   scratchpadFilePath: string;
@@ -269,15 +346,29 @@ export function buildWorkspaceRootContent(input: {
     input.importedSources.length === 0
       ? "No external source files were imported from the input prompt."
       : input.importedSources
-          .map((source) => `- ${source.path} (${source.extension}, ${source.sizeBytes} bytes)`)
+          .map(
+            (source) =>
+              `- ${source.path} (${source.extension}, ${source.sizeBytes} bytes, ${source.content.length} chars)`,
+          )
           .join("\n");
 
-  const importedSourceContents =
-    input.importedSources.length === 0
-      ? "No imported source contents available."
-      : input.importedSources
-          .map((source) => [`### ${source.path}`, "", source.content].join("\n"))
-          .join("\n\n");
+  const contextChunkSummary = input.promptContext.chunks
+    .map((chunk, index) => {
+      const origin = chunk.sourcePath ? `, sourcePath: ${chunk.sourcePath}` : "";
+      return `- [${index}] ${chunk.id} (${chunk.kind}) — ${chunk.label}; ${chunk.charLength} chars; ${chunk.lineCount} lines${origin}`;
+    })
+    .join("\n");
+
+  const contextChunkContents = input.promptContext.chunks
+    .map((chunk, index) => {
+      const header = [`### Chunk ${index}: ${chunk.label}`, "", `- id: ${chunk.id}`, `- kind: ${chunk.kind}`];
+      if (chunk.sourcePath) {
+        header.push(`- sourcePath: ${chunk.sourcePath}`);
+      }
+      header.push(`- charLength: ${chunk.charLength}`, `- lineCount: ${chunk.lineCount}`, "", chunk.content);
+      return header.join("\n");
+    })
+    .join("\n\n");
 
   const promptPreview = input.promptContent.slice(0, 400);
   const promptPreviewTruncated = promptPreview.length < input.promptContent.length;
@@ -291,11 +382,18 @@ export function buildWorkspaceRootContent(input: {
     "",
     input.question.trim(),
     "",
+    "## Prompt Profile",
+    "",
+    `- promptProfile: ${input.promptProfile}`,
+    "",
     "## Root Prompt Metadata",
     "",
     `- charLength: ${input.promptContent.length}`,
     `- lineCount: ${countLines(input.promptContent)}`,
     `- importedSourceCount: ${input.importedSources.length}`,
+    `- context_type: ${input.promptContext.type}`,
+    `- context_lengths: [${input.promptContext.contextLengths.join(", ")}]`,
+    `- contextChunkCount: ${input.promptContext.chunks.length}`,
     `- previewTruncated: ${promptPreviewTruncated}`,
     "",
     "### Prompt Preview",
@@ -313,6 +411,10 @@ export function buildWorkspaceRootContent(input: {
     "",
     importedSourceSummary,
     "",
+    "## Context Chunks",
+    "",
+    contextChunkSummary,
+    "",
     "## Current Scratchpad State",
     "",
     scratchpadState,
@@ -329,9 +431,9 @@ export function buildWorkspaceRootContent(input: {
       ? input.finalResult.trim()
       : "Pending final answer.",
     "",
-    "## Imported Source Contents",
+    "## Context Chunk Contents",
     "",
-    importedSourceContents,
+    contextChunkContents,
   ].join("\n");
 }
 

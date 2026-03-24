@@ -1,8 +1,10 @@
 import { writeFileSync } from "node:fs";
-import type { RlmRequest } from "./request";
+import type { RlmPromptProfile } from "./args";
+import type { RlmRequest, RlmPromptContext } from "./request";
 import {
   buildFinalFileContent,
   buildPromptContent,
+  buildPromptContext,
   buildScratchpadFileContent,
   buildSourcesFileContent,
   buildTaskFileContent,
@@ -13,12 +15,17 @@ export const DEFAULT_METADATA_PREVIEW_CHARS = 240;
 
 export interface RlmPromptMetadata {
   label?: string;
+  promptProfile: RlmPromptProfile;
   promptCharLength: number;
   promptLineCount: number;
   promptPreview: string;
   promptPreviewTruncated: boolean;
   importedSourceCount: number;
   importedSourcePaths: string[];
+  contextType: RlmPromptContext["type"];
+  contextChunkCount: number;
+  contextLengths: number[];
+  contextLabels: string[];
   variableCount: number;
   variableNames: string[];
   hasFinalResult: boolean;
@@ -43,6 +50,8 @@ export class RlmPromptEnvironment {
     private readonly input: {
       prompt: string;
       label?: string;
+      promptProfile: RlmPromptProfile;
+      promptContext: RlmPromptContext;
       request?: RlmRequest;
     },
   ) {
@@ -52,12 +61,23 @@ export class RlmPromptEnvironment {
   static fromRequest(request: RlmRequest): RlmPromptEnvironment {
     return new RlmPromptEnvironment({
       prompt: request.promptContent,
+      promptProfile: request.promptProfile,
+      promptContext: request.promptContext,
       request,
     });
   }
 
-  static fromPrompt(prompt: string, label?: string): RlmPromptEnvironment {
-    return new RlmPromptEnvironment({ prompt, label });
+  static fromPrompt(
+    prompt: string,
+    label?: string,
+    options: { promptProfile?: RlmPromptProfile } = {},
+  ): RlmPromptEnvironment {
+    return new RlmPromptEnvironment({
+      prompt,
+      label,
+      promptProfile: options.promptProfile ?? "default",
+      promptContext: buildPromptContext(prompt, [], prompt),
+    });
   }
 
   getPrompt(): string {
@@ -78,12 +98,17 @@ export class RlmPromptEnvironment {
 
     return {
       label: this.input.label,
+      promptProfile: this.input.promptProfile,
       promptCharLength: this.input.prompt.length,
       promptLineCount: countLines(this.input.prompt),
       promptPreview,
       promptPreviewTruncated,
       importedSourceCount: this.input.request?.importedSources.length ?? 0,
       importedSourcePaths: this.input.request?.importedSources.map((source) => source.path) ?? [],
+      contextType: this.input.promptContext.type,
+      contextChunkCount: this.input.promptContext.chunks.length,
+      contextLengths: [...this.input.promptContext.contextLengths],
+      contextLabels: this.input.promptContext.chunks.map((chunk) => chunk.label),
       variableCount: this.variables.size,
       variableNames: this.listVariableNames(),
       hasFinalResult: typeof this.finalResult === "string",
@@ -96,9 +121,38 @@ export class RlmPromptEnvironment {
   }
 
   getExecutionBindings(): Record<string, unknown> {
+    const flatContext =
+      this.input.promptContext.type === "string"
+        ? this.input.promptContext.chunks[0]?.content ?? this.input.prompt
+        : this.input.promptContext.chunks.map((chunk) => chunk.content);
+    const contextChunks = this.input.promptContext.chunks.map((chunk) => ({
+      id: chunk.id,
+      kind: chunk.kind,
+      label: chunk.label,
+      sourcePath: chunk.sourcePath,
+      charLength: chunk.charLength,
+      lineCount: chunk.lineCount,
+      content: chunk.content,
+    }));
+
     return {
       Prompt: this.input.prompt,
       prompt: this.input.prompt,
+      Question: this.input.promptContext.question,
+      question: this.input.promptContext.question,
+      Context: {
+        question: this.input.promptContext.question,
+        prompt: this.input.promptContext.prompt,
+        contextType: this.input.promptContext.type,
+        contextLengths: [...this.input.promptContext.contextLengths],
+        importedSourceCount: this.input.promptContext.importedSourceCount,
+        chunks: contextChunks,
+      },
+      context: flatContext,
+      context_type: this.input.promptContext.type,
+      context_lengths: [...this.input.promptContext.contextLengths],
+      context_chunks: contextChunks,
+      prompt_profile: this.input.promptProfile,
       label: this.input.label,
       variables: Object.fromEntries(this.variables),
       metadata: this.getPromptMetadata({ previewChars: 0 }),
@@ -182,7 +236,7 @@ export class RlmPromptEnvironment {
 
     writeFileSync(
       this.input.request.taskFilePath,
-      buildTaskFileContent(this.input.request.question),
+      buildTaskFileContent(this.input.request.question, this.input.request.promptProfile),
       "utf8",
     );
     writeFileSync(
@@ -208,6 +262,8 @@ export class RlmPromptEnvironment {
       this.input.request.absolutePath,
       buildWorkspaceRootContent({
         question: this.input.request.question,
+        promptProfile: this.input.request.promptProfile,
+        promptContext: this.input.request.promptContext,
         promptContent: buildPromptContent(
           this.input.request.question,
           this.input.request.importedSources,

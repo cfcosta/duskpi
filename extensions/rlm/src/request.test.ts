@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { parseRlmArgs } from "./args";
-import { buildPromptContent, resolveRlmRequest } from "./request";
+import { buildPromptContent, buildPromptContext, resolveRlmRequest } from "./request";
 
 test("parseRlmArgs treats the full command body as the input prompt", () => {
   const parsed = parseRlmArgs("summarize the architecture tradeoffs");
@@ -13,6 +13,19 @@ test("parseRlmArgs treats the full command body as the input prompt", () => {
     value: {
       raw: "summarize the architecture tradeoffs",
       question: "summarize the architecture tradeoffs",
+      promptProfile: "default",
+    },
+  });
+});
+
+test("parseRlmArgs accepts an explicit prompt profile flag", () => {
+  const parsed = parseRlmArgs("--prompt-profile qwen3-8b summarize the architecture tradeoffs");
+  assert.deepEqual(parsed, {
+    ok: true,
+    value: {
+      raw: "--prompt-profile qwen3-8b summarize the architecture tradeoffs",
+      question: "summarize the architecture tradeoffs",
+      promptProfile: "qwen3-8b",
     },
   });
 });
@@ -59,6 +72,37 @@ test("buildPromptContent appends imported source contents into the external prom
   assert.match(prompt, /Recursive Language Models use recursive calls/);
 });
 
+test("buildPromptContext exposes chunked context metadata for imported sources", () => {
+  const prompt = buildPromptContent("check ./paper.md", [
+    {
+      path: "./paper.md",
+      absolutePath: "/tmp/paper.md",
+      extension: ".md",
+      sizeBytes: 12,
+      content: "Recursive Language Models use recursive calls.",
+    },
+  ]);
+
+  const context = buildPromptContext(
+    "check ./paper.md",
+    [
+      {
+        path: "./paper.md",
+        absolutePath: "/tmp/paper.md",
+        extension: ".md",
+        sizeBytes: 12,
+        content: "Recursive Language Models use recursive calls.",
+      },
+    ],
+    prompt,
+  );
+
+  assert.equal(context.type, "list[str]");
+  assert.deepEqual(context.contextLengths, [16, 46]);
+  assert.equal(context.chunks[0]?.id, "task");
+  assert.equal(context.chunks[1]?.sourcePath, "./paper.md");
+});
+
 test("resolveRlmRequest auto-imports referenced local markdown sources into the prompt and workspace", async () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), "rlm-request-source-"));
   const sourcePath = path.join(tempDir, "paper.md");
@@ -75,8 +119,11 @@ test("resolveRlmRequest auto-imports referenced local markdown sources into the 
 
   assert.equal(result.value.importedSources.length, 1);
   assert.equal(result.value.importedSources[0]?.absolutePath, sourcePath);
+  assert.equal(result.value.promptContext.type, "list[str]");
+  assert.deepEqual(result.value.promptContext.contextLengths.length, 2);
   assert.match(result.value.promptContent, /Recursive Language Models use recursive calls/);
-  assert.match(result.value.content, /Imported Sources/);
+  assert.match(result.value.content, /context_type: list\[str\]/);
+  assert.match(result.value.content, /context_lengths: \[/);
   assert.match(
     readFileSync(result.value.sourcesFilePath, "utf8"),
     /Recursive Language Models use recursive calls/,
@@ -88,7 +135,7 @@ test("resolveRlmRequest creates a normalized workspace-backed request", async ()
   const workspacesDir = path.join(tempDir, "workspaces");
   mkdirSync(workspacesDir);
 
-  const result = await resolveRlmRequest("summarize the recursive workflow", {
+  const result = await resolveRlmRequest("--prompt-profile qwen3-8b summarize the recursive workflow", {
     cwd: tempDir,
     workspaceParentDir: workspacesDir,
   });
@@ -98,6 +145,7 @@ test("resolveRlmRequest creates a normalized workspace-backed request", async ()
   }
 
   assert.equal(result.value.question, "summarize the recursive workflow");
+  assert.equal(result.value.promptProfile, "qwen3-8b");
   assert.equal(result.value.extension, ".md");
   assert.match(result.value.absolutePath, /workspace\.md$/);
   assert.match(result.value.taskFilePath, /task\.md$/);
@@ -105,10 +153,15 @@ test("resolveRlmRequest creates a normalized workspace-backed request", async ()
   assert.match(result.value.finalFilePath, /final\.md$/);
   assert.match(result.value.sourcesFilePath, /sources\.md$/);
   assert.deepEqual(result.value.importedSources, []);
+  assert.equal(result.value.promptContext.type, "string");
+  assert.deepEqual(result.value.promptContext.contextLengths, [32]);
   assert.match(result.value.promptContent, /RLM Input Prompt/);
   assert.match(result.value.content, /persistent environment used by \/rlm/i);
+  assert.match(result.value.content, /promptProfile: qwen3-8b/);
+  assert.match(result.value.content, /context_lengths: \[32\]/);
   assert.match(result.value.content, /summarize the recursive workflow/);
 
+  assert.match(readFileSync(result.value.taskFilePath, "utf8"), /promptProfile: qwen3-8b/);
   assert.match(readFileSync(result.value.taskFilePath, "utf8"), /summarize the recursive workflow/);
   assert.match(readFileSync(result.value.scratchpadFilePath, "utf8"), /No notes yet/i);
   assert.match(readFileSync(result.value.finalFilePath, "utf8"), /Pending final answer/i);
