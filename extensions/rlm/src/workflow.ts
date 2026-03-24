@@ -32,6 +32,7 @@ export const RLM_COMMAND_DESCRIPTION =
 
 const RLM_INTERNAL_MESSAGE_TYPE = "rlm-internal";
 const RLM_STATUS_KEY = "rlm";
+const RLM_WIDGET_KEY = "rlm";
 const INITIAL_PREVIEW_CHARS = 160;
 const OBSERVATION_PREVIEW_CHARS = 240;
 const LOG_PREVIEW_CHARS = 240;
@@ -64,6 +65,7 @@ interface ActiveRunState {
   pendingPrompt: string;
   iterationCount: number;
   malformedOutputRetries: number;
+  widgetLines: string[];
 }
 
 export interface RlmWorkflowOptions {
@@ -131,8 +133,10 @@ export class RlmWorkflow {
       pendingPrompt: "",
       iterationCount: 0,
       malformedOutputRetries: 0,
+      widgetLines: ["Preparing sandboxed RLM run…"],
     };
 
+    this.updateWidget(ctx);
     this.sendHiddenPrompt(prompt, ctx);
   }
 
@@ -256,6 +260,7 @@ export class RlmWorkflow {
     }
 
     this.applyExecutionState(frame, execution);
+    this.setExecutionWidget(frame, execution, ctx);
 
     if (execution.kind === "subcall") {
       this.scheduleChildFrame(frame, execution, ctx);
@@ -332,6 +337,15 @@ export class RlmWorkflow {
     };
 
     this.state.frames.push(childFrame);
+    if (this.state) {
+      this.state.widgetLines = [
+        `Running ${frameScopeLabel(parent)} frame in sandbox`,
+        `Queued child subcall: ${execution.subcall.storeAs}`,
+        `Prompt chars: ${execution.subcall.prompt.length}`,
+      ];
+      this.updateWidget(ctx);
+    }
+
     this.sendHiddenPrompt(
       buildFrameStartPrompt(childFrame, {
         reason: "subcall",
@@ -352,6 +366,12 @@ export class RlmWorkflow {
     }
 
     if (frame.kind === "root") {
+      this.state.widgetLines = [
+        "Sandbox run completed",
+        `Final answer: ${this.state.request.finalFilePath}`,
+        `Iterations: ${this.state.iterationCount}`,
+      ];
+      this.updateWidget(ctx);
       ctx.ui.notify(`RLM final result ready at ${this.state.request.finalFilePath}.`, "info");
       this.clearState(ctx);
       return;
@@ -371,6 +391,15 @@ export class RlmWorkflow {
         `subcall:${completedChild.storeAs}`,
         `Stored child response in variable '${completedChild.storeAs}' (${finalValue.length} chars).`,
       );
+    }
+
+    if (this.state) {
+      this.state.widgetLines = [
+        `Child completed: ${completedChild.storeAs}`,
+        `Stored chars: ${finalValue.length}`,
+        `Resuming ${frameScopeLabel(parent)} frame in sandbox`,
+      ];
+      this.updateWidget(ctx);
     }
 
     if (parent.activeProgram) {
@@ -488,6 +517,7 @@ export class RlmWorkflow {
     const frame = this.getCurrentFrame();
     if (!this.state || !frame) {
       ctx.ui.setStatus(RLM_STATUS_KEY, undefined);
+      ctx.ui.setWidget(RLM_WIDGET_KEY, undefined);
       return;
     }
 
@@ -497,6 +527,51 @@ export class RlmWorkflow {
       RLM_STATUS_KEY,
       `RLM ${phase}: ${formatLabel(statusLabel)} (${this.state.iterationCount}/${this.maxIterations})`,
     );
+    this.updateWidget(ctx);
+  }
+
+  private updateWidget(ctx: ExtensionContext): void {
+    if (!ctx.hasUI) {
+      return;
+    }
+
+    const lines = this.state?.widgetLines ?? [];
+    ctx.ui.setWidget(RLM_WIDGET_KEY, lines.length > 0 ? lines : undefined);
+  }
+
+  private setExecutionWidget(
+    frame: RlmFrameState,
+    execution: Extract<RlmExecutorResult, { kind: "completed" | "subcall" }>,
+    ctx: ExtensionContext,
+  ): void {
+    if (!this.state) {
+      return;
+    }
+
+    const updatedNames = Object.keys(execution.variables).sort();
+    const lines = [
+      `Sandbox frame: ${frameScopeLabel(frame)}`,
+      `Last execution: ${execution.kind}`,
+      `Updated variables: ${updatedNames.length > 0 ? updatedNames.join(", ") : "none"}`,
+    ];
+
+    if (execution.logs.length > 0) {
+      lines.push(
+        `Logs: ${summarizeLogs(execution.logs).preview || `${execution.logs.length} entries`}`,
+      );
+    }
+
+    const summary = summarizeSummary(execution.summary);
+    if (summary.present) {
+      lines.push(`Summary: ${summary.preview}`);
+    }
+
+    if (execution.kind === "subcall") {
+      lines.push(`Pending subcall: ${execution.subcall.storeAs}`);
+    }
+
+    this.state.widgetLines = lines;
+    this.updateWidget(ctx);
   }
 
   private clearState(ctx: ExtensionContext): void {
@@ -719,6 +794,10 @@ function summarizeSummary(summary: unknown): {
     preview,
     truncated: preview.length < normalized.length,
   };
+}
+
+function frameScopeLabel(frame: Pick<RlmFrameState, "kind" | "depth" | "label">): string {
+  return frame.kind === "child" ? `${frame.label} (child d${frame.depth})` : "root";
 }
 
 function formatLabel(label: string): string {

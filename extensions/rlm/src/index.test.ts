@@ -32,6 +32,7 @@ interface Harness {
 function createContext(): ExtensionContext {
   const notifications: Array<{ message: string; level?: string }> = [];
   const statuses: Array<{ key: string; value: string | undefined }> = [];
+  const widgets: Array<{ key: string; value: unknown }> = [];
   const theme: ExtensionTheme = {
     fg(_color: string, text: string) {
       return text;
@@ -51,7 +52,9 @@ function createContext(): ExtensionContext {
       setStatus(key: string, value: string | undefined) {
         statuses.push({ key, value });
       },
-      setWidget() {},
+      setWidget(key: string, value: unknown) {
+        widgets.push({ key, value });
+      },
       async select() {
         return undefined;
       },
@@ -73,6 +76,7 @@ function createContext(): ExtensionContext {
 
   Reflect.set(ctx, "notifications", notifications);
   Reflect.set(ctx, "statuses", statuses);
+  Reflect.set(ctx, "widgets", widgets);
   return ctx;
 }
 
@@ -465,6 +469,45 @@ test("/rlm sets status during an active run and clears it on completion", async 
 
   assert.deepEqual(ctx.statuses?.at(-1), { key: "rlm", value: undefined });
   assert.match(readFileSync(finalFilePath!, "utf8"), /done/);
+});
+
+test("/rlm updates the TUI widget with sandbox execution results", async () => {
+  const { executor } = createQueuedExecutor([
+    {
+      kind: "completed",
+      variables: { note: "done" },
+      logs: ["ran note"],
+      summary: "saved note",
+    },
+  ]);
+  const harness = createHarness((api) =>
+    registerRlmExtension(api, new RlmWorkflow(api, { executor })),
+  );
+  const ctx = createContext() as ExtensionContext & {
+    widgets?: Array<{ key: string; value: unknown }>;
+  };
+
+  await harness.commands.rlm?.handler("inspect sandbox results", ctx);
+  const prompt = getSentPromptContent(harness, 0);
+
+  await harness.listeners.agent_end?.(
+    {
+      messages: [
+        buildTextMessage("custom", prompt),
+        buildTextMessage("assistant", 'set("note", "done");'),
+      ],
+    },
+    ctx,
+  );
+
+  assert.ok(
+    ctx.widgets?.some(
+      (entry) =>
+        entry.key === "rlm" &&
+        Array.isArray(entry.value) &&
+        (entry.value as string[]).some((line) => /Updated variables: note/.test(line)),
+    ),
+  );
 });
 
 test("/rlm resets active state on session lifecycle events", async () => {
