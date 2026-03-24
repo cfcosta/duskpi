@@ -16,6 +16,7 @@ The current implementation is now closer to the paper's core loop:
 - the root model sees only bounded prompt metadata, not the full prompt contents
 - the full prompt is stored externally as `Prompt` inside the execution environment
 - the assistant must return JavaScript programs, not tool-style JSON actions
+- RLM control turns run as hidden internal messages, so the TUI tracks execution state instead of printing the raw program turns into the main transcript
 - each frame now keeps a live JavaScript REPL across iterations inside the Wasmtime/Javy sandbox, so top-level declarations persist in addition to symbolic variables
 - recursive sub-calls are requested from code via `subcall(prompt, storeAs)`
 - repeated `subcall()` uses inside the same parent program can now walk through loops by re-entering that program after each child result arrives

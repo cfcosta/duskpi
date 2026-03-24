@@ -123,20 +123,17 @@ export class RlmWorkflow {
       reason: "initial",
       metadata: environment.getPromptMetadata({ previewChars: INITIAL_PREVIEW_CHARS }),
     });
-    const requestId = this.nextRequestId();
-
     this.state = {
       request: request.value,
       frames: [frame],
-      pendingRequestId: requestId,
-      awaitingResponse: true,
-      pendingPrompt: prompt,
+      pendingRequestId: "",
+      awaitingResponse: false,
+      pendingPrompt: "",
       iterationCount: 0,
       malformedOutputRetries: 0,
     };
-    this.updateStatus(ctx);
 
-    this.api.sendUserMessage(`${prompt}\n\n${requestIdMarker(requestId)}`);
+    this.sendHiddenPrompt(prompt, ctx);
   }
 
   handleToolCall(_event: ToolCallEvent, _ctx: ExtensionContext): void {}
