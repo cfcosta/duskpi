@@ -52,7 +52,6 @@ export class RlmPromptEnvironment {
   static fromRequest(request: RlmRequest): RlmPromptEnvironment {
     return new RlmPromptEnvironment({
       prompt: request.promptContent,
-      label: request.question,
       request,
     });
   }

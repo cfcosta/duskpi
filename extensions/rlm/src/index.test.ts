@@ -412,7 +412,7 @@ test("/rlm starts a run from prompt metadata only", async () => {
   const prompt = String(harness.sentUserMessages[0]?.content ?? "");
   assert.match(prompt, /full prompt lives outside your context window/i);
   assert.match(prompt, /Prompt metadata:/);
-  assert.match(prompt, /"label": "summarize/);
+  assert.doesNotMatch(prompt, /"label": "summarize/);
   assert.match(prompt, /"promptCharLength":/);
   assert.match(prompt, /"importedSourceCount": 1/);
   assert.match(prompt, /set\('Final', answer\)|setFinal/);

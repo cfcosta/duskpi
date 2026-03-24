@@ -41,7 +41,7 @@ test("getPromptMetadata returns prompt metadata and bounded previews", () => {
   environment.setVariable("chunk_1", "summary");
 
   const metadata = environment.getPromptMetadata({ previewChars: 32 });
-  assert.equal(metadata.label, "summarize the recursive workflow");
+  assert.equal(metadata.label, undefined);
   assert.equal(metadata.promptPreview.length, 32);
   assert.equal(metadata.promptPreviewTruncated, true);
   assert.equal(metadata.importedSourceCount, 0);

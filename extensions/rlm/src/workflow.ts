@@ -48,6 +48,7 @@ interface RlmFrameState {
   kind: "root" | "child";
   depth: number;
   label: string;
+  statusLabel?: string;
   environment: RlmPromptEnvironment;
   executor: RlmExecutorLike;
   activeProgram?: RlmAssistantProgram;
@@ -113,7 +114,8 @@ export class RlmWorkflow {
     const frame: RlmFrameState = {
       kind: "root",
       depth: 0,
-      label: request.value.question,
+      label: "root",
+      statusLabel: request.value.question,
       environment,
       executor: this.createFrameExecutor(),
     };
@@ -493,9 +495,10 @@ export class RlmWorkflow {
     }
 
     const phase = frame.kind === "child" ? `child:d${frame.depth}` : "root";
+    const statusLabel = frame.statusLabel ?? frame.label;
     ctx.ui.setStatus(
       RLM_STATUS_KEY,
-      `RLM ${phase}: ${formatLabel(frame.label)} (${this.state.iterationCount}/${this.maxIterations})`,
+      `RLM ${phase}: ${formatLabel(statusLabel)} (${this.state.iterationCount}/${this.maxIterations})`,
     );
   }
 
