@@ -25,6 +25,8 @@ function createRequest(overrides: Partial<RlmRequest> = {}): RlmRequest {
     absolutePath,
     question,
     promptProfile: "default",
+    childPromptProfile: "qwen3-8b",
+    subcallPolicy: "enabled",
     promptContext: buildPromptContext(question, [], promptContent),
     promptContent,
     content: ["# RLM Workspace", "", "Input Prompt: summarize the recursive workflow"].join("\n"),
@@ -48,6 +50,8 @@ test("getPromptMetadata returns prompt metadata and bounded previews", () => {
   const metadata = environment.getPromptMetadata({ previewChars: 32 });
   assert.equal(metadata.label, undefined);
   assert.equal(metadata.promptProfile, "default");
+  assert.equal(metadata.childPromptProfile, "qwen3-8b");
+  assert.equal(metadata.subcallPolicy, "enabled");
   assert.equal(metadata.promptPreview.length, 32);
   assert.equal(metadata.promptPreviewTruncated, true);
   assert.equal(metadata.importedSourceCount, 0);
@@ -64,7 +68,7 @@ test("getPromptMetadata returns prompt metadata and bounded previews", () => {
   assert.match(metadata.finalFilePath ?? "", /final\.md$/);
 });
 
-test("getExecutionBindings exposes Prompt, Context, and persisted variables symbolically", () => {
+test("getExecutionBindings exposes Prompt, Context, subcall policy, and persisted variables symbolically", () => {
   const environment = RlmPromptEnvironment.fromRequest(createRequest());
   environment.setVariable("intro_summary", "cached summary");
 
@@ -77,6 +81,9 @@ test("getExecutionBindings exposes Prompt, Context, and persisted variables symb
   assert.deepEqual(bindings.context_lengths, [32]);
   assert.equal(bindings.context, "summarize the recursive workflow");
   assert.equal((bindings.Context as { contextType: string }).contextType, "string");
+  assert.equal(bindings.child_prompt_profile, "qwen3-8b");
+  assert.equal(bindings.subcall_policy, "enabled");
+  assert.equal(bindings.allow_subcalls, true);
   assert.deepEqual(bindings.variables, { intro_summary: "cached summary" });
 });
 
@@ -109,6 +116,8 @@ test("scratchpad entries are written into workspace-backed environments", () => 
 test("child-only environments keep prompt state in memory without workspace files", () => {
   const environment = RlmPromptEnvironment.fromPrompt("child prompt", "child:chunk_1", {
     promptProfile: "qwen3-8b",
+    childPromptProfile: "qwen3-8b",
+    subcallPolicy: "disabled",
   });
 
   environment.setVariable("note", "done");
@@ -118,5 +127,6 @@ test("child-only environments keep prompt state in memory without workspace file
   assert.equal(environment.getVariable("note"), "done");
   assert.equal(environment.getFinalResult(), "child answer");
   assert.equal(environment.getPromptMetadata().promptProfile, "qwen3-8b");
+  assert.equal(environment.getPromptMetadata().subcallPolicy, "disabled");
   assert.equal(environment.getPromptMetadata().workspaceDir, undefined);
 });

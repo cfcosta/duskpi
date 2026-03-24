@@ -1,7 +1,12 @@
 import os from "node:os";
 import path from "node:path";
 import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
-import { parseRlmArgs, type ParsedRlmArgs, type RlmPromptProfile } from "./args";
+import {
+  parseRlmArgs,
+  type ParsedRlmArgs,
+  type RlmPromptProfile,
+  type RlmSubcallPolicy,
+} from "./args";
 
 export const DEFAULT_RLM_MAX_BYTES = 8 * 1024 * 1024;
 export const DEFAULT_RLM_MAX_SLICE_CHARS = 4_000;
@@ -14,6 +19,7 @@ export const DEFAULT_SUPPORTED_EXTENSIONS = [".md", ".markdown", ".mdx", ".txt",
 export type RlmRequestErrorCode =
   | "missing_question"
   | "invalid_prompt_profile"
+  | "invalid_subcall_policy"
   | "workspace_init_failed";
 
 export interface RlmRequestError {
@@ -54,6 +60,8 @@ export interface RlmRequest {
   absolutePath: string;
   question: string;
   promptProfile: RlmPromptProfile;
+  childPromptProfile: RlmPromptProfile;
+  subcallPolicy: RlmSubcallPolicy;
   promptContext: RlmPromptContext;
   promptContent: string;
   content: string;
@@ -135,6 +143,8 @@ export async function resolveParsedRlmRequest(
   const content = buildWorkspaceRootContent({
     question: parsed.question,
     promptProfile: parsed.promptProfile,
+    childPromptProfile: parsed.childPromptProfile,
+    subcallPolicy: parsed.subcallPolicy,
     promptContext,
     promptContent,
     taskFilePath,
@@ -149,7 +159,16 @@ export async function resolveParsedRlmRequest(
 
   try {
     await Promise.all([
-      writeFileImpl(taskFilePath, buildTaskFileContent(parsed.question, parsed.promptProfile), "utf8"),
+      writeFileImpl(
+        taskFilePath,
+        buildTaskFileContent(
+          parsed.question,
+          parsed.promptProfile,
+          parsed.childPromptProfile,
+          parsed.subcallPolicy,
+        ),
+        "utf8",
+      ),
       writeFileImpl(
         scratchpadFilePath,
         buildScratchpadFileContent(parsed.question, [], []),
@@ -171,6 +190,8 @@ export async function resolveParsedRlmRequest(
       absolutePath,
       question: parsed.question,
       promptProfile: parsed.promptProfile,
+      childPromptProfile: parsed.childPromptProfile,
+      subcallPolicy: parsed.subcallPolicy,
       promptContext,
       promptContent,
       content,
@@ -237,11 +258,18 @@ export function buildPromptContent(question: string, importedSources: RlmImporte
   return sections.join("\n");
 }
 
-export function buildTaskFileContent(question: string, promptProfile: RlmPromptProfile): string {
+export function buildTaskFileContent(
+  question: string,
+  promptProfile: RlmPromptProfile,
+  childPromptProfile: RlmPromptProfile,
+  subcallPolicy: RlmSubcallPolicy,
+): string {
   return [
     "# RLM Prompt",
     "",
     `- promptProfile: ${promptProfile}`,
+    `- childPromptProfile: ${childPromptProfile}`,
+    `- subcallPolicy: ${subcallPolicy}`,
     "",
     "## Input Prompt",
     "",
@@ -324,6 +352,8 @@ export function buildSourcesFileContent(importedSources: RlmImportedSource[]): s
 export function buildWorkspaceRootContent(input: {
   question: string;
   promptProfile: RlmPromptProfile;
+  childPromptProfile: RlmPromptProfile;
+  subcallPolicy: RlmSubcallPolicy;
   promptContext: RlmPromptContext;
   promptContent: string;
   taskFilePath: string;
@@ -382,9 +412,11 @@ export function buildWorkspaceRootContent(input: {
     "",
     input.question.trim(),
     "",
-    "## Prompt Profile",
+    "## Prompt Settings",
     "",
     `- promptProfile: ${input.promptProfile}`,
+    `- childPromptProfile: ${input.childPromptProfile}`,
+    `- subcallPolicy: ${input.subcallPolicy}`,
     "",
     "## Root Prompt Metadata",
     "",

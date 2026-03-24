@@ -332,9 +332,7 @@ export class RlmWorkflow {
       environment: RlmPromptEnvironment.fromPrompt(
         execution.subcall.prompt,
         `child:${execution.subcall.storeAs}`,
-        {
-          promptProfile: parent.environment.getPromptMetadata({ previewChars: 0 }).promptProfile,
-        },
+        resolveChildEnvironmentOptions(parent, execution),
       ),
       executor: this.createFrameExecutor(parent.executor),
     };
@@ -626,12 +624,14 @@ function buildFrameStartPrompt(
   return [
     intro,
     `Prompt profile: ${input.metadata.promptProfile}.`,
+    `Default child prompt profile: ${input.metadata.childPromptProfile}.`,
+    `Subcall policy: ${input.metadata.subcallPolicy}.`,
     "The full prompt lives outside your context window as the variable Prompt inside the execution environment.",
     "Structured context is exposed through Context, context, context_type, context_lengths, and context_chunks.",
     "Inspect the entire context before choosing a chunking or aggregation strategy.",
     "Write exactly one JavaScript program and no prose.",
     ...buildProgramContractLines(frame),
-    ...buildContextStrategyBlocks(input.metadata.promptProfile),
+    ...buildContextStrategyBlocks(input.metadata.promptProfile, input.metadata.subcallPolicy),
     "Prompt metadata:",
     JSON.stringify(input.metadata, null, 2),
   ].join("\n\n");
@@ -737,19 +737,25 @@ function buildRlmSystemPrompt(frame: RlmFrameState): string {
   return [
     frame.kind === "child" ? "[RLM CHILD FRAME ACTIVE]" : "[RLM ROOT FRAME ACTIVE]",
     `Operate as a recursive language model over an external prompt variable and the '${metadata.promptProfile}' prompt profile.`,
+    `Use '${metadata.childPromptProfile}' as the default child prompt profile unless your program overrides it explicitly.`,
+    `Subcall policy for this frame: ${metadata.subcallPolicy}.`,
     "Return exactly one JavaScript program.",
     "Do not return prose, JSON actions, or markdown commentary.",
     "The JavaScript REPL is live within the current frame across iterations, so top-level declarations persist.",
     "Read the whole context before choosing a decomposition strategy; recurse over chunks and aggregate their results symbolically.",
     "Store the final answer by setting the variable Final, e.g. set('Final', answer) or setFinal(answer).",
-    "Use subcall(prompt, storeAs) only when symbolic recursion is useful.",
+    metadata.subcallPolicy === "enabled"
+      ? "Use subcall(...) or llm_query(...) only when symbolic recursion is useful."
+      : "This run is REPL-only: do not call subcall(...) or llm_query(...).",
     metadata.promptProfile === "qwen3-8b"
-      ? "Prefer batching nearby chunks and keeping subcall prompts concise to control cost."
+      ? "Prefer batching nearby chunks and keeping child prompts concise to control cost."
       : "Prefer clear chunk summaries and explicit aggregation variables over one-shot direct completion.",
   ].join("\n");
 }
 
 function buildProgramContractLines(frame: RlmFrameState): string[] {
+  const metadata = frame.environment.getPromptMetadata({ previewChars: 0 });
+
   return [
     "Execution helpers available inside your JavaScript program:",
     "- The JavaScript REPL stays live across iterations within the current frame; top-level declarations and globals persist unless you overwrite them.",
@@ -758,13 +764,22 @@ function buildProgramContractLines(frame: RlmFrameState): string[] {
     "- setFinal(value): alias for writing Final.",
     "- setSummary(value): emit a compact execution summary for the next turn.",
     "- log(...values): emit compact stdout-style logs.",
-    "- subcall(prompt, storeAs): request a recursive child frame that returns into storeAs; when storeAs is already populated, subcall returns that value so the same program can keep iterating through loops.",
+    ...(metadata.subcallPolicy === "enabled"
+      ? [
+          "- subcall(prompt, storeAs, { promptProfile? }): request a recursive child frame that returns into storeAs; when storeAs is already populated, subcall returns that value so the same program can keep iterating through loops.",
+          "- llm_query(prompt, storeAs, { promptProfile? }): alias for subcall(...) for paper-style recursive query code.",
+        ]
+      : [
+          "- subcall(...) and llm_query(...) are disabled for this run; stay inside the current REPL frame and solve the task without recursive child calls.",
+        ]),
     "- Question / question: the top-level task string.",
     "- Context: a structured object with question, prompt, contextType, contextLengths, importedSourceCount, and chunks.",
     "- context: either a single string or an ordered Array<string> of task/source chunks.",
     "- context_type: either 'string' or 'list[str]'.",
     "- context_lengths: per-chunk character counts for planning chunk sizes and batching.",
     "- context_chunks: chunk records with id, kind, label, sourcePath?, charLength, lineCount, and content.",
+    `- child_prompt_profile: default child prompt profile for recursive calls (${metadata.childPromptProfile}).`,
+    `- subcall_policy: whether recursive child calls are enabled (${metadata.subcallPolicy}).`,
     "Recommended pattern: const chunks = Array.isArray(get('context')) ? get('context') : [String(get('context') ?? get('Prompt') ?? '')];",
     "Inspect all chunks before deciding how to recurse; favor chunk-level summaries, then aggregate those summaries into Final.",
     frame.kind === "child"
@@ -774,34 +789,51 @@ function buildProgramContractLines(frame: RlmFrameState): string[] {
   ];
 }
 
-function buildContextStrategyBlocks(promptProfile: "default" | "qwen3-8b"): string[] {
+function buildContextStrategyBlocks(
+  promptProfile: "default" | "qwen3-8b",
+  subcallPolicy: "enabled" | "disabled",
+): string[] {
   const blocks = [
     [
       "Context strategy guidance:",
       "- Inspect Context / context_chunks before deciding how to split work.",
-      "- If context_type === 'list[str]', recurse over chunks or groups of chunks and aggregate their outputs.",
+      subcallPolicy === "enabled"
+        ? "- If context_type === 'list[str]', recurse over chunks or groups of chunks and aggregate their outputs."
+        : "- If context_type === 'list[str]', iterate through chunks inside the current REPL and aggregate local notes without child calls.",
       "- If context_type === 'string', consider deriving your own chunk boundaries (for example by markdown headers, paragraphs, or fixed-size windows) before recursing.",
       "- Use context_lengths to decide whether to batch neighboring chunks or recurse one chunk at a time.",
     ].join("\n"),
-    [
-      "Worked example: summarize each context chunk before aggregation",
-      "```javascript",
-      "const chunks = Array.isArray(get('context')) ? get('context') : [String(get('context') ?? '')];",
-      "for (let i = 0; i < chunks.length; i += 1) {",
-      "  const key = `chunk_${i + 1}_summary`;",
-      "  subcall(`Summarize chunk ${i + 1} in 2 sentences.\\n\\n${chunks[i]}`, key);",
-      "}",
-      "const summaries = chunks.map((_, i) => get(`chunk_${i + 1}_summary`) ?? '');",
-      "setFinal(summaries.join('\\n'));",
-      "```",
-    ].join("\n"),
+    subcallPolicy === "enabled"
+      ? [
+          "Worked example: summarize each context chunk before aggregation",
+          "```javascript",
+          "const chunks = Array.isArray(get('context')) ? get('context') : [String(get('context') ?? '')];",
+          "for (let i = 0; i < chunks.length; i += 1) {",
+          "  const key = `chunk_${i + 1}_summary`;",
+          "  llm_query(`Summarize chunk ${i + 1} in 2 sentences.\\n\\n${chunks[i]}`, key, { promptProfile: get('child_prompt_profile') });",
+          "}",
+          "const summaries = chunks.map((_, i) => get(`chunk_${i + 1}_summary`) ?? '');",
+          "setFinal(summaries.join('\\n'));",
+          "```",
+        ].join("\n")
+      : [
+          "Worked example: REPL-only chunk notes without subcalls",
+          "```javascript",
+          "const chunks = Array.isArray(get('context')) ? get('context') : [String(get('context') ?? '')];",
+          "const notes = chunks.map((chunk, i) => `Chunk ${i + 1}: ${chunk.slice(0, 120)}`);",
+          "set('notes', notes.join('\\n'));",
+          "setFinal(notes.join('\\n'));",
+          "```",
+        ].join("\n"),
     [
       "Worked example: split one large markdown string by headers",
       "```javascript",
       "const raw = String(get('Prompt') ?? '');",
       "const sections = raw.split(/\\n(?=##?\\s)/).filter(Boolean);",
       "for (let i = 0; i < sections.length; i += 1) {",
-      "  subcall(`Extract the key facts from section ${i + 1}.\\n\\n${sections[i]}`, `section_${i + 1}`);",
+      subcallPolicy === "enabled"
+        ? "  llm_query(`Extract the key facts from section ${i + 1}.\\n\\n${sections[i]}`, `section_${i + 1}`);"
+        : "  set(`section_${i + 1}`, sections[i].slice(0, 200));",
       "}",
       "const merged = sections.map((_, i) => get(`section_${i + 1}`) ?? '').join('\\n');",
       "setFinal(merged);",
@@ -813,7 +845,7 @@ function buildContextStrategyBlocks(promptProfile: "default" | "qwen3-8b"): stri
     blocks.push(
       [
         "Qwen3-8B profile guidance:",
-        "- Batch nearby chunks when possible instead of launching many tiny subcalls.",
+        "- Batch nearby chunks when possible instead of launching many tiny child calls.",
         "- Keep child prompts short and explicit about the desired output format.",
         "- Prefer one aggregation pass over repeated re-summarization of the same chunks.",
       ].join("\n"),
@@ -821,6 +853,27 @@ function buildContextStrategyBlocks(promptProfile: "default" | "qwen3-8b"): stri
   }
 
   return blocks;
+}
+
+function resolveChildEnvironmentOptions(
+  parent: RlmFrameState,
+  execution: Extract<RlmExecutorResult, { kind: "subcall" }>,
+): {
+  promptProfile: "default" | "qwen3-8b";
+  childPromptProfile: "default" | "qwen3-8b";
+  subcallPolicy: "enabled" | "disabled";
+} {
+  const metadata = parent.environment.getPromptMetadata({ previewChars: 0 });
+  const nextPromptProfile =
+    execution.subcall.promptProfile === "qwen3-8b" || execution.subcall.promptProfile === "default"
+      ? execution.subcall.promptProfile
+      : metadata.childPromptProfile;
+
+  return {
+    promptProfile: nextPromptProfile,
+    childPromptProfile: nextPromptProfile,
+    subcallPolicy: metadata.subcallPolicy,
+  };
 }
 
 function summarizeLogs(logs: string[]): {

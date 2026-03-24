@@ -1,5 +1,5 @@
 import { writeFileSync } from "node:fs";
-import type { RlmPromptProfile } from "./args";
+import type { RlmPromptProfile, RlmSubcallPolicy } from "./args";
 import type { RlmRequest, RlmPromptContext } from "./request";
 import {
   buildFinalFileContent,
@@ -16,6 +16,8 @@ export const DEFAULT_METADATA_PREVIEW_CHARS = 240;
 export interface RlmPromptMetadata {
   label?: string;
   promptProfile: RlmPromptProfile;
+  childPromptProfile: RlmPromptProfile;
+  subcallPolicy: RlmSubcallPolicy;
   promptCharLength: number;
   promptLineCount: number;
   promptPreview: string;
@@ -51,6 +53,8 @@ export class RlmPromptEnvironment {
       prompt: string;
       label?: string;
       promptProfile: RlmPromptProfile;
+      childPromptProfile: RlmPromptProfile;
+      subcallPolicy: RlmSubcallPolicy;
       promptContext: RlmPromptContext;
       request?: RlmRequest;
     },
@@ -62,6 +66,8 @@ export class RlmPromptEnvironment {
     return new RlmPromptEnvironment({
       prompt: request.promptContent,
       promptProfile: request.promptProfile,
+      childPromptProfile: request.childPromptProfile,
+      subcallPolicy: request.subcallPolicy,
       promptContext: request.promptContext,
       request,
     });
@@ -70,12 +76,19 @@ export class RlmPromptEnvironment {
   static fromPrompt(
     prompt: string,
     label?: string,
-    options: { promptProfile?: RlmPromptProfile } = {},
+    options: {
+      promptProfile?: RlmPromptProfile;
+      childPromptProfile?: RlmPromptProfile;
+      subcallPolicy?: RlmSubcallPolicy;
+    } = {},
   ): RlmPromptEnvironment {
+    const promptProfile = options.promptProfile ?? "default";
     return new RlmPromptEnvironment({
       prompt,
       label,
-      promptProfile: options.promptProfile ?? "default",
+      promptProfile,
+      childPromptProfile: options.childPromptProfile ?? promptProfile,
+      subcallPolicy: options.subcallPolicy ?? "enabled",
       promptContext: buildPromptContext(prompt, [], prompt),
     });
   }
@@ -99,6 +112,8 @@ export class RlmPromptEnvironment {
     return {
       label: this.input.label,
       promptProfile: this.input.promptProfile,
+      childPromptProfile: this.input.childPromptProfile,
+      subcallPolicy: this.input.subcallPolicy,
       promptCharLength: this.input.prompt.length,
       promptLineCount: countLines(this.input.prompt),
       promptPreview,
@@ -153,6 +168,9 @@ export class RlmPromptEnvironment {
       context_lengths: [...this.input.promptContext.contextLengths],
       context_chunks: contextChunks,
       prompt_profile: this.input.promptProfile,
+      child_prompt_profile: this.input.childPromptProfile,
+      subcall_policy: this.input.subcallPolicy,
+      allow_subcalls: this.input.subcallPolicy === "enabled",
       label: this.input.label,
       variables: Object.fromEntries(this.variables),
       metadata: this.getPromptMetadata({ previewChars: 0 }),
@@ -236,7 +254,12 @@ export class RlmPromptEnvironment {
 
     writeFileSync(
       this.input.request.taskFilePath,
-      buildTaskFileContent(this.input.request.question, this.input.request.promptProfile),
+      buildTaskFileContent(
+        this.input.request.question,
+        this.input.request.promptProfile,
+        this.input.request.childPromptProfile,
+        this.input.request.subcallPolicy,
+      ),
       "utf8",
     );
     writeFileSync(
@@ -263,6 +286,8 @@ export class RlmPromptEnvironment {
       buildWorkspaceRootContent({
         question: this.input.request.question,
         promptProfile: this.input.request.promptProfile,
+        childPromptProfile: this.input.request.childPromptProfile,
+        subcallPolicy: this.input.request.subcallPolicy,
         promptContext: this.input.request.promptContext,
         promptContent: buildPromptContent(
           this.input.request.question,

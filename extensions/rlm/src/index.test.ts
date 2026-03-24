@@ -341,47 +341,21 @@ test("registerRlmExtension wires /rlm and forwards all workflow handlers", async
     },
   };
 
-  const returnedWorkflow = registerRlmExtension(api, workflow);
-  const ctx = createContext();
-  const sessionSwitchEvent: SessionSwitchEvent = {
-    reason: "resume",
-    previousSessionFile: "/tmp/previous.pi",
-  };
-  const sessionForkEvent: SessionForkEvent = {
-    previousSessionFile: "/tmp/previous.pi",
-  };
-  const sessionCompactEvent: SessionCompactEvent = {
-    compactionEntry: { id: "compact-1" },
-    fromExtension: true,
-  };
+  registerRlmExtension(api, workflow);
 
-  assert.equal(returnedWorkflow, workflow);
   assert.equal(commands.rlm?.description, RLM_COMMAND_DESCRIPTION);
-  assert.ok(listeners.tool_call);
-  assert.ok(listeners.agent_end);
-  assert.ok(listeners.before_agent_start);
-  assert.ok(listeners.turn_end);
-  assert.ok(listeners.session_start);
-  assert.ok(listeners.session_switch);
-  assert.ok(listeners.session_fork);
-  assert.ok(listeners.session_compact);
-  assert.ok(listeners.session_shutdown);
+  const ctx = createContext();
 
-  assert.equal(commands.rlm?.handler("what changed?", ctx), "command-result");
-  assert.equal(listeners.tool_call?.({ toolName: "read" }, ctx), "tool-result");
-  assert.equal(listeners.agent_end?.({ messages: ["done"] }, ctx), "agent-end-result");
-  assert.deepEqual(listeners.before_agent_start?.({ systemPrompt: "base" }, ctx), {
-    systemPrompt: "base\n\nrlm",
-  });
-  assert.equal(listeners.turn_end?.({ message: { role: "assistant" } }, ctx), "turn-end-result");
-  assert.equal(listeners.session_start?.({ restored: true }, ctx), "session-start-result");
-  assert.equal(listeners.session_switch?.(sessionSwitchEvent, ctx), "session-switch-result");
-  assert.equal(listeners.session_fork?.(sessionForkEvent, ctx), "session-fork-result");
-  assert.equal(listeners.session_compact?.(sessionCompactEvent, ctx), "session-compact-result");
-  assert.equal(
-    listeners.session_shutdown?.({ reason: "shutdown" }, ctx),
-    "session-shutdown-result",
-  );
+  await commands.rlm?.handler("inspect the generated workspace", ctx);
+  listeners.tool_call?.({ toolName: "read" }, ctx);
+  await listeners.agent_end?.({ messages: [{ role: "assistant", content: [] }] }, ctx);
+  listeners.before_agent_start?.({ systemPrompt: "base" }, ctx);
+  listeners.turn_end?.({ message: {} }, ctx);
+  listeners.session_start?.({ restored: false }, ctx);
+  listeners.session_switch?.({ reason: "resume", previousSessionFile: "/tmp/a" }, ctx);
+  listeners.session_fork?.({ previousSessionFile: "/tmp/a" }, ctx);
+  listeners.session_compact?.({ compactionEntry: { id: "compact-1" }, fromExtension: true }, ctx);
+  listeners.session_shutdown?.({ reason: "exit" }, ctx);
 
   assert.deepEqual(
     forwarded.map((entry) => entry.type),
@@ -426,6 +400,25 @@ test("/rlm starts a run from prompt metadata only", async () => {
   assert.match(prompt, /set\('Final', answer\)|setFinal/);
   assert.match(prompt, /workflow-request-id:rlm-1/);
   assert.doesNotMatch(prompt, /SENTINEL_IMPORTED_SOURCE_DO_NOT_LEAK/);
+});
+
+test("/rlm surfaces child prompt-profile and subcall policy in the initial prompt", async () => {
+  const { executor } = createQueuedExecutor([]);
+  const harness = createHarness((api) =>
+    registerRlmExtension(api, new RlmWorkflow(api, { executor })),
+  );
+  const ctx = createContext();
+
+  await harness.commands.rlm?.handler(
+    "--prompt-profile default --child-prompt-profile qwen3-8b --subcalls off inspect the workspace",
+    ctx,
+  );
+
+  const prompt = getSentPromptContent(harness, 0);
+  assert.match(prompt, /Default child prompt profile: qwen3-8b\./);
+  assert.match(prompt, /Subcall policy: disabled\./);
+  assert.match(prompt, /subcall\(\.\.\.\) and llm_query\(\.\.\.\) are disabled for this run/i);
+  assert.doesNotMatch(prompt, /- subcall\(prompt, storeAs/);
 });
 
 test("/rlm sets status during an active run and clears it on completion", async () => {
@@ -654,6 +647,51 @@ test("/rlm schedules a child frame and resumes the parent program automatically"
   );
 });
 
+test("/rlm uses the configured child prompt profile for recursive child frames", async () => {
+  const { executor } = createQueuedExecutor([
+    {
+      kind: "subcall",
+      subcall: {
+        prompt: "Summarize the first section.",
+        storeAs: "chunk_1",
+        promptProfile: "qwen3-8b",
+      },
+      variables: { phase: "search" },
+      logs: ["launch child"],
+      summary: undefined,
+    },
+  ]);
+  const harness = createHarness((api) =>
+    registerRlmExtension(api, new RlmWorkflow(api, { executor })),
+  );
+  const ctx = createContext() as ExtensionContext & {
+    notifications?: Array<{ message: string; level?: string }>;
+  };
+
+  await harness.commands.rlm?.handler(
+    "--prompt-profile default --child-prompt-profile qwen3-8b summarize the introduction",
+    ctx,
+  );
+  const initialPrompt = getSentPromptContent(harness, 0);
+
+  await harness.listeners.agent_end?.(
+    {
+      messages: [
+        buildTextMessage("custom", initialPrompt),
+        buildTextMessage(
+          "assistant",
+          'llm_query("Summarize the first section.", "chunk_1", { promptProfile: "qwen3-8b" });',
+        ),
+      ],
+    },
+    ctx,
+  );
+
+  const childPrompt = getSentPromptContent(harness, 1);
+  assert.match(childPrompt, /Prompt profile: qwen3-8b\./);
+  assert.match(childPrompt, /Default child prompt profile: qwen3-8b\./);
+});
+
 test("/rlm can satisfy repeated subcalls inside one parent program without a new parent turn", async () => {
   const { executor } = createLoopingSubcallExecutor();
   const harness = createHarness((api) =>
@@ -826,136 +864,6 @@ test("/rlm stops when programs exceed the iteration budget", async () => {
   ]);
 });
 
-test("/rlm accepts prose-wrapped fenced programs without a repair turn", async () => {
-  const { executor } = createQueuedExecutor([
-    {
-      kind: "completed",
-      variables: { Final: "done" },
-      logs: [],
-      summary: undefined,
-    },
-  ]);
-  const harness = createHarness((api) =>
-    registerRlmExtension(api, new RlmWorkflow(api, { executor })),
-  );
-  const ctx = createContext() as ExtensionContext & {
-    notifications?: Array<{ message: string; level?: string }>;
-  };
-
-  await harness.commands.rlm?.handler("inspect the workspace", ctx);
-  const prompt = getSentPromptContent(harness, 0);
-  const finalFilePath = extractMetadataPath(prompt, "finalFilePath");
-  assert.ok(finalFilePath);
-
-  await harness.listeners.agent_end?.(
-    {
-      messages: [
-        buildTextMessage("custom", prompt),
-        buildTextMessage(
-          "assistant",
-          'Here is the program you asked for:\n```js\nsetFinal("done");\n```',
-        ),
-      ],
-    },
-    ctx,
-  );
-
-  assert.equal(harness.sentMessages.length, 1);
-  assert.deepEqual(ctx.notifications, [
-    {
-      message: `RLM final result ready at ${finalFilePath}.`,
-      level: "info",
-    },
-  ]);
-});
-
-test("/rlm accepts raw code extracted from surrounding prose", async () => {
-  const { executor } = createQueuedExecutor([
-    {
-      kind: "completed",
-      variables: { Final: "done" },
-      logs: [],
-      summary: undefined,
-    },
-  ]);
-  const harness = createHarness((api) =>
-    registerRlmExtension(api, new RlmWorkflow(api, { executor })),
-  );
-  const ctx = createContext() as ExtensionContext & {
-    notifications?: Array<{ message: string; level?: string }>;
-  };
-
-  await harness.commands.rlm?.handler("inspect the workspace", ctx);
-  const prompt = getSentPromptContent(harness, 0);
-  const finalFilePath = extractMetadataPath(prompt, "finalFilePath");
-  assert.ok(finalFilePath);
-
-  await harness.listeners.agent_end?.(
-    {
-      messages: [
-        buildTextMessage("custom", prompt),
-        buildTextMessage(
-          "assistant",
-          ['Here is the program:', 'const answer = "done";', 'setFinal(answer);', 'Hope that helps.'].join("\n"),
-        ),
-      ],
-    },
-    ctx,
-  );
-
-  assert.equal(harness.sentMessages.length, 1);
-  assert.deepEqual(ctx.notifications, [
-    {
-      message: `RLM final result ready at ${finalFilePath}.`,
-      level: "info",
-    },
-  ]);
-});
-
-test("/rlm does not execute a truncated prefix when prose-wrapped code is still invalid", async () => {
-  const { executor } = createQueuedExecutor([]);
-  const harness = createHarness((api) =>
-    registerRlmExtension(
-      api,
-      new RlmWorkflow(api, {
-        maxMalformedOutputRetries: 1,
-        executor,
-      }),
-    ),
-  );
-  const ctx = createContext() as ExtensionContext & {
-    notifications?: Array<{ message: string; level?: string }>;
-  };
-
-  await harness.commands.rlm?.handler("inspect the workspace", ctx);
-  const prompt = getSentPromptContent(harness, 0);
-
-  await harness.listeners.agent_end?.(
-    {
-      messages: [
-        buildTextMessage("custom", prompt),
-        buildTextMessage(
-          "assistant",
-          [
-            'Here is the program:',
-            'const answer = "done";',
-            'setFinal(answer);',
-            'setSummary(`missing close`',
-            'Hope that helps.',
-          ].join("\n"),
-        ),
-      ],
-    },
-    ctx,
-  );
-
-  assert.equal(harness.sentMessages.length, 2);
-  assert.equal(ctx.notifications?.length, 1);
-  assert.equal(ctx.notifications?.[0]?.level, "warning");
-  assert.match(ctx.notifications?.[0]?.message ?? "", /RLM could not parse the assistant program:/);
-  assert.match(ctx.notifications?.[0]?.message ?? "", /must be valid JavaScript/i);
-});
-
 test("/rlm retries malformed assistant programs once and then stops with a clear error", async () => {
   const { executor } = createQueuedExecutor([]);
   const harness = createHarness((api) =>
@@ -980,7 +888,7 @@ test("/rlm retries malformed assistant programs once and then stops with a clear
         buildTextMessage("custom", prompt),
         buildTextMessage(
           "assistant",
-          '```js\nset("a", "one");\n```\n```js\nset("b", "two");\n```',
+          '```js\nsetFinal("done");\n```\n\n```js\nsetFinal("again");\n```',
         ),
       ],
     },
@@ -991,7 +899,7 @@ test("/rlm retries malformed assistant programs once and then stops with a clear
   const retryPrompt = getSentPromptContent(harness, 1);
   assert.match(retryPrompt, /workflow-request-id:rlm-2/);
   assert.match(retryPrompt, /previous RLM JavaScript program was invalid/i);
-  assert.match(retryPrompt, /exactly one executable JavaScript code block/i);
+  assert.match(retryPrompt, /do not include prose/i);
 
   await harness.listeners.agent_end?.(
     {

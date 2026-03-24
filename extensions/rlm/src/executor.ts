@@ -16,6 +16,7 @@ export interface RlmExecutorInput {
 export interface RlmExecutorSubcallRequest {
   prompt: string;
   storeAs: string;
+  promptProfile?: string;
 }
 
 interface RlmExecutorBaseResult {
@@ -738,15 +739,39 @@ globalThis.setSummary = function setSummary(value) {
   state.summary = value;
   return state.summary;
 };
-globalThis.subcall = function subcall(prompt, storeAs) {
+function buildSubcallRequest(prompt, storeAs, options) {
+  if (bindings.allow_subcalls === false) {
+    throw new Error("subcall(...) and llm_query(...) are disabled for this run.");
+  }
+
+  const request = {
+    prompt: stringifyValue(prompt).trim(),
+    storeAs: stringifyValue(storeAs).trim(),
+  };
+
+  if (request.prompt.length === 0 || request.storeAs.length === 0) {
+    throw new Error("subcall(prompt, storeAs) requires non-empty string arguments.");
+  }
+
+  if (options && typeof options === "object" && typeof options.promptProfile === "string") {
+    const promptProfile = options.promptProfile.trim();
+    if (promptProfile.length > 0) {
+      request.promptProfile = promptProfile;
+    }
+  }
+
   state.kind = "subcall";
   delete state.finalResult;
   delete state.variables.Final;
-  state.subcall = {
-    prompt: stringifyValue(prompt),
-    storeAs: stringifyValue(storeAs),
-  };
+  state.subcall = request;
   return state.subcall;
+}
+
+globalThis.subcall = function subcall(prompt, storeAs, options) {
+  return buildSubcallRequest(prompt, storeAs, options);
+};
+globalThis.llm_query = function llm_query(prompt, storeAs, options) {
+  return buildSubcallRequest(prompt, storeAs, options);
 };
 globalThis.log = function log(...values) {
   state.logs.push(values.map((value) => stringifyValue(value)).join(" "));
@@ -760,10 +785,11 @@ try {
     "setFinal",
     "setSummary",
     "subcall",
+    "llm_query",
     "log",
     ${JSON.stringify(code)},
   );
-  userProgram(bindings, globalThis.get, globalThis.set, globalThis.setFinal, globalThis.setSummary, globalThis.subcall, globalThis.log);
+  userProgram(bindings, globalThis.get, globalThis.set, globalThis.setFinal, globalThis.setSummary, globalThis.subcall, globalThis.llm_query, globalThis.log);
   writeOutput(state);
 } catch (error) {
   writeError(error instanceof Error ? error.stack ?? error.message : String(error));
@@ -904,7 +930,11 @@ while (true) {
     state.summary = value;
     return value;
   };
-  globalThis.subcall = function subcall(prompt, storeAs) {
+  function buildSubcallRequest(prompt, storeAs, options) {
+    if (bindings.allow_subcalls === false) {
+      throw new Error("subcall(...) and llm_query(...) are disabled for this run.");
+    }
+
     const request = {
       prompt: stringifyValue(prompt).trim(),
       storeAs: stringifyValue(storeAs).trim(),
@@ -912,6 +942,13 @@ while (true) {
 
     if (request.prompt.length === 0 || request.storeAs.length === 0) {
       throw new Error("subcall(prompt, storeAs) requires non-empty string arguments.");
+    }
+
+    if (options && typeof options === "object" && typeof options.promptProfile === "string") {
+      const promptProfile = options.promptProfile.trim();
+      if (promptProfile.length > 0) {
+        request.promptProfile = promptProfile;
+      }
     }
 
     if (Object.prototype.hasOwnProperty.call(state.variables, request.storeAs)) {
@@ -928,6 +965,13 @@ while (true) {
     const suspension = new Error("RLM subcall suspension");
     suspension.name = "RlmSubcallSuspension";
     throw suspension;
+  }
+
+  globalThis.subcall = function subcall(prompt, storeAs, options) {
+    return buildSubcallRequest(prompt, storeAs, options);
+  };
+  globalThis.llm_query = function llm_query(prompt, storeAs, options) {
+    return buildSubcallRequest(prompt, storeAs, options);
   };
   globalThis.log = function log(...values) {
     state.logs.push(values.map((value) => stringifyValue(value)).join(" "));
@@ -952,6 +996,7 @@ while (true) {
       "setFinal",
       "setSummary",
       "subcall",
+      "llm_query",
       "log",
       wrappedProgram,
     );
@@ -963,6 +1008,7 @@ while (true) {
       globalThis.setFinal,
       globalThis.setSummary,
       globalThis.subcall,
+      globalThis.llm_query,
       globalThis.log,
     );
     writeLine(state);
@@ -1141,6 +1187,7 @@ function normalizeExecutorOutput(stdout: string, stderr: string): RlmExecutorRes
 
   const prompt = parsed.subcall.prompt;
   const storeAs = parsed.subcall.storeAs;
+  const promptProfile = parsed.subcall.promptProfile;
   if (typeof prompt !== "string" || prompt.trim().length === 0) {
     return {
       kind: "invalid_output",
@@ -1157,12 +1204,23 @@ function normalizeExecutorOutput(stdout: string, stderr: string): RlmExecutorRes
       stderr,
     };
   }
+  if (typeof promptProfile !== "undefined" && typeof promptProfile !== "string") {
+    return {
+      kind: "invalid_output",
+      message: "Executor subcall output requires promptProfile to be a string when provided.",
+      stdout,
+      stderr,
+    };
+  }
 
   return {
     kind: "subcall",
     subcall: {
       prompt: prompt.trim(),
       storeAs: storeAs.trim(),
+      promptProfile: typeof promptProfile === "string" && promptProfile.trim().length > 0
+        ? promptProfile.trim()
+        : undefined,
     },
     variables: variablesResult.value,
     logs: logsResult.value,

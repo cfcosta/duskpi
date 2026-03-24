@@ -106,7 +106,7 @@ test("PersistentWasmtimeExecutor keeps a live repl across executions", async () 
   });
 
   const second = await executor.execute({
-    program: createProgram("setFinal(joinWithPrefix('two'));"),
+    program: createProgram("setFinal(joinWithPrefix('two'));;".replace(";;", ";")),
     bindings: { Prompt: "demo", variables: { stage: "alpha:ready" } },
   });
 
@@ -144,7 +144,7 @@ test("PersistentWasmtimeExecutor lets the same program walk multiple subcalls ac
   });
   assert.deepEqual(first, {
     kind: "subcall",
-    subcall: { prompt: "Summarize intro", storeAs: "intro_summary" },
+    subcall: { prompt: "Summarize intro", storeAs: "intro_summary", promptProfile: undefined },
     variables: {},
     logs: [],
     summary: undefined,
@@ -156,7 +156,7 @@ test("PersistentWasmtimeExecutor lets the same program walk multiple subcalls ac
   });
   assert.deepEqual(second, {
     kind: "subcall",
-    subcall: { prompt: "Summarize body", storeAs: "body_summary" },
+    subcall: { prompt: "Summarize body", storeAs: "body_summary", promptProfile: undefined },
     variables: {},
     logs: [],
     summary: undefined,
@@ -173,6 +173,77 @@ test("PersistentWasmtimeExecutor lets the same program walk multiple subcalls ac
     logs: [],
     summary: undefined,
   });
+
+  executor.dispose();
+});
+
+test("PersistentWasmtimeExecutor exposes llm_query as a subcall alias with prompt-profile overrides", async () => {
+  const compilerPath = createMockJavyCompiler();
+  const runtimePath = createMockWasmtimeRuntime();
+  const executor = new PersistentWasmtimeExecutor({
+    command: process.execPath,
+    args: ["run", runtimePath],
+    compilerCommand: process.execPath,
+    compilerArgs: ["run", compilerPath],
+  });
+  const program = createProgram(
+    [
+      "const intro = llm_query('Summarize intro', 'intro_summary', { promptProfile: 'qwen3-8b' });",
+      "setFinal(intro);",
+    ].join("\n"),
+  );
+
+  const first = await executor.execute({
+    program,
+    bindings: { variables: {}, allow_subcalls: true },
+  });
+  assert.deepEqual(first, {
+    kind: "subcall",
+    subcall: {
+      prompt: "Summarize intro",
+      storeAs: "intro_summary",
+      promptProfile: "qwen3-8b",
+    },
+    variables: {},
+    logs: [],
+    summary: undefined,
+  });
+
+  const second = await executor.execute({
+    program,
+    bindings: { variables: { intro_summary: "Intro" }, allow_subcalls: true },
+  });
+  assert.deepEqual(second, {
+    kind: "completed",
+    finalResult: "Intro",
+    variables: { Final: "Intro" },
+    logs: [],
+    summary: undefined,
+  });
+
+  executor.dispose();
+});
+
+test("PersistentWasmtimeExecutor rejects subcalls when the ablation disables them", async () => {
+  const compilerPath = createMockJavyCompiler();
+  const runtimePath = createMockWasmtimeRuntime();
+  const executor = new PersistentWasmtimeExecutor({
+    command: process.execPath,
+    args: ["run", runtimePath],
+    compilerCommand: process.execPath,
+    compilerArgs: ["run", compilerPath],
+  });
+
+  const result = await executor.execute({
+    program: createProgram("subcall('Summarize intro', 'intro_summary');"),
+    bindings: { variables: {}, allow_subcalls: false },
+  });
+
+  assert.equal(result.kind, "runtime_error");
+  if (result.kind !== "runtime_error") {
+    throw new Error("expected runtime_error");
+  }
+  assert.match(result.message, /disabled for this run/i);
 
   executor.dispose();
 });
@@ -289,7 +360,7 @@ test("WasmtimeExecutor normalizes subcall requests", async () => {
 
   assert.deepEqual(result, {
     kind: "subcall",
-    subcall: { prompt: "Summarize chunk 1", storeAs: "chunk_1" },
+    subcall: { prompt: "Summarize chunk 1", storeAs: "chunk_1", promptProfile: undefined },
     variables: { stage: "search" },
     logs: ["subcall"],
     summary: undefined,
@@ -340,7 +411,7 @@ test("WasmtimeExecutor javy mode surfaces subcall requests from executed JavaScr
 
   assert.deepEqual(result, {
     kind: "subcall",
-    subcall: { prompt: "Summarize intro", storeAs: "intro_summary" },
+    subcall: { prompt: "Summarize intro", storeAs: "intro_summary", promptProfile: undefined },
     variables: { phase: "child" },
     logs: [],
     summary: undefined,

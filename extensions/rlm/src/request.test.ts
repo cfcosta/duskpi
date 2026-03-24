@@ -14,18 +14,24 @@ test("parseRlmArgs treats the full command body as the input prompt", () => {
       raw: "summarize the architecture tradeoffs",
       question: "summarize the architecture tradeoffs",
       promptProfile: "default",
+      childPromptProfile: "default",
+      subcallPolicy: "enabled",
     },
   });
 });
 
-test("parseRlmArgs accepts an explicit prompt profile flag", () => {
-  const parsed = parseRlmArgs("--prompt-profile qwen3-8b summarize the architecture tradeoffs");
+test("parseRlmArgs accepts explicit prompt-profile and subcall flags", () => {
+  const parsed = parseRlmArgs(
+    "--prompt-profile default --child-prompt-profile qwen3-8b --subcalls off summarize the architecture tradeoffs",
+  );
   assert.deepEqual(parsed, {
     ok: true,
     value: {
-      raw: "--prompt-profile qwen3-8b summarize the architecture tradeoffs",
+      raw: "--prompt-profile default --child-prompt-profile qwen3-8b --subcalls off summarize the architecture tradeoffs",
       question: "summarize the architecture tradeoffs",
-      promptProfile: "qwen3-8b",
+      promptProfile: "default",
+      childPromptProfile: "qwen3-8b",
+      subcallPolicy: "disabled",
     },
   });
 });
@@ -120,6 +126,7 @@ test("resolveRlmRequest auto-imports referenced local markdown sources into the 
   assert.equal(result.value.importedSources.length, 1);
   assert.equal(result.value.importedSources[0]?.absolutePath, sourcePath);
   assert.equal(result.value.promptContext.type, "list[str]");
+  assert.equal(result.value.subcallPolicy, "enabled");
   assert.deepEqual(result.value.promptContext.contextLengths.length, 2);
   assert.match(result.value.promptContent, /Recursive Language Models use recursive calls/);
   assert.match(result.value.content, /context_type: list\[str\]/);
@@ -135,17 +142,22 @@ test("resolveRlmRequest creates a normalized workspace-backed request", async ()
   const workspacesDir = path.join(tempDir, "workspaces");
   mkdirSync(workspacesDir);
 
-  const result = await resolveRlmRequest("--prompt-profile qwen3-8b summarize the recursive workflow", {
-    cwd: tempDir,
-    workspaceParentDir: workspacesDir,
-  });
+  const result = await resolveRlmRequest(
+    "--prompt-profile default --child-prompt-profile qwen3-8b --no-subcalls summarize the recursive workflow",
+    {
+      cwd: tempDir,
+      workspaceParentDir: workspacesDir,
+    },
+  );
   assert.equal(result.ok, true);
   if (!result.ok) {
     throw new Error("expected valid request to succeed");
   }
 
   assert.equal(result.value.question, "summarize the recursive workflow");
-  assert.equal(result.value.promptProfile, "qwen3-8b");
+  assert.equal(result.value.promptProfile, "default");
+  assert.equal(result.value.childPromptProfile, "qwen3-8b");
+  assert.equal(result.value.subcallPolicy, "disabled");
   assert.equal(result.value.extension, ".md");
   assert.match(result.value.absolutePath, /workspace\.md$/);
   assert.match(result.value.taskFilePath, /task\.md$/);
@@ -157,11 +169,15 @@ test("resolveRlmRequest creates a normalized workspace-backed request", async ()
   assert.deepEqual(result.value.promptContext.contextLengths, [32]);
   assert.match(result.value.promptContent, /RLM Input Prompt/);
   assert.match(result.value.content, /persistent environment used by \/rlm/i);
-  assert.match(result.value.content, /promptProfile: qwen3-8b/);
+  assert.match(result.value.content, /promptProfile: default/);
+  assert.match(result.value.content, /childPromptProfile: qwen3-8b/);
+  assert.match(result.value.content, /subcallPolicy: disabled/);
   assert.match(result.value.content, /context_lengths: \[32\]/);
   assert.match(result.value.content, /summarize the recursive workflow/);
 
-  assert.match(readFileSync(result.value.taskFilePath, "utf8"), /promptProfile: qwen3-8b/);
+  assert.match(readFileSync(result.value.taskFilePath, "utf8"), /promptProfile: default/);
+  assert.match(readFileSync(result.value.taskFilePath, "utf8"), /childPromptProfile: qwen3-8b/);
+  assert.match(readFileSync(result.value.taskFilePath, "utf8"), /subcallPolicy: disabled/);
   assert.match(readFileSync(result.value.taskFilePath, "utf8"), /summarize the recursive workflow/);
   assert.match(readFileSync(result.value.scratchpadFilePath, "utf8"), /No notes yet/i);
   assert.match(readFileSync(result.value.finalFilePath, "utf8"), /Pending final answer/i);
