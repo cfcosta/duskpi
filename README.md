@@ -15,7 +15,6 @@ The default package bundles upstream Pi together with repo-owned resources:
   - `/owasp-fix`
   - `/test-audit`
   - `/refactor`
-  - `/rlm`
 - **Planning extension**
   - `/plan`
   - `/todos`
@@ -177,21 +176,6 @@ The bundled `autoresearch` extension adds:
 
 Use it when you want Pi to benchmark changes in a loop, keep wins automatically, and preserve experiment history in `autoresearch.jsonl`.
 
-### 3a. Explore long documents with `/rlm`
-
-The bundled `rlm` extension adds:
-
-- `/rlm`
-
-Use it when you want Pi to reason over a long local note or document through an extension-managed environment instead of stuffing the full input into the root prompt at once.
-
-The current implementation is aimed at long documents and notes first, with a Recursive Language Model-inspired controller that:
-
-- starts from document metadata instead of the full file body
-- reads bounded slices on demand
-- searches the document through structured actions
-- stores intermediate sub-call results in extension-owned state
-
 ### 4. Ask side questions without interrupting the main task
 
 The bundled `/btw` extension opens an ephemeral overlay for quick side questions.
@@ -257,7 +241,6 @@ That is why commands like these should be present right away:
 - `/plan`
 - `/todos`
 - `/autoresearch`
-- `/rlm`
 - `/btw`
 - `/web-search`
 - `/web-fetch`
@@ -280,7 +263,6 @@ Notable entries:
 - `catppuccin`
 - `plan` (repo-local private extension vendored under `extensions/plan`)
 - `autoresearch` (vendored upstream extension under `extensions/autoresearch`)
-- `rlm`
 - `btw`
 - `web-fetch`
 - `web-search`
