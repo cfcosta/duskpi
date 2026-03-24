@@ -109,6 +109,40 @@ test("parseAssistantProgram extracts raw code from surrounding prose", () => {
   });
 });
 
+test("parseAssistantProgram does not truncate invalid trailing code from loose text", () => {
+  const result = parseAssistantProgram(
+    [
+      'const answer = "done";',
+      'setFinal(answer);',
+      'setSummary(`missing close`',
+    ].join("\n"),
+  );
+  assert.equal(result.ok, false);
+  if (result.ok) {
+    throw new Error("expected parse failure");
+  }
+
+  assert.equal(result.error.code, "invalid_program");
+});
+
+test("parseAssistantProgram rejects prose-wrapped code when the extracted middle is still invalid", () => {
+  const result = parseAssistantProgram(
+    [
+      "Here is the program:",
+      'const answer = "done";',
+      'setFinal(answer);',
+      'setSummary(`missing close`',
+      "Hope that helps.",
+    ].join("\n"),
+  );
+  assert.equal(result.ok, false);
+  if (result.ok) {
+    throw new Error("expected parse failure");
+  }
+
+  assert.equal(result.error.code, "invalid_program");
+});
+
 test("parseAssistantProgram rejects multiple code blocks explicitly", () => {
   const result = parseAssistantProgram('```js\nset("a", 1);\n```\n```js\nset("b", 2);\n```');
   assert.equal(result.ok, false);

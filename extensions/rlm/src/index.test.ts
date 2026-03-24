@@ -912,6 +912,50 @@ test("/rlm accepts raw code extracted from surrounding prose", async () => {
   ]);
 });
 
+test("/rlm does not execute a truncated prefix when prose-wrapped code is still invalid", async () => {
+  const { executor } = createQueuedExecutor([]);
+  const harness = createHarness((api) =>
+    registerRlmExtension(
+      api,
+      new RlmWorkflow(api, {
+        maxMalformedOutputRetries: 1,
+        executor,
+      }),
+    ),
+  );
+  const ctx = createContext() as ExtensionContext & {
+    notifications?: Array<{ message: string; level?: string }>;
+  };
+
+  await harness.commands.rlm?.handler("inspect the workspace", ctx);
+  const prompt = getSentPromptContent(harness, 0);
+
+  await harness.listeners.agent_end?.(
+    {
+      messages: [
+        buildTextMessage("custom", prompt),
+        buildTextMessage(
+          "assistant",
+          [
+            'Here is the program:',
+            'const answer = "done";',
+            'setFinal(answer);',
+            'setSummary(`missing close`',
+            'Hope that helps.',
+          ].join("\n"),
+        ),
+      ],
+    },
+    ctx,
+  );
+
+  assert.equal(harness.sentMessages.length, 2);
+  assert.equal(ctx.notifications?.length, 1);
+  assert.equal(ctx.notifications?.[0]?.level, "warning");
+  assert.match(ctx.notifications?.[0]?.message ?? "", /RLM could not parse the assistant program:/);
+  assert.match(ctx.notifications?.[0]?.message ?? "", /must be valid JavaScript/i);
+});
+
 test("/rlm retries malformed assistant programs once and then stops with a clear error", async () => {
   const { executor } = createQueuedExecutor([]);
   const harness = createHarness((api) =>

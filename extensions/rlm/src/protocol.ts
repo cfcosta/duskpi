@@ -344,27 +344,48 @@ function isExecutableJavaScriptFence(language: string): boolean {
 
 function extractLikelyProgramFromLooseText(text: string): string | undefined {
   const lines = text.split(/\r?\n/);
-  let bestCandidate: string | undefined;
-
-  for (let start = 0; start < lines.length; start += 1) {
-    for (let end = lines.length; end > start; end -= 1) {
-      const candidate = lines.slice(start, end).join("\n").trim();
-      if (candidate.length === 0 || !looksLikeProgram(candidate) || !isValidJavaScript(candidate)) {
-        continue;
-      }
-
-      if (!bestCandidate || candidate.length > bestCandidate.length) {
-        bestCandidate = candidate;
-      }
-    }
+  let start = 0;
+  while (start < lines.length && !looksLikeCodeLine(lines[start]!)) {
+    start += 1;
   }
 
-  return bestCandidate;
+  let end = lines.length - 1;
+  while (end >= start && !looksLikeCodeLine(lines[end]!)) {
+    end -= 1;
+  }
+
+  if (start > end) {
+    return undefined;
+  }
+
+  const leadingWrapper = lines.slice(0, start).some((line) => line.trim().length > 0);
+  const trailingWrapper = lines.slice(end + 1).some((line) => line.trim().length > 0);
+  if (!leadingWrapper && !trailingWrapper) {
+    return undefined;
+  }
+
+  const candidate = lines.slice(start, end + 1).join("\n").trim();
+  if (candidate.length === 0 || !looksLikeProgram(candidate) || !isValidJavaScript(candidate)) {
+    return undefined;
+  }
+
+  return candidate;
 }
 
 function looksLikeProgram(candidate: string): boolean {
-  return /(setFinal\s*\(|set\s*\(|subcall\s*\(|log\s*\(|const\s+|let\s+|var\s+|function\s+|class\s+|for\s*\(|while\s*\(|if\s*\(|return\s+|=>|=\s*[^=]|;)/.test(
+  return /(setFinal\s*\(|setSummary\s*\(|set\s*\(|subcall\s*\(|log\s*\(|const\s+|let\s+|var\s+|function\s+|class\s+|for\s*\(|while\s*\(|if\s*\(|return\s+|=>|=\s*[^=]|;)/.test(
     candidate,
+  );
+}
+
+function looksLikeCodeLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (trimmed.length === 0) {
+    return false;
+  }
+
+  return /^((const|let|var|function|class|for|while|if|switch|try|catch|finally)\b|[}\])]|(setFinal|setSummary|set|subcall|log|get|return)\s*\(|[A-Za-z_$][\w$]*\s*=|\/\/|\/\*|\*\s|`|['"[{(])/.test(
+    trimmed,
   );
 }
 
