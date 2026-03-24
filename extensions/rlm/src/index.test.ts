@@ -826,6 +826,49 @@ test("/rlm stops when programs exceed the iteration budget", async () => {
   ]);
 });
 
+test("/rlm accepts prose-wrapped fenced programs without a repair turn", async () => {
+  const { executor } = createQueuedExecutor([
+    {
+      kind: "completed",
+      variables: { Final: "done" },
+      logs: [],
+      summary: undefined,
+    },
+  ]);
+  const harness = createHarness((api) =>
+    registerRlmExtension(api, new RlmWorkflow(api, { executor })),
+  );
+  const ctx = createContext() as ExtensionContext & {
+    notifications?: Array<{ message: string; level?: string }>;
+  };
+
+  await harness.commands.rlm?.handler("inspect the workspace", ctx);
+  const prompt = getSentPromptContent(harness, 0);
+  const finalFilePath = extractMetadataPath(prompt, "finalFilePath");
+  assert.ok(finalFilePath);
+
+  await harness.listeners.agent_end?.(
+    {
+      messages: [
+        buildTextMessage("custom", prompt),
+        buildTextMessage(
+          "assistant",
+          'Here is the program you asked for:\n```js\nsetFinal("done");\n```',
+        ),
+      ],
+    },
+    ctx,
+  );
+
+  assert.equal(harness.sentMessages.length, 1);
+  assert.deepEqual(ctx.notifications, [
+    {
+      message: `RLM final result ready at ${finalFilePath}.`,
+      level: "info",
+    },
+  ]);
+});
+
 test("/rlm retries malformed assistant programs once and then stops with a clear error", async () => {
   const { executor } = createQueuedExecutor([]);
   const harness = createHarness((api) =>
@@ -850,7 +893,7 @@ test("/rlm retries malformed assistant programs once and then stops with a clear
         buildTextMessage("custom", prompt),
         buildTextMessage(
           "assistant",
-          'Here is the program you asked for:\n```js\nsetFinal("done");\n```',
+          '```js\nset("a", "one");\n```\n```js\nset("b", "two");\n```',
         ),
       ],
     },
@@ -861,7 +904,7 @@ test("/rlm retries malformed assistant programs once and then stops with a clear
   const retryPrompt = getSentPromptContent(harness, 1);
   assert.match(retryPrompt, /workflow-request-id:rlm-2/);
   assert.match(retryPrompt, /previous RLM JavaScript program was invalid/i);
-  assert.match(retryPrompt, /must not include prose/i);
+  assert.match(retryPrompt, /exactly one executable JavaScript code block/i);
 
   await harness.listeners.agent_end?.(
     {
@@ -877,7 +920,7 @@ test("/rlm retries malformed assistant programs once and then stops with a clear
   assert.deepEqual(ctx.notifications, [
     {
       message:
-        "RLM could not parse the assistant program: Assistant program output must not include prose outside the JavaScript code block. Retrying (1/1).",
+        "RLM could not parse the assistant program: Assistant program output must contain exactly one executable JavaScript code block. Retrying (1/1).",
       level: "warning",
     },
     {

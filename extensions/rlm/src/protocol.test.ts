@@ -34,17 +34,39 @@ test("parseAssistantProgram accepts a raw JavaScript program", () => {
   assert.match(result.value.code, /inspect\(\)/);
 });
 
-test("parseAssistantProgram rejects prose-wrapped code explicitly", () => {
+test("parseAssistantProgram accepts prose-wrapped fenced code", () => {
   const result = parseAssistantProgram(
     'Here is the program you asked for:\n```js\nsetFinal("done");\n```',
   );
-  assert.equal(result.ok, false);
-  if (result.ok) {
-    throw new Error("expected parse failure");
-  }
+  assert.deepEqual(result, {
+    ok: true,
+    value: {
+      language: "javascript",
+      code: 'setFinal("done");',
+    },
+  });
+});
 
-  assert.equal(result.error.code, "invalid_program");
-  assert.match(result.error.message, /must not include prose/i);
+test("parseAssistantProgram accepts one javascript fence among surrounding markdown", () => {
+  const result = parseAssistantProgram(
+    [
+      "## Plan",
+      "- inspect context",
+      "```text",
+      "scratch note",
+      "```",
+      "```javascript",
+      'setFinal("done");',
+      "```",
+    ].join("\n"),
+  );
+  assert.deepEqual(result, {
+    ok: true,
+    value: {
+      language: "javascript",
+      code: 'setFinal("done");',
+    },
+  });
 });
 
 test("parseAssistantProgram rejects multiple code blocks explicitly", () => {

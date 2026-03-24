@@ -80,39 +80,38 @@ export function parseAssistantProgram(text: string): RlmAssistantProgramParseRes
     return programFailure("empty_output", "Assistant program output was empty.");
   }
 
-  const fencedBlocks = [...normalized.matchAll(/```([a-zA-Z]*)\s*([\s\S]*?)```/g)];
-  if (fencedBlocks.length > 1) {
+  const fencedBlocks = extractFencedCodeBlocks(normalized);
+  if (fencedBlocks.length > 0) {
+    const executableBlocks = fencedBlocks.filter((block) => isExecutableJavaScriptFence(block.language));
+
+    if (executableBlocks.length > 1) {
+      return programFailure(
+        "multiple_blocks",
+        "Assistant program output must contain exactly one executable JavaScript code block.",
+      );
+    }
+
+    if (executableBlocks.length === 1) {
+      const code = executableBlocks[0]!.code.trim();
+      if (code.length === 0) {
+        return programFailure("invalid_program", "Assistant JavaScript code block was empty.");
+      }
+
+      return validateJavaScriptProgram(code);
+    }
+
+    if (fencedBlocks.length === 1) {
+      const language = fencedBlocks[0]!.language || "plain";
+      return programFailure(
+        "invalid_program",
+        `Assistant program block must be fenced as JavaScript; received '${language}'.`,
+      );
+    }
+
     return programFailure(
       "multiple_blocks",
-      "Assistant program output must contain exactly one JavaScript code block.",
+      "Assistant program output must contain exactly one executable JavaScript code block.",
     );
-  }
-
-  if (fencedBlocks.length === 1) {
-    const match = fencedBlocks[0]!;
-    const language = (match[1] ?? "").trim().toLowerCase();
-    const code = (match[2] ?? "").trim();
-    const withoutBlock = normalized.replace(match[0], "").trim();
-
-    if (withoutBlock.length > 0) {
-      return programFailure(
-        "invalid_program",
-        "Assistant program output must not include prose outside the JavaScript code block.",
-      );
-    }
-
-    if (!["", "js", "javascript"].includes(language)) {
-      return programFailure(
-        "invalid_program",
-        `Assistant program block must be fenced as JavaScript; received '${language || "plain"}'.`,
-      );
-    }
-
-    if (code.length === 0) {
-      return programFailure("invalid_program", "Assistant JavaScript code block was empty.");
-    }
-
-    return validateJavaScriptProgram(code);
   }
 
   return validateJavaScriptProgram(normalized);
@@ -298,6 +297,17 @@ function validateJavaScriptProgram(code: string): RlmAssistantProgramParseResult
       code,
     },
   };
+}
+
+function extractFencedCodeBlocks(text: string): Array<{ language: string; code: string }> {
+  return [...text.matchAll(/```([a-zA-Z0-9_-]*)\s*([\s\S]*?)```/g)].map((match) => ({
+    language: (match[1] ?? "").trim().toLowerCase(),
+    code: (match[2] ?? "").trim(),
+  }));
+}
+
+function isExecutableJavaScriptFence(language: string): boolean {
+  return ["", "js", "javascript"].includes(language);
 }
 
 function extractJsonPayload(
