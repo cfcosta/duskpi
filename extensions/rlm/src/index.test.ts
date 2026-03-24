@@ -869,6 +869,49 @@ test("/rlm accepts prose-wrapped fenced programs without a repair turn", async (
   ]);
 });
 
+test("/rlm accepts raw code extracted from surrounding prose", async () => {
+  const { executor } = createQueuedExecutor([
+    {
+      kind: "completed",
+      variables: { Final: "done" },
+      logs: [],
+      summary: undefined,
+    },
+  ]);
+  const harness = createHarness((api) =>
+    registerRlmExtension(api, new RlmWorkflow(api, { executor })),
+  );
+  const ctx = createContext() as ExtensionContext & {
+    notifications?: Array<{ message: string; level?: string }>;
+  };
+
+  await harness.commands.rlm?.handler("inspect the workspace", ctx);
+  const prompt = getSentPromptContent(harness, 0);
+  const finalFilePath = extractMetadataPath(prompt, "finalFilePath");
+  assert.ok(finalFilePath);
+
+  await harness.listeners.agent_end?.(
+    {
+      messages: [
+        buildTextMessage("custom", prompt),
+        buildTextMessage(
+          "assistant",
+          ['Here is the program:', 'const answer = "done";', 'setFinal(answer);', 'Hope that helps.'].join("\n"),
+        ),
+      ],
+    },
+    ctx,
+  );
+
+  assert.equal(harness.sentMessages.length, 1);
+  assert.deepEqual(ctx.notifications, [
+    {
+      message: `RLM final result ready at ${finalFilePath}.`,
+      level: "info",
+    },
+  ]);
+});
+
 test("/rlm retries malformed assistant programs once and then stops with a clear error", async () => {
   const { executor } = createQueuedExecutor([]);
   const harness = createHarness((api) =>

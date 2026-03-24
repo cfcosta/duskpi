@@ -80,7 +80,7 @@ export function parseAssistantProgram(text: string): RlmAssistantProgramParseRes
     return programFailure("empty_output", "Assistant program output was empty.");
   }
 
-  const fencedBlocks = extractFencedCodeBlocks(normalized);
+  const fencedBlocks = extractAllCandidateCodeBlocks(normalized);
   if (fencedBlocks.length > 0) {
     const executableBlocks = fencedBlocks.filter((block) => isExecutableJavaScriptFence(block.language));
 
@@ -114,7 +114,17 @@ export function parseAssistantProgram(text: string): RlmAssistantProgramParseRes
     );
   }
 
-  return validateJavaScriptProgram(normalized);
+  const directProgram = validateJavaScriptProgram(normalized);
+  if (directProgram.ok) {
+    return directProgram;
+  }
+
+  const extractedProgram = extractLikelyProgramFromLooseText(normalized);
+  if (typeof extractedProgram === "string") {
+    return validateJavaScriptProgram(extractedProgram);
+  }
+
+  return directProgram;
 }
 
 export function parseAssistantAction(text: string): RlmAssistantActionParseResult {
@@ -299,6 +309,16 @@ function validateJavaScriptProgram(code: string): RlmAssistantProgramParseResult
   };
 }
 
+function extractAllCandidateCodeBlocks(text: string): Array<{ language: string; code: string }> {
+  const fencedBlocks = extractFencedCodeBlocks(text);
+  if (fencedBlocks.length > 0) {
+    return fencedBlocks;
+  }
+
+  const unclosedBlock = extractUnclosedFencedCodeBlock(text);
+  return unclosedBlock ? [unclosedBlock] : [];
+}
+
 function extractFencedCodeBlocks(text: string): Array<{ language: string; code: string }> {
   return [...text.matchAll(/```([a-zA-Z0-9_-]*)\s*([\s\S]*?)```/g)].map((match) => ({
     language: (match[1] ?? "").trim().toLowerCase(),
@@ -306,8 +326,56 @@ function extractFencedCodeBlocks(text: string): Array<{ language: string; code: 
   }));
 }
 
+function extractUnclosedFencedCodeBlock(text: string): { language: string; code: string } | undefined {
+  const openingFence = text.match(/```([a-zA-Z0-9_-]*)\s*([\s\S]*)$/);
+  if (!openingFence) {
+    return undefined;
+  }
+
+  return {
+    language: (openingFence[1] ?? "").trim().toLowerCase(),
+    code: (openingFence[2] ?? "").trim(),
+  };
+}
+
 function isExecutableJavaScriptFence(language: string): boolean {
-  return ["", "js", "javascript"].includes(language);
+  return ["", "js", "javascript", "ts", "typescript", "mjs", "cjs"].includes(language);
+}
+
+function extractLikelyProgramFromLooseText(text: string): string | undefined {
+  const lines = text.split(/\r?\n/);
+  let bestCandidate: string | undefined;
+
+  for (let start = 0; start < lines.length; start += 1) {
+    for (let end = lines.length; end > start; end -= 1) {
+      const candidate = lines.slice(start, end).join("\n").trim();
+      if (candidate.length === 0 || !looksLikeProgram(candidate) || !isValidJavaScript(candidate)) {
+        continue;
+      }
+
+      if (!bestCandidate || candidate.length > bestCandidate.length) {
+        bestCandidate = candidate;
+      }
+    }
+  }
+
+  return bestCandidate;
+}
+
+function looksLikeProgram(candidate: string): boolean {
+  return /(setFinal\s*\(|set\s*\(|subcall\s*\(|log\s*\(|const\s+|let\s+|var\s+|function\s+|class\s+|for\s*\(|while\s*\(|if\s*\(|return\s+|=>|=\s*[^=]|;)/.test(
+    candidate,
+  );
+}
+
+function isValidJavaScript(code: string): boolean {
+  try {
+    // eslint-disable-next-line no-new-func
+    new Function(code);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function extractJsonPayload(

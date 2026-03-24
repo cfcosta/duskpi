@@ -69,6 +69,46 @@ test("parseAssistantProgram accepts one javascript fence among surrounding markd
   });
 });
 
+test("parseAssistantProgram accepts a typescript fence when the body is valid JavaScript", () => {
+  const result = parseAssistantProgram('```typescript\nconst summary = "done";\nsetFinal(summary);\n```');
+  assert.deepEqual(result, {
+    ok: true,
+    value: {
+      language: "javascript",
+      code: 'const summary = "done";\nsetFinal(summary);',
+    },
+  });
+});
+
+test("parseAssistantProgram accepts an unterminated javascript fence", () => {
+  const result = parseAssistantProgram('```js\nsetFinal("done");');
+  assert.deepEqual(result, {
+    ok: true,
+    value: {
+      language: "javascript",
+      code: 'setFinal("done");',
+    },
+  });
+});
+
+test("parseAssistantProgram extracts raw code from surrounding prose", () => {
+  const result = parseAssistantProgram(
+    [
+      "Here is the program:",
+      'const answer = "done";',
+      "setFinal(answer);",
+      "Hope that helps.",
+    ].join("\n"),
+  );
+  assert.deepEqual(result, {
+    ok: true,
+    value: {
+      language: "javascript",
+      code: 'const answer = "done";\nsetFinal(answer);',
+    },
+  });
+});
+
 test("parseAssistantProgram rejects multiple code blocks explicitly", () => {
   const result = parseAssistantProgram('```js\nset("a", 1);\n```\n```js\nset("b", 2);\n```');
   assert.equal(result.ok, false);
