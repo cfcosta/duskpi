@@ -18,6 +18,7 @@ The current implementation is now closer to the paper's core loop:
 - the assistant must return JavaScript programs, not tool-style JSON actions
 - each frame now keeps a live JavaScript REPL across iterations inside the Wasmtime/Javy sandbox, so top-level declarations persist in addition to symbolic variables
 - recursive sub-calls are requested from code via `subcall(prompt, storeAs)`
+- repeated `subcall()` uses inside the same parent program can now walk through loops by re-entering that program after each child result arrives
 - child results are stored symbolically in parent variables
 - final answers are produced by setting the `Final` variable
 - follow-up turns receive only compact execution metadata, not full observations

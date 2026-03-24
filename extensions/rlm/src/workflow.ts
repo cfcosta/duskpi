@@ -18,7 +18,7 @@ import {
   type RlmExecutorResult,
 } from "./executor";
 import { RlmPromptEnvironment } from "./environment";
-import { parseAssistantProgram } from "./protocol";
+import { parseAssistantProgram, type RlmAssistantProgram } from "./protocol";
 import {
   DEFAULT_RLM_MAX_ITERATIONS,
   DEFAULT_RLM_MAX_MALFORMED_OUTPUT_RETRIES,
@@ -50,6 +50,7 @@ interface RlmFrameState {
   label: string;
   environment: RlmPromptEnvironment;
   executor: RlmExecutorLike;
+  activeProgram?: RlmAssistantProgram;
   storeAs?: string;
 }
 
@@ -182,37 +183,10 @@ export class RlmWorkflow {
       return;
     }
 
-    this.state.iterationCount += 1;
-
-    const execution = await frame.executor.execute({
-      program: program.value,
-      bindings: frame.environment.getExecutionBindings(),
+    frame.activeProgram = program.value;
+    await this.executeFrameProgram(frame, program.value, ctx, {
+      countIteration: true,
     });
-
-    if (execution.kind === "runtime_error" || execution.kind === "invalid_output") {
-      this.handleMalformedOutput(
-        ctx,
-        `RLM program execution failed: ${execution.message}`,
-        "RLM stopped: program execution remained invalid.",
-        execution.message,
-      );
-      return;
-    }
-
-    this.applyExecutionState(frame, execution);
-
-    if (execution.kind === "subcall") {
-      this.scheduleChildFrame(frame, execution, ctx);
-      return;
-    }
-
-    const finalValue = frame.environment.getFinalResult();
-    if (typeof finalValue === "string" && finalValue.length > 0) {
-      this.finishCompletedFrame(frame, finalValue, ctx);
-      return;
-    }
-
-    this.sendObservationFollowUp(buildExecutionObservationPrompt(frame, execution), ctx);
   }
 
   handleBeforeAgentStart(
@@ -249,6 +223,53 @@ export class RlmWorkflow {
 
   handleSessionShutdown(_event: SessionShutdownEvent, ctx: ExtensionContext): void {
     this.clearState(ctx);
+  }
+
+  private async executeFrameProgram(
+    frame: RlmFrameState,
+    program: RlmAssistantProgram,
+    ctx: ExtensionContext,
+    options: { countIteration: boolean },
+  ): Promise<void> {
+    if (!this.state) {
+      return;
+    }
+
+    if (options.countIteration) {
+      this.state.iterationCount += 1;
+    }
+
+    const execution = await frame.executor.execute({
+      program,
+      bindings: frame.environment.getExecutionBindings(),
+    });
+
+    if (execution.kind === "runtime_error" || execution.kind === "invalid_output") {
+      this.handleMalformedOutput(
+        ctx,
+        `RLM program execution failed: ${execution.message}`,
+        "RLM stopped: program execution remained invalid.",
+        execution.message,
+      );
+      return;
+    }
+
+    this.applyExecutionState(frame, execution);
+
+    if (execution.kind === "subcall") {
+      this.scheduleChildFrame(frame, execution, ctx);
+      return;
+    }
+
+    frame.activeProgram = undefined;
+
+    const finalValue = frame.environment.getFinalResult();
+    if (typeof finalValue === "string" && finalValue.length > 0) {
+      await this.finishCompletedFrame(frame, finalValue, ctx);
+      return;
+    }
+
+    this.sendObservationFollowUp(buildExecutionObservationPrompt(frame, execution), ctx);
   }
 
   private applyExecutionState(
@@ -320,11 +341,11 @@ export class RlmWorkflow {
     );
   }
 
-  private finishCompletedFrame(
+  private async finishCompletedFrame(
     frame: RlmFrameState,
     finalValue: string,
     ctx: ExtensionContext,
-  ): void {
+  ): Promise<void> {
     if (!this.state) {
       return;
     }
@@ -349,6 +370,13 @@ export class RlmWorkflow {
         `subcall:${completedChild.storeAs}`,
         `Stored child response in variable '${completedChild.storeAs}' (${finalValue.length} chars).`,
       );
+    }
+
+    if (parent.activeProgram) {
+      await this.executeFrameProgram(parent, parent.activeProgram, ctx, {
+        countIteration: false,
+      });
+      return;
     }
 
     this.sendObservationFollowUp(
@@ -629,7 +657,7 @@ function buildProgramContractLines(frame: RlmFrameState): string[] {
     "- setFinal(value): alias for writing Final.",
     "- setSummary(value): emit a compact execution summary for the next turn.",
     "- log(...values): emit compact stdout-style logs.",
-    "- subcall(prompt, storeAs): request a recursive child frame that returns into storeAs.",
+    "- subcall(prompt, storeAs): request a recursive child frame that returns into storeAs; when storeAs is already populated, subcall returns that value so the same program can keep iterating through loops.",
     "Recommended pattern: const P = String(get('Prompt') ?? '');",
     frame.kind === "child"
       ? "Child frames should usually either set Final or launch another permitted subcall."

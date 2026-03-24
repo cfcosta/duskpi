@@ -121,6 +121,62 @@ test("PersistentWasmtimeExecutor keeps a live repl across executions", async () 
   executor.dispose();
 });
 
+test("PersistentWasmtimeExecutor lets the same program walk multiple subcalls across reruns", async () => {
+  const compilerPath = createMockJavyCompiler();
+  const runtimePath = createMockWasmtimeRuntime();
+  const executor = new PersistentWasmtimeExecutor({
+    command: process.execPath,
+    args: ["run", runtimePath],
+    compilerCommand: process.execPath,
+    compilerArgs: ["run", compilerPath],
+  });
+  const program = createProgram(
+    [
+      "const intro = subcall('Summarize intro', 'intro_summary');",
+      "const body = subcall('Summarize body', 'body_summary');",
+      "setFinal(intro + ' | ' + body);",
+    ].join("\n"),
+  );
+
+  const first = await executor.execute({
+    program,
+    bindings: { variables: {} },
+  });
+  assert.deepEqual(first, {
+    kind: "subcall",
+    subcall: { prompt: "Summarize intro", storeAs: "intro_summary" },
+    variables: {},
+    logs: [],
+    summary: undefined,
+  });
+
+  const second = await executor.execute({
+    program,
+    bindings: { variables: { intro_summary: "Intro" } },
+  });
+  assert.deepEqual(second, {
+    kind: "subcall",
+    subcall: { prompt: "Summarize body", storeAs: "body_summary" },
+    variables: {},
+    logs: [],
+    summary: undefined,
+  });
+
+  const third = await executor.execute({
+    program,
+    bindings: { variables: { intro_summary: "Intro", body_summary: "Body" } },
+  });
+  assert.deepEqual(third, {
+    kind: "completed",
+    finalResult: "Intro | Body",
+    variables: { Final: "Intro | Body" },
+    logs: [],
+    summary: undefined,
+  });
+
+  executor.dispose();
+});
+
 test("PersistentWasmtimeExecutor forks isolated child repls", async () => {
   const compilerPath = createMockJavyCompiler();
   const runtimePath = createMockWasmtimeRuntime();

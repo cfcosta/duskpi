@@ -905,14 +905,29 @@ while (true) {
     return value;
   };
   globalThis.subcall = function subcall(prompt, storeAs) {
+    const request = {
+      prompt: stringifyValue(prompt).trim(),
+      storeAs: stringifyValue(storeAs).trim(),
+    };
+
+    if (request.prompt.length === 0 || request.storeAs.length === 0) {
+      throw new Error("subcall(prompt, storeAs) requires non-empty string arguments.");
+    }
+
+    if (Object.prototype.hasOwnProperty.call(state.variables, request.storeAs)) {
+      return state.variables[request.storeAs];
+    }
+    if (Object.prototype.hasOwnProperty.call(persistedVariables, request.storeAs)) {
+      return persistedVariables[request.storeAs];
+    }
+
     state.kind = "subcall";
     delete state.finalResult;
     delete state.variables.Final;
-    state.subcall = {
-      prompt: stringifyValue(prompt),
-      storeAs: stringifyValue(storeAs),
-    };
-    return state.subcall;
+    state.subcall = request;
+    const suspension = new Error("RLM subcall suspension");
+    suspension.name = "RlmSubcallSuspension";
+    throw suspension;
   };
   globalThis.log = function log(...values) {
     state.logs.push(values.map((value) => stringifyValue(value)).join(" "));
@@ -952,10 +967,14 @@ while (true) {
     );
     writeLine(state);
   } catch (error) {
-    writeLine({
-      kind: "runtime_error",
-      message: error instanceof Error ? error.message : String(error),
-    });
+    if (error && typeof error === "object" && error.name === "RlmSubcallSuspension") {
+      writeLine(state);
+    } else {
+      writeLine({
+        kind: "runtime_error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 }
 `;

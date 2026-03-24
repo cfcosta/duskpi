@@ -170,6 +170,85 @@ function createPersistentMockExecutor() {
   };
 }
 
+function createLoopingSubcallExecutor() {
+  const createChildExecutor = () => ({
+    async execute(input: Record<string, unknown>): Promise<RlmExecutorResult> {
+      const program = input.program as { code?: unknown } | undefined;
+      const code = typeof program?.code === "string" ? program.code : "";
+
+      const finalMatch = code.match(/setFinal\("([^"]+)"\)/);
+      if (finalMatch) {
+        return {
+          kind: "completed",
+          variables: { Final: finalMatch[1]! },
+          logs: [],
+          summary: undefined,
+        };
+      }
+
+      return {
+        kind: "runtime_error",
+        message: `unexpected child mock program: ${code}`,
+        exitCode: null,
+      };
+    },
+    fork() {
+      return createChildExecutor();
+    },
+  });
+
+  const createRootExecutor = () => ({
+    async execute(input: Record<string, unknown>): Promise<RlmExecutorResult> {
+      const program = input.program as { code?: unknown } | undefined;
+      const code = typeof program?.code === "string" ? program.code : "";
+      const bindings = (input.bindings as { variables?: Record<string, string> } | undefined) ?? {};
+      const variables = bindings.variables ?? {};
+
+      if (!code.includes("intro_summary") || !code.includes("body_summary")) {
+        return {
+          kind: "runtime_error",
+          message: `unexpected root mock program: ${code}`,
+          exitCode: null,
+        };
+      }
+
+      if (!variables.intro_summary) {
+        return {
+          kind: "subcall",
+          subcall: { prompt: "Summarize intro", storeAs: "intro_summary" },
+          variables: { phase: "intro" },
+          logs: ["request intro_summary"],
+          summary: undefined,
+        };
+      }
+
+      if (!variables.body_summary) {
+        return {
+          kind: "subcall",
+          subcall: { prompt: "Summarize body", storeAs: "body_summary" },
+          variables: { phase: "body" },
+          logs: ["request body_summary"],
+          summary: undefined,
+        };
+      }
+
+      return {
+        kind: "completed",
+        variables: { Final: `${variables.intro_summary} | ${variables.body_summary}` },
+        logs: ["root finished"],
+        summary: undefined,
+      };
+    },
+    fork() {
+      return createChildExecutor();
+    },
+  });
+
+  return {
+    executor: createRootExecutor(),
+  };
+}
+
 function buildTextMessage(role: "user" | "assistant" | "custom", text: string) {
   return {
     role,
@@ -450,7 +529,7 @@ test("/rlm ignores agent_end payloads with mismatched request ids", async () => 
   assert.deepEqual((ctx as ExtensionContext & { notifications?: unknown[] }).notifications, []);
 });
 
-test("/rlm schedules a child frame and resumes the parent symbolically", async () => {
+test("/rlm schedules a child frame and resumes the parent program automatically", async () => {
   const { executor } = createQueuedExecutor([
     {
       kind: "subcall",
@@ -465,6 +544,12 @@ test("/rlm schedules a child frame and resumes the parent symbolically", async (
       logs: ["child done"],
       summary: undefined,
     },
+    {
+      kind: "completed",
+      variables: { Final: "Parent completed with chunk_1." },
+      logs: ["parent done"],
+      summary: undefined,
+    },
   ]);
   const harness = createHarness((api) =>
     registerRlmExtension(api, new RlmWorkflow(api, { executor })),
@@ -474,7 +559,9 @@ test("/rlm schedules a child frame and resumes the parent symbolically", async (
   await harness.commands.rlm?.handler("summarize the introduction", ctx);
   const initialPrompt = String(harness.sentUserMessages[0]?.content ?? "");
   const scratchpadFilePath = extractMetadataPath(initialPrompt, "scratchpadFilePath");
+  const finalFilePath = extractMetadataPath(initialPrompt, "finalFilePath");
   assert.ok(scratchpadFilePath);
+  assert.ok(finalFilePath);
 
   await harness.listeners.agent_end?.(
     {
@@ -502,17 +589,92 @@ test("/rlm schedules a child frame and resumes the parent symbolically", async (
     ctx,
   );
 
-  assert.equal(harness.sentMessages.length, 2);
-  const parentResume = String(harness.sentMessages[1]?.message.content ?? "");
-  assert.match(parentResume, /Child sub-call completed/i);
-  assert.match(parentResume, /"storedAs": "chunk_1"/);
-  assert.match(parentResume, /"resultChars": 18/);
-  assert.doesNotMatch(parentResume, /The child summary\./);
+  assert.equal(harness.sentMessages.length, 1);
+  assert.deepEqual(
+    (ctx as ExtensionContext & { notifications?: Array<{ message: string; level?: string }> })
+      .notifications,
+    [
+      {
+        message: `RLM final result ready at ${finalFilePath}.`,
+        level: "info",
+      },
+    ],
+  );
   assert.match(readFileSync(scratchpadFilePath!, "utf8"), /subcall:chunk_1/);
   assert.match(
     readFileSync(scratchpadFilePath!, "utf8"),
     /Stored child response in variable 'chunk_1'/,
   );
+});
+
+test("/rlm can satisfy repeated subcalls inside one parent program without a new parent turn", async () => {
+  const { executor } = createLoopingSubcallExecutor();
+  const harness = createHarness((api) =>
+    registerRlmExtension(api, new RlmWorkflow(api, { executor })),
+  );
+  const ctx = createContext() as ExtensionContext & {
+    notifications?: Array<{ message: string; level?: string }>;
+  };
+
+  await harness.commands.rlm?.handler("summarize two sections and combine them", ctx);
+  const initialPrompt = String(harness.sentUserMessages[0]?.content ?? "");
+  const finalFilePath = extractMetadataPath(initialPrompt, "finalFilePath");
+  assert.ok(finalFilePath);
+
+  await harness.listeners.agent_end?.(
+    {
+      messages: [
+        buildTextMessage("user", initialPrompt),
+        buildTextMessage(
+          "assistant",
+          [
+            "const intro = subcall('Summarize intro', 'intro_summary');",
+            "const body = subcall('Summarize body', 'body_summary');",
+            "setFinal(intro + ' | ' + body);",
+          ].join("\n"),
+        ),
+      ],
+    },
+    ctx,
+  );
+
+  assert.equal(harness.sentMessages.length, 1);
+  const firstChildPrompt = String(harness.sentMessages[0]?.message.content ?? "");
+  assert.match(firstChildPrompt, /intro_summary/);
+
+  await harness.listeners.agent_end?.(
+    {
+      messages: [
+        buildTextMessage("custom", firstChildPrompt),
+        buildTextMessage("assistant", 'setFinal("Intro summary");'),
+      ],
+    },
+    ctx,
+  );
+
+  assert.equal(harness.sentMessages.length, 2);
+  const secondChildPrompt = String(harness.sentMessages[1]?.message.content ?? "");
+  assert.match(secondChildPrompt, /body_summary/);
+  assert.doesNotMatch(secondChildPrompt, /Child sub-call completed/);
+
+  await harness.listeners.agent_end?.(
+    {
+      messages: [
+        buildTextMessage("custom", secondChildPrompt),
+        buildTextMessage("assistant", 'setFinal("Body summary");'),
+      ],
+    },
+    ctx,
+  );
+
+  assert.deepEqual(ctx.notifications, [
+    {
+      message: `RLM final result ready at ${finalFilePath}.`,
+      level: "info",
+    },
+  ]);
+  assert.equal(harness.sentMessages.length, 2);
+  assert.match(readFileSync(finalFilePath!, "utf8"), /Intro summary \| Body summary/);
 });
 
 test("/rlm stops when subcalls exceed the recursion depth budget", async () => {
@@ -881,24 +1043,7 @@ test("/rlm completes an end-to-end recursive workflow over the generated workspa
     ctx,
   );
 
-  assert.equal(harness.sentMessages.length, 2);
-  const parentResume = String(harness.sentMessages[1]?.message.content ?? "");
-  assert.match(parentResume, /Child sub-call completed/);
-  assert.match(parentResume, /intro_summary/);
-  assert.doesNotMatch(parentResume, /The workspace starts from a prompt/);
-
-  await harness.listeners.agent_end?.(
-    {
-      messages: [
-        buildTextMessage("custom", parentResume),
-        buildTextMessage(
-          "assistant",
-          'setFinal("Final answer: treat the prompt as external state, execute code over it, recurse symbolically, and return via Final.");',
-        ),
-      ],
-    },
-    ctx,
-  );
+  assert.equal(harness.sentMessages.length, 1);
 
   assert.deepEqual(ctx.notifications, [
     {
