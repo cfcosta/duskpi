@@ -944,6 +944,9 @@ test("/rlm keeps the JavaScript repl live across follow-up turns within a frame"
   assert.equal(harness.sentMessages.length, 1);
   const followUpPrompt = String(harness.sentMessages[0]?.message.content ?? "");
   assert.match(followUpPrompt, /Execution feedback metadata/);
+  assert.match(followUpPrompt, /Previous program:/);
+  assert.match(followUpPrompt, /const prefix = 'live';/);
+  assert.match(followUpPrompt, /function finish\(value\)/);
 
   await harness.listeners.agent_end?.(
     {

@@ -51,6 +51,7 @@ interface RlmFrameState {
   environment: RlmPromptEnvironment;
   executor: RlmExecutorLike;
   activeProgram?: RlmAssistantProgram;
+  lastProgram?: RlmAssistantProgram;
   storeAs?: string;
 }
 
@@ -184,6 +185,7 @@ export class RlmWorkflow {
     }
 
     frame.activeProgram = program.value;
+    frame.lastProgram = program.value;
     await this.executeFrameProgram(frame, program.value, ctx, {
       countIteration: true,
     });
@@ -560,12 +562,17 @@ function buildExecutionObservationPrompt(
   const logs = summarizeLogs(execution.logs);
   const summary = summarizeSummary(execution.summary);
   const metadata = frame.environment.getPromptMetadata({ previewChars: OBSERVATION_PREVIEW_CHARS });
+  const previousProgram = frame.lastProgram;
 
   return [
     "Execution feedback metadata.",
-    "Only compact metadata from the last execution is shown here. Use code to inspect Prompt and variables symbolically.",
+    "The previous JavaScript program is included below alongside compact metadata from the last execution.",
+    "Use code to inspect Prompt and variables symbolically.",
     "Write exactly one JavaScript program and no prose.",
     ...buildProgramContractLines(frame),
+    previousProgram
+      ? ["Previous program:", "```javascript", previousProgram.code, "```"].join("\n")
+      : "Previous program: unavailable.",
     JSON.stringify(
       {
         phase: "execution_feedback",
@@ -575,6 +582,12 @@ function buildExecutionObservationPrompt(
           label: frame.label,
         },
         prompt: metadata,
+        previousProgram: previousProgram
+          ? {
+              language: previousProgram.language,
+              charLength: previousProgram.code.length,
+            }
+          : undefined,
         execution: {
           result: execution.kind,
           updatedVariableNames: Object.keys(execution.variables).sort(),
