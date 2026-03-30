@@ -38,6 +38,8 @@ Treat naming as a real refactor candidate when it reveals a boundary problem, hi
 
 Also flag existing names that have become inaccurate because the surrounding responsibility already changed. If the code is about to be refactored in that area anyway, treat stale rollout-era, migration-era, or implementation-era names as part of the structural problem rather than as cosmetic cleanup.
 
+Also flag redundant qualifier chains when the surrounding module or package already provides the missing context. Names such as `preparation::PreparedSearchDocument`, `search_results::EnrichedSearchResult`, or `SearchRequestCore` often signal name stutter or implementation leakage rather than real domain distinctions. Prefer the smallest clear domain term that still needs to exist at that scope.
+
 ## LLM integration smell appendix
 
 When the analyzed scope contains explicit LLM inference or integration code, also map the following LLM-specific smells as refactor candidates.
@@ -75,8 +77,8 @@ Use these names when they match the code smell you find.
 - **Rename Variable** — when a local name does not communicate purpose, lifetime, or units of meaning.
 - **Rename Field** — when object state is named from implementation detail instead of domain intent.
 - **Rename Function/Method** — when the name does not explain the outcome, rule, or business meaning.
-- **Rename Class / Type** — when the type no longer matches the domain language or responsibility.
-- **Rename Package / Module** — when the boundary or bounded context has changed.
+- **Rename Class / Type** — when the type no longer matches the domain language or responsibility, or when the surrounding scope already provides qualifiers that can be removed.
+- **Rename Package / Module** — when the boundary or bounded context has changed, or when the package name is carrying redundant context that should live at a different level.
 - **Replace Magic Literal with Symbolic Constant** — when a literal encodes a stable rule, protocol value, or unit.
 - **Introduce Assertion** — when an internal invariant is assumed but not made explicit.
 

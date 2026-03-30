@@ -278,10 +278,13 @@ Approved steps must preserve or improve semantic naming quality.
 When judging a plan:
 
 - prefer names based on enduring responsibility, contract, or domain role
+- prefer the smallest clear domain term that still makes sense in context when the surrounding module or package already provides the qualifier
 - reject names that merely mirror the user's request phrasing (`new backend`, `old path`, `extra fallback`, `doXForY`)
 - reject abstractions whose names describe implementation context rather than meaning
+- reject names that repeat context already supplied by the surrounding module or package, creating name stutter instead of clarity
 - reject plans that materially change an existing symbol's responsibility while preserving a misleading old name
 - require rename steps when touched existing names would become inaccurate after the approved refactor
+- reject implementation-layer suffixes or qualifiers such as `Core`, `Impl`, `Internal`, `Manager`, or repeated `Result`-style words when they do not express a real domain distinction
 - only allow contextual qualifiers when they are a real domain distinction visible to readers outside this refactor
 
 ## Final summary

@@ -384,14 +384,21 @@ test("real prompt bundle enforces responsibility-first naming guidance", () => {
     /apply this rule to every symbol introduced, extracted, repurposed, or materially modified/i,
   );
   assert.match(loaded.prompts.executor, /do_foo_with_bar|doXForY|newBackendX|oldPath/i);
+  assert.match(loaded.prompts.executor, /smallest clear domain term/i);
   assert.match(loaded.prompts.skeptic, /context-bound naming/i);
+  assert.match(
+    loaded.prompts.skeptic,
+    /repeat context the surrounding module\/package already supplies/i,
+  );
   assert.match(loaded.prompts.skeptic, /semantic drift/i);
   assert.match(loaded.prompts.arbiter, /semantic naming quality/i);
+  assert.match(loaded.prompts.arbiter, /smallest clear domain term/i);
   assert.match(
     loaded.prompts.arbiter,
     /materially change an existing symbol's responsibility while preserving a misleading old name/i,
   );
   assert.match(loaded.prompts.mapper, /existing names that have become inaccurate/i);
+  assert.match(loaded.prompts.mapper, /redundant qualifier chains/i);
 });
 
 test("real prompt bundle treats coverage gaps as execution work instead of a veto", () => {

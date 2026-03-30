@@ -71,9 +71,11 @@ When reviewing a candidate or execution plan, explicitly challenge names that:
 - only make sense relative to the current request wording
 - describe wiring mechanics instead of semantic role
 - encode temporary rollout states as if they were stable concepts
+- repeat context the surrounding module/package already supplies, creating name stutter rather than clarity
 - use generic verbs (`do`, `handle`, `process`) where the code's actual responsibility can be named precisely
 - remain unchanged even though the refactor materially changes the symbol's responsibility or boundary
 - preserve migration-era or patch-era naming on existing code that is already being touched within scope
+- keep implementation-layer qualifiers such as `Core`, `Impl`, `Internal`, or repeated `Result`-style words without proving that readers need that distinction
 
 Also challenge plans that create semantic drift: the code's role changes, but the old name survives and becomes misleading.
 

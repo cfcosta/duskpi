@@ -235,9 +235,11 @@ If the approved plan uses an older or broader label, treat it as the precise can
 
 - **Name new and existing touched code by enduring responsibility, not by the change request.** Prefer names that would still make sense six months later after the current task description is forgotten.
 - **Apply this rule to every symbol introduced, extracted, repurposed, or materially modified in the approved blast radius.** If a touched function, variable, interface, class, or module name becomes misleading after the refactor, rename it before finishing the step.
+- **When the surrounding module or package already provides the qualifier, remove redundant words from the symbol itself.** Prefer the smallest clear domain term that still reads clearly at that scope, such as `preparation::SearchDocument` over `document_preparation::PreparedSearchDocument`, `results::SearchHit` over `search_results::EnrichedSearchResult`, and `SearchQuery` over `SearchRequestCore`.
 - **Avoid names that encode the change request, migration state, or review context.** Reject names such as `newBackendX`, `oldPath`, `temporaryAdapter`, `fooForNewFlow`, or similar change-local labels unless that distinction is truly part of the product domain.
 - **Avoid generic action buckets when a role-specific name exists.** Do not introduce or preserve helpers such as `do_foo_with_bar`, `doXForY`, `handleThing`, or `processData` when the code has a clearer domain meaning.
 - **Name interfaces, adapters, helpers, and local variables after their semantic role.** If a variable or function is named mainly because of the prompt wording or historical patch context, rename it before finishing the step.
+- **Strip implementation-layer suffixes or qualifiers when they do not express a real domain distinction.** Names such as `Core`, `Impl`, `Internal`, `Manager`, or repeated `Result`-style words should survive only when readers outside this refactor genuinely need that distinction.
 - **Do not preserve legacy or misleading names just to keep the refactor mechanically small** when the approved step already touches that abstraction. A minimal diff is not an excuse to leave semantic drift inside the approved scope.
 
 ## LLM smell remediation discipline
