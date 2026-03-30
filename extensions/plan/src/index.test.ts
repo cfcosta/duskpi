@@ -264,6 +264,20 @@ function buildUnparseablePlanText(): string {
   ].join("\n");
 }
 
+function buildPartiallyIndentedSubtaskPlanText(): string {
+  return [
+    "1) Task understanding",
+    "2) Codebase findings",
+    "3) Approach options / trade-offs",
+    "4) Open questions / assumptions",
+    "5) Plan:",
+    "1. Add a regression test for prompt leakage",
+    "",
+    "   2. Update the approval action UI to show a compact summary",
+    "6) Ready to execute when approved.",
+  ].join("\n");
+}
+
 function extractRequestId(prompt: string): string | undefined {
   const match = prompt.match(/<!--\s*workflow-request-id:([^>]+)\s*-->/i);
   return match?.[1]?.trim();
@@ -907,6 +921,68 @@ test("/autoplan auto-plans each approved subtask without asking new questions", 
   expect(harness.sentUserMessages).toHaveLength(5);
   expect(harness.sentUserMessages[4]).toContain(
     "Current approved high-level task 2: Finalize the rust module wiring",
+  );
+});
+
+test("/autoplan keeps executing the current subtask when the second inner todo is indented", async () => {
+  const harness = createPlanExtensionHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+  });
+
+  await harness.runCommand("autoplan", "Rewrite this in Rust");
+
+  const topLevelPrompt = harness.sentUserMessages[0] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: topLevelPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  const subtaskPrompt = harness.sentUserMessages[1] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: subtaskPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPartiallyIndentedSubtaskPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  expect(harness.sentUserMessages).toHaveLength(3);
+  expect(harness.sentUserMessages[2]).toContain(
+    "Complete only step 1: Add a regression test for prompt leakage",
+  );
+
+  await harness.emit("turn_end", {
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "Finished the first subtask step [DONE:1]" }],
+    },
+  });
+
+  expect(harness.sentUserMessages).toHaveLength(4);
+  expect(harness.sentUserMessages[3]).toContain(
+    "Complete only step 2: Update the approval action UI to show a compact summary",
   );
 });
 
