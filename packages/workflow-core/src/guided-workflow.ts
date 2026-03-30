@@ -38,7 +38,14 @@ interface GuidedWorkflowText {
   sendFailed?: string;
 }
 
-type PendingPromptDelivery = "user" | "hidden";
+export type GuidedWorkflowPromptDelivery = "visible" | "hidden";
+
+export interface GuidedWorkflowDeliveryOptions {
+  planning?: GuidedWorkflowPromptDelivery;
+  execution?: GuidedWorkflowPromptDelivery;
+}
+
+type PendingPromptDelivery = GuidedWorkflowPromptDelivery;
 
 export interface GuidedWorkflowCritiqueOptions {
   buildCritiquePrompt: (args: { goal?: string; planText: string }) => string;
@@ -117,6 +124,7 @@ export interface GuidedWorkflowOptions {
   buildPlanningPrompt?: (args: { goal?: string }) => string;
   critique?: GuidedWorkflowCritiqueOptions;
   planningPolicy?: GuidedWorkflowPlanningPolicy;
+  delivery?: GuidedWorkflowDeliveryOptions;
   approval?: GuidedWorkflowApprovalOptions;
   execution?: GuidedWorkflowExecutionOptions;
   maxMissingOutputRetries?: number;
@@ -176,15 +184,16 @@ export class GuidedWorkflow implements GuidedWorkflowController {
       pendingRequestId: requestId,
       awaitingResponse: true,
     };
+    const planningDelivery = this.getPlanningPromptDelivery();
     this.pendingResponseKind = "planning";
     this.pendingPromptText = prompt;
-    this.pendingPromptDelivery = "user";
+    this.pendingPromptDelivery = planningDelivery;
     this.missingOutputRetries = 0;
     this.latestPlanText = undefined;
     this.latestCritiqueText = undefined;
 
     try {
-      this.api.sendUserMessage(promptWithRequestId);
+      this.dispatchPlanningPrompt(promptWithRequestId, planningDelivery);
       return { kind: "ok" };
     } catch {
       this.resetWorkflowState();
@@ -291,7 +300,10 @@ export class GuidedWorkflow implements GuidedWorkflowController {
       return undefined;
     }
 
-    if (this.executionItems.length > 0 && this.executionItems.every((item) => item.completed || item.skipped)) {
+    if (
+      this.executionItems.length > 0 &&
+      this.executionItems.every((item) => item.completed || item.skipped)
+    ) {
       this.resetWorkflowState();
       return undefined;
     }
@@ -413,6 +425,36 @@ export class GuidedWorkflow implements GuidedWorkflowController {
     return this.sendHiddenFollowUp(prompt, "revision", ctx);
   }
 
+  private getPlanningPromptDelivery(): GuidedWorkflowPromptDelivery {
+    return this.options.delivery?.planning ?? "visible";
+  }
+
+  private getInternalMessageType(): string {
+    return this.options.critique?.customMessageType ?? `${this.options.id}-internal`;
+  }
+
+  private dispatchPlanningPrompt(
+    promptWithRequestId: string,
+    delivery: GuidedWorkflowPromptDelivery,
+  ): void {
+    if (delivery === "hidden") {
+      this.api.sendMessage(
+        {
+          customType: this.getInternalMessageType(),
+          content: promptWithRequestId,
+          display: false,
+        },
+        {
+          triggerTurn: true,
+          deliverAs: "followUp",
+        },
+      );
+      return;
+    }
+
+    this.api.sendUserMessage(promptWithRequestId);
+  }
+
   private sendHiddenFollowUp(
     prompt: string,
     nextResponseKind: PendingResponseKind,
@@ -423,17 +465,7 @@ export class GuidedWorkflow implements GuidedWorkflowController {
     const promptWithRequestId = `${prompt}\n\n${requestIdMarker(requestId)}`;
 
     try {
-      this.api.sendMessage(
-        {
-          customType: this.options.critique?.customMessageType ?? `${this.options.id}-internal`,
-          content: promptWithRequestId,
-          display: false,
-        },
-        {
-          triggerTurn: true,
-          deliverAs: "followUp",
-        },
-      );
+      this.dispatchPlanningPrompt(promptWithRequestId, "hidden");
     } catch {
       this.resetWorkflowState();
       ctx.ui.notify(
@@ -531,9 +563,10 @@ export class GuidedWorkflow implements GuidedWorkflowController {
   ): GuidedWorkflowResult {
     const requestId = this.nextRequestId();
     const promptWithRequestId = `${prompt}\n\n${requestIdMarker(requestId)}`;
+    const planningDelivery = this.getPlanningPromptDelivery();
 
     try {
-      this.api.sendUserMessage(promptWithRequestId);
+      this.dispatchPlanningPrompt(promptWithRequestId, planningDelivery);
     } catch {
       this.resetWorkflowState();
       ctx.ui.notify(
@@ -556,7 +589,7 @@ export class GuidedWorkflow implements GuidedWorkflowController {
     };
     this.pendingResponseKind = "planning";
     this.pendingPromptText = prompt;
-    this.pendingPromptDelivery = "user";
+    this.pendingPromptDelivery = planningDelivery;
     if (!options.preserveMissingOutputRetries) {
       this.missingOutputRetries = 0;
     }

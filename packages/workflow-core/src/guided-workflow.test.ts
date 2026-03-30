@@ -241,6 +241,36 @@ test("GuidedWorkflow start command sends a planning prompt and records a request
   });
 });
 
+test("GuidedWorkflow can start planning with hidden delivery when configured", async () => {
+  const { api, sentUserMessages, sentCustomMessages } = createApi();
+  const workflow = new GuidedWorkflow(api, {
+    id: "guided-test",
+    parseGoalArg: parseTrimmedStringArg,
+    delivery: { planning: "hidden" },
+    text: { alreadyRunning: "guided running" },
+  });
+  const { ctx } = createContext();
+
+  const result = await workflow.handleCommand("investigate workflow reuse", ctx);
+
+  assert.deepEqual(result, { kind: "ok" });
+  assert.equal(sentUserMessages.length, 0);
+  assert.deepEqual(sentCustomMessages[0], {
+    customType: "guided-test-internal",
+    content:
+      "Create a concrete implementation plan for: investigate workflow reuse\n\n<!-- workflow-request-id:guided-test-1 -->",
+    display: false,
+    triggerTurn: true,
+    deliverAs: "followUp",
+  });
+  assert.deepEqual(workflow.getStateSnapshot(), {
+    phase: "planning",
+    goal: "investigate workflow reuse",
+    pendingRequestId: "guided-test-1",
+    awaitingResponse: true,
+  });
+});
+
 test("GuidedWorkflow blocks duplicate runs while active", async () => {
   const { api } = createApi();
   const workflow = new GuidedWorkflow(api, {
@@ -888,6 +918,95 @@ test("GuidedWorkflow dispatches continue actions back into planning", async () =
     goal: "first run",
     pendingRequestId: "guided-test-3",
     awaitingResponse: true,
+  });
+});
+
+test("GuidedWorkflow keeps continue follow-ups hidden and retries them with fresh request ids when hidden planning delivery is configured", async () => {
+  const { api, sentUserMessages, sentCustomMessages } = createApi();
+  const { approval } = createApprovalOptions({
+    selection: { action: "continue", note: "tighten scope" },
+  });
+  const workflow = new GuidedWorkflow(api, {
+    id: "guided-test",
+    maxMissingOutputRetries: 1,
+    parseGoalArg: parseTrimmedStringArg,
+    critique: createCritiqueOptions(),
+    delivery: { planning: "hidden" },
+    approval,
+    text: { alreadyRunning: "guided running" },
+  });
+  const { ctx, notifications } = createContext();
+
+  await workflow.handleCommand("first run", ctx);
+  await workflow.handleAgentEnd(
+    {
+      messages: [
+        { role: "custom", content: String(sentCustomMessages[0]?.content) },
+        { role: "assistant", content: [{ type: "text", text: "draft plan" }] },
+      ],
+    },
+    ctx,
+  );
+
+  const continueResult = await workflow.handleAgentEnd(
+    {
+      messages: [
+        { role: "custom", content: String(sentCustomMessages[1]?.content) },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "1) Verdict: PASS\n2) Issues:\n- none" }],
+        },
+      ],
+    },
+    ctx,
+  );
+
+  assert.deepEqual(continueResult, { kind: "ok" });
+  assert.equal(sentUserMessages.length, 0);
+  assert.deepEqual(sentCustomMessages[2], {
+    customType: "guided-test-internal",
+    content:
+      "Continue planning with note: tighten scope\n\n<!-- workflow-request-id:guided-test-3 -->",
+    display: false,
+    triggerTurn: true,
+    deliverAs: "followUp",
+  });
+  assert.deepEqual(workflow.getStateSnapshot(), {
+    phase: "planning",
+    goal: "first run",
+    pendingRequestId: "guided-test-3",
+    awaitingResponse: true,
+  });
+
+  const retryResult = await workflow.handleAgentEnd(
+    {
+      messages: [
+        { role: "custom", content: String(sentCustomMessages[2]?.content) },
+        { role: "assistant", content: [{ type: "tool_result", text: "ignored" }] },
+      ],
+    },
+    ctx,
+  );
+
+  assert.deepEqual(retryResult, { kind: "recoverable_error", reason: "empty_output_retry" });
+  assert.deepEqual(sentCustomMessages[3], {
+    customType: "guided-test-internal",
+    content:
+      "Continue planning with note: tighten scope\n\n<!-- workflow-request-id:guided-test-4 -->",
+    display: false,
+    triggerTurn: true,
+    deliverAs: "followUp",
+  });
+  assert.deepEqual(workflow.getStateSnapshot(), {
+    phase: "planning",
+    goal: "first run",
+    pendingRequestId: "guided-test-4",
+    awaitingResponse: true,
+  });
+  assert.deepEqual(notifications.at(-1), {
+    level: "warning",
+    message:
+      "Guided workflow response was empty or invalid during the planning response. Retrying (1/1).",
   });
 });
 
