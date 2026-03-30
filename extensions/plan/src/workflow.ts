@@ -1305,6 +1305,15 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     return this.autoPlanMode === "executing";
   }
 
+  private getApprovedAutoPlanContextLines(): string[] {
+    const approvedPlanText = this.autoPlanApprovedPlanText.trim();
+    if (approvedPlanText.length === 0) {
+      return [];
+    }
+
+    return ["Approved top-level plan context:", approvedPlanText];
+  }
+
   private async maybeStartPendingAutoPlan(
     ctx: ExtensionContext,
     result: GuidedWorkflowResult,
@@ -1349,6 +1358,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
 
     return [
       `Long-term goal: ${this.autoPlanGoal}`,
+      ...this.getApprovedAutoPlanContextLines(),
       `Current approved high-level task ${currentStep.step}: ${currentStep.text}`,
       backlog.length > 0 ? "Remaining high-level backlog for context:" : undefined,
       backlog.length > 0 ? backlog : undefined,
@@ -1480,6 +1490,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     return [
       "Review progress against the approved long-term goal.",
       `Long-term goal: ${this.autoPlanGoal}`,
+      ...this.getApprovedAutoPlanContextLines(),
       completed ? "Completed high-level tasks:" : undefined,
       completed || undefined,
       remaining ? "Current remaining high-level backlog before review:" : undefined,
@@ -1795,14 +1806,21 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     }
 
     const stepDetails = describeExecutionStep(planText, currentStep);
+    const autoPlanInnerExecutionActive =
+      this.autoPlanMode === "executing" && this.autoPlanSubtaskWorkflow.getStateSnapshot().phase === "executing";
 
     return [
       EXECUTION_TRIGGER_PROMPT,
       `Complete only step ${currentStep.step}: ${stepDetails.objective}`,
       note ? `Honor this user execution note while implementing the step: ${note}` : undefined,
+      ...(autoPlanInnerExecutionActive ? this.getApprovedAutoPlanContextLines() : []),
       stepDetails.targets ? `Target files/components: ${stepDetails.targets}` : undefined,
       stepDetails.validation ? `Validation method: ${stepDetails.validation}` : undefined,
       stepDetails.risks ? `Risks and rollback notes: ${stepDetails.risks}` : undefined,
+      autoPlanInnerExecutionActive ? "Do not ask the user questions." : undefined,
+      autoPlanInnerExecutionActive
+        ? "Infer the best repo-consistent choice and continue."
+        : undefined,
       "Implement it, validate it, and create one atomic jujutsu commit for that step before ending the turn.",
       "Use `jj commit <changed paths> -m <message>`, follow Conventional Commits, and include a detailed description.",
       "If the step is already satisfied or would require a fake/no-op commit, explain why and use [SKIPPED:n] instead of [DONE:n].",

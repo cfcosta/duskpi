@@ -1100,6 +1100,8 @@ test("/autoplan auto-plans each approved subtask without asking new questions", 
 
   expect(harness.sentUserMessages).toHaveLength(2);
   expect(harness.sentUserMessages[1]).toContain("Current approved high-level task 1");
+  expect(harness.sentUserMessages[1]).toContain("Approved top-level plan context:");
+  expect(harness.sentUserMessages[1]).toContain(buildPlanText());
   expect(harness.sentUserMessages[1]).toContain("Do not ask the user questions.");
   expect(harness.sentUserMessages[1]).not.toContain("Complete only step 1:");
 
@@ -1132,6 +1134,10 @@ test("/autoplan auto-plans each approved subtask without asking new questions", 
   expect(harness.sentUserMessages[2]).toContain(
     "Complete only step 1: Add a regression test for prompt leakage",
   );
+  expect(harness.sentUserMessages[2]).toContain("Approved top-level plan context:");
+  expect(harness.sentUserMessages[2]).toContain(buildPlanText());
+  expect(harness.sentUserMessages[2]).toContain("Do not ask the user questions.");
+  expect(harness.sentUserMessages[2]).toContain("Infer the best repo-consistent choice and continue.");
 
   await expect(
     invokeToolCall(harness, { toolName: "ask_user_question", input: { questions: [] } }),
@@ -1170,6 +1176,8 @@ test("/autoplan auto-plans each approved subtask without asking new questions", 
   });
 
   const reviewPrompt = String(harness.sentMessages.at(-1)?.content ?? "");
+  expect(reviewPrompt).toContain("Approved top-level plan context:");
+  expect(reviewPrompt).toContain(buildPlanText());
   await harness.emit("agent_end", {
     messages: [
       {
@@ -2204,6 +2212,10 @@ test("approve action can include an execution note and restores normal tools", a
   expect(harness.sentUserMessages).toHaveLength(1);
   expect(harness.sentUserMessages[0]).toContain(
     "Honor this user execution note while implementing the step: keep keyboard flow fast",
+  );
+  expect(harness.sentUserMessages[0]).not.toContain("Approved top-level plan context:");
+  expect(harness.sentUserMessages[0]).not.toContain(
+    "Infer the best repo-consistent choice and continue.",
   );
   expect(harness.uiStub.statuses.get("plan")).toBe("📋 0/2");
   expect(harness.uiStub.widgets.get("plan-todos")).toEqual([
