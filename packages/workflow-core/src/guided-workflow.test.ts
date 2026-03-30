@@ -1236,6 +1236,51 @@ test("GuidedWorkflow builds the first execution prompt for the current open step
   });
 });
 
+test("GuidedWorkflow can deliver the first execution prompt as a hidden follow-up when configured", async () => {
+  const { api, sentUserMessages, sentCustomMessages } = createApi();
+  const { approval } = createApprovalOptions({
+    selection: { action: "approve", note: "ship it" },
+  });
+  const { execution } = createExecutionOptions();
+  const workflow = new GuidedWorkflow(api, {
+    id: "guided-test",
+    parseGoalArg: parseTrimmedStringArg,
+    approval,
+    execution,
+    delivery: { execution: "hidden" },
+    text: { alreadyRunning: "guided running" },
+  });
+  const { ctx } = createContext();
+
+  await workflow.handleCommand("first run", ctx);
+  const result = await workflow.handleAgentEnd(
+    {
+      messages: [
+        { role: "user", content: [{ type: "text", text: sentUserMessages[0]! }] },
+        { role: "assistant", content: [{ type: "text", text: "draft plan" }] },
+      ],
+    },
+    ctx,
+  );
+
+  assert.deepEqual(result, { kind: "ok" });
+  assert.equal(sentUserMessages.length, 1);
+  assert.deepEqual(sentCustomMessages[0], {
+    customType: "guided-test-internal",
+    content: "Execute step 1: First task (ship it)",
+    display: false,
+    triggerTurn: true,
+    deliverAs: "followUp",
+  });
+  assert.deepEqual(workflow.getExecutionSnapshot(), {
+    note: "ship it",
+    items: [
+      { step: 1, text: "First task", completed: false },
+      { step: 2, text: "Second task", completed: false },
+    ],
+  });
+});
+
 test("GuidedWorkflow syncs matching [DONE:n] markers onto execution items", async () => {
   const { api, sentUserMessages } = createApi();
   const { approval } = createApprovalOptions({
@@ -1364,6 +1409,60 @@ test("GuidedWorkflow sends the next execution prompt after completing the curren
 
   assert.equal(sentUserMessages[2], "Execute step 2: Second task");
   assert.deepEqual(sentUserMessageOptions[2], { deliverAs: "followUp" });
+  assert.deepEqual(workflow.getExecutionSnapshot(), {
+    note: undefined,
+    items: [
+      { step: 1, text: "First task", completed: true },
+      { step: 2, text: "Second task", completed: false },
+    ],
+  });
+});
+
+test("GuidedWorkflow sends the next execution prompt as a hidden follow-up after completing the current step when configured", async () => {
+  const { api, sentUserMessages, sentCustomMessages } = createApi();
+  const { approval } = createApprovalOptions({
+    selection: { action: "approve" },
+  });
+  const { execution } = createExecutionOptions();
+  const workflow = new GuidedWorkflow(api, {
+    id: "guided-test",
+    parseGoalArg: parseTrimmedStringArg,
+    approval,
+    execution,
+    delivery: { execution: "hidden" },
+    text: { alreadyRunning: "guided running" },
+  });
+  const { ctx } = createContext();
+
+  await workflow.handleCommand("first run", ctx);
+  await workflow.handleAgentEnd(
+    {
+      messages: [
+        { role: "user", content: [{ type: "text", text: sentUserMessages[0]! }] },
+        { role: "assistant", content: [{ type: "text", text: "draft plan" }] },
+      ],
+    },
+    ctx,
+  );
+
+  await workflow.handleTurnEnd(
+    {
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Completed first task [DONE:1]" }],
+      },
+    },
+    ctx,
+  );
+
+  assert.equal(sentUserMessages.length, 1);
+  assert.deepEqual(sentCustomMessages[1], {
+    customType: "guided-test-internal",
+    content: "Execute step 2: Second task",
+    display: false,
+    triggerTurn: true,
+    deliverAs: "followUp",
+  });
   assert.deepEqual(workflow.getExecutionSnapshot(), {
     note: undefined,
     items: [

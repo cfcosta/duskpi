@@ -429,6 +429,10 @@ export class GuidedWorkflow implements GuidedWorkflowController {
     return this.options.delivery?.planning ?? "visible";
   }
 
+  private getExecutionPromptDelivery(): GuidedWorkflowPromptDelivery {
+    return this.options.delivery?.execution ?? "visible";
+  }
+
   private getInternalMessageType(): string {
     return this.options.critique?.customMessageType ?? `${this.options.id}-internal`;
   }
@@ -453,6 +457,28 @@ export class GuidedWorkflow implements GuidedWorkflowController {
     }
 
     this.api.sendUserMessage(promptWithRequestId);
+  }
+
+  private dispatchExecutionPrompt(
+    prompt: string,
+    delivery: GuidedWorkflowPromptDelivery,
+  ): void {
+    if (delivery === "hidden") {
+      this.api.sendMessage(
+        {
+          customType: this.getInternalMessageType(),
+          content: prompt,
+          display: false,
+        },
+        {
+          triggerTurn: true,
+          deliverAs: "followUp",
+        },
+      );
+      return;
+    }
+
+    this.api.sendUserMessage(prompt, { deliverAs: "followUp" });
   }
 
   private sendHiddenFollowUp(
@@ -657,7 +683,7 @@ export class GuidedWorkflow implements GuidedWorkflowController {
     }
 
     try {
-      this.api.sendUserMessage(prompt, { deliverAs: "followUp" });
+      this.dispatchExecutionPrompt(prompt, this.getExecutionPromptDelivery());
       return { kind: "ok" };
     } catch {
       ctx.ui.notify(
