@@ -583,6 +583,192 @@ test("parseCritiqueVerdict ignores unrelated PASS mentions", () => {
   expect(parseCritiqueVerdict(`Summary: This looks passable.`)).toBeUndefined();
 });
 
+function buildTaggedJsonBlock(payload: unknown): string {
+  return ["```pi-plan-json", JSON.stringify(payload, null, 2), "```"].join("\n");
+}
+
+test("parseTaggedPlanningContract parses a valid tagged JSON plan block", async () => {
+  const { parseTaggedPlanningContract } = await import("./output-contract");
+
+  const result = parseTaggedPlanningContract(
+    [
+      "1) Task understanding",
+      "2) Codebase findings",
+      buildTaggedJsonBlock({
+        version: 1,
+        kind: "plan",
+        steps: [
+          {
+            step: 1,
+            objective: "Add a parser module",
+            targets: ["src/output-contract.ts"],
+            validation: ["bun test ./src/index.test.ts"],
+            risks: [],
+          },
+        ],
+      }),
+    ].join("\n\n"),
+  );
+
+  expect(result).toEqual({
+    ok: true,
+    rawJson: JSON.stringify(
+      {
+        version: 1,
+        kind: "plan",
+        steps: [
+          {
+            step: 1,
+            objective: "Add a parser module",
+            targets: ["src/output-contract.ts"],
+            validation: ["bun test ./src/index.test.ts"],
+            risks: [],
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+    value: {
+      version: 1,
+      kind: "plan",
+      steps: [
+        {
+          step: 1,
+          objective: "Add a parser module",
+          targets: ["src/output-contract.ts"],
+          validation: ["bun test ./src/index.test.ts"],
+          risks: [],
+        },
+      ],
+    },
+  });
+});
+
+test("parseTaggedReviewContract parses a valid tagged JSON continue review block", async () => {
+  const { parseTaggedReviewContract } = await import("./output-contract");
+
+  const result = parseTaggedReviewContract(
+    buildTaggedJsonBlock({
+      version: 1,
+      kind: "review",
+      status: "continue",
+      steps: [
+        {
+          step: 1,
+          objective: "Wire structured review parsing",
+          targets: ["src/workflow.ts"],
+          validation: ["bun test ./src/index.test.ts"],
+          risks: ["keep backlog fallback intact"],
+        },
+      ],
+    }),
+  );
+
+  expect(result).toEqual({
+    ok: true,
+    rawJson: JSON.stringify(
+      {
+        version: 1,
+        kind: "review",
+        status: "continue",
+        steps: [
+          {
+            step: 1,
+            objective: "Wire structured review parsing",
+            targets: ["src/workflow.ts"],
+            validation: ["bun test ./src/index.test.ts"],
+            risks: ["keep backlog fallback intact"],
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+    value: {
+      version: 1,
+      kind: "review",
+      status: "continue",
+      steps: [
+        {
+          step: 1,
+          objective: "Wire structured review parsing",
+          targets: ["src/workflow.ts"],
+          validation: ["bun test ./src/index.test.ts"],
+          risks: ["keep backlog fallback intact"],
+        },
+      ],
+    },
+  });
+});
+
+test("parseTaggedPlanningContract rejects responses without the tagged JSON block", async () => {
+  const { parseTaggedPlanningContract } = await import("./output-contract");
+
+  expect(parseTaggedPlanningContract("1) Task understanding\n2) Codebase findings")).toEqual({
+    ok: false,
+    code: "missing_block",
+    message: "Missing tagged JSON block `pi-plan-json`.",
+  });
+});
+
+test("parseTaggedPlanningContract rejects malformed tagged JSON blocks", async () => {
+  const { parseTaggedPlanningContract } = await import("./output-contract");
+
+  const result = parseTaggedPlanningContract(["```pi-plan-json", '{"version": 1,', "```"].join("\n"));
+
+  expect(result.ok).toBe(false);
+  if (result.ok) {
+    return;
+  }
+
+  expect(result.code).toBe("malformed_json");
+});
+
+test("parseTaggedPlanningContract rejects invalid step payloads", async () => {
+  const { parseTaggedPlanningContract } = await import("./output-contract");
+
+  expect(
+    parseTaggedPlanningContract(
+      buildTaggedJsonBlock({
+        version: 1,
+        kind: "plan",
+        steps: [
+          {
+            step: 1,
+            objective: "Add a parser module",
+            targets: "src/output-contract.ts",
+            validation: ["bun test ./src/index.test.ts"],
+            risks: [],
+          },
+        ],
+      }),
+    ),
+  ).toEqual({
+    ok: false,
+    code: "invalid_schema",
+    message: "Step 1 targets must be an array of strings.",
+  });
+});
+
+test("parseTaggedReviewContract rejects invalid review payloads", async () => {
+  const { parseTaggedReviewContract } = await import("./output-contract");
+
+  expect(
+    parseTaggedReviewContract(
+      buildTaggedJsonBlock({
+        version: 1,
+        kind: "review",
+        status: "continue",
+      }),
+    ),
+  ).toEqual({
+    ok: false,
+    code: "invalid_schema",
+    message: "Plan steps must be an array.",
+  });
+});
+
 test("extractPlanSteps preserves objective text and metadata for flat plan sections", async () => {
   const { extractPlanSteps } = await import("./utils");
 
@@ -1166,7 +1352,9 @@ test("/autoplan auto-plans each approved subtask without asking new questions", 
   expect(harness.sentUserMessages[2]).toContain("Approved top-level plan context:");
   expect(harness.sentUserMessages[2]).toContain(buildPlanText());
   expect(harness.sentUserMessages[2]).toContain("Do not ask the user questions.");
-  expect(harness.sentUserMessages[2]).toContain("Infer the best repo-consistent choice and continue.");
+  expect(harness.sentUserMessages[2]).toContain(
+    "Infer the best repo-consistent choice and continue.",
+  );
 
   await expect(
     invokeToolCall(harness, { toolName: "ask_user_question", input: { questions: [] } }),
@@ -1401,7 +1589,8 @@ test("/autoplan retries non-compliant hidden reviews once and then stops on a re
   });
 
   expect(harness.uiStub.notifications).toContainEqual({
-    message: "Autoplan review kept asking for user input or approval after one retry. Stopping autoplan.",
+    message:
+      "Autoplan review kept asking for user input or approval after one retry. Stopping autoplan.",
     level: "error",
   });
 
@@ -1467,8 +1656,12 @@ test("/autoplan retries non-compliant execution turns once and then stops before
   expect(harness.sentUserMessages[3]).toContain(
     "The previous inner execution response violated the post-approval autoplan policy.",
   );
-  expect(harness.sentUserMessages[3]).toContain("Retry only step 1: Add a regression test for prompt leakage");
-  expect(harness.sentUserMessages[3]).toContain("Infer the best repo-consistent choice and continue.");
+  expect(harness.sentUserMessages[3]).toContain(
+    "Retry only step 1: Add a regression test for prompt leakage",
+  );
+  expect(harness.sentUserMessages[3]).toContain(
+    "Infer the best repo-consistent choice and continue.",
+  );
   expect(harness.uiStub.notifications).toContainEqual({
     message:
       "Autoplan execution asked for user input or approval. Asking Pi to retry the same inner step and infer the missing decisions.",
@@ -1483,7 +1676,8 @@ test("/autoplan retries non-compliant execution turns once and then stops before
   });
 
   expect(harness.uiStub.notifications).toContainEqual({
-    message: "Autoplan execution kept asking for user input or approval after one retry. Stopping autoplan.",
+    message:
+      "Autoplan execution kept asking for user input or approval after one retry. Stopping autoplan.",
     level: "error",
   });
   expect(harness.sentUserMessages).toHaveLength(4);
