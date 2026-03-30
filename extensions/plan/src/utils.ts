@@ -384,3 +384,56 @@ export function markTodoItemsSkipped(items: TodoItem[], skippedSteps: number[]):
 export function markCompletedSteps(text: string, items: TodoItem[]): number {
   return markTodoItemsCompleted(items, extractDoneSteps(text));
 }
+
+export type AutoPlanOutputComplianceIssue =
+  | "asks_user_decision"
+  | "requests_approval"
+  | "defers_instead_of_inferring";
+
+const AUTOPLAN_ASKS_USER_DECISION_PATTERNS = [
+  /\bneed (your|user) (input|decision|choice|clarification|feedback)\b/i,
+  /\bi need (you|the user) to decide\b/i,
+  /\bask (the )?user\b/i,
+  /\bwhat would you like\b/i,
+  /\blet me know (which|whether|what)\b/i,
+  /\bplease choose\b/i,
+  /\bwhich option\b/i,
+];
+
+const AUTOPLAN_REQUESTS_APPROVAL_PATTERNS = [
+  /\bdo you approve\b/i,
+  /\bplease approve\b/i,
+  /\bneed(?:s)? approval\b/i,
+  /\brequest approval\b/i,
+  /\bawait(?:ing)? approval\b/i,
+  /\bapproval (?:from you|is required)\b/i,
+  /\bbefore proceeding[, ]+approve\b/i,
+];
+
+const AUTOPLAN_DEFERS_INSTEAD_OF_INFERRING_PATTERNS = [
+  /\b(?:can(?:not|'t)|cannot) proceed until\b/i,
+  /\bwaiting for (?:your|user) (?:input|decision|approval)\b/i,
+  /\bonce you (?:confirm|decide|choose)\b/i,
+  /\bafter you (?:confirm|decide|choose)\b/i,
+  /\bneed more information\b/i,
+  /\bneed clarification\b/i,
+  /\bwithout (?:that|your) (?:decision|input|approval)\b/i,
+];
+
+export function detectAutoPlanOutputComplianceIssues(
+  text: string,
+): AutoPlanOutputComplianceIssue[] {
+  const issues: AutoPlanOutputComplianceIssue[] = [];
+
+  if (AUTOPLAN_ASKS_USER_DECISION_PATTERNS.some((pattern) => pattern.test(text))) {
+    issues.push("asks_user_decision");
+  }
+  if (AUTOPLAN_REQUESTS_APPROVAL_PATTERNS.some((pattern) => pattern.test(text))) {
+    issues.push("requests_approval");
+  }
+  if (AUTOPLAN_DEFERS_INSTEAD_OF_INFERRING_PATTERNS.some((pattern) => pattern.test(text))) {
+    issues.push("defers_instead_of_inferring");
+  }
+
+  return issues;
+}

@@ -342,6 +342,31 @@ function buildPartiallyIndentedSubtaskPlanText(): string {
   ].join("\n");
 }
 
+function buildNonCompliantAutoPlanSubtaskText(): string {
+  return [
+    "1) Task understanding",
+    "2) Codebase findings",
+    "3) Approach options / trade-offs",
+    "4) Open questions / assumptions",
+    "I need your decision on whether to keep the legacy path before continuing.",
+    "5) Plan:",
+    "1. Add a regression test for prompt leakage",
+    "2. Update the approval action UI to show a compact summary",
+    "6) Ready to execute when approved.",
+  ].join("\n");
+}
+
+function buildNonCompliantAutoPlanReviewText(): string {
+  return [
+    "1) Progress summary",
+    "2) Remaining gaps",
+    "I need your decision on whether to keep the legacy path before continuing.",
+    "3) Plan:",
+    "1. Finalize the rust module wiring",
+    "2. Remove the legacy implementation path",
+    "4) Continue autoplan.",
+  ].join("\n");
+}
 
 function extractRequestId(prompt: string): string | undefined {
   const match = prompt.match(/<!--\s*workflow-request-id:([^>]+)\s*-->/i);
@@ -1195,6 +1220,192 @@ test("/autoplan auto-plans each approved subtask without asking new questions", 
   expect(harness.sentUserMessages[4]).toContain(
     "Current approved high-level task 2: Finalize the rust module wiring",
   );
+});
+
+test("/autoplan retries non-compliant inner subtask plans once and then stops on a repeated violation", async () => {
+  const harness = createPlanExtensionHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+  });
+
+  await harness.runCommand("autoplan", "Rewrite this in Rust");
+
+  const topLevelPrompt = harness.sentUserMessages[0] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: topLevelPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  const subtaskPrompt = harness.sentUserMessages[1] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: subtaskPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildNonCompliantAutoPlanSubtaskText() }],
+      },
+    ],
+  });
+
+  expect(harness.sentUserMessages).toHaveLength(3);
+  expect(harness.sentUserMessages[2]).toContain(
+    "The previous approved-subtask planning response violated the post-approval autoplan policy.",
+  );
+  expect(harness.sentUserMessages[2]).toContain(
+    "Infer the best repo-consistent choice and continue.",
+  );
+  expect(harness.uiStub.notifications).toContainEqual({
+    message:
+      "Autoplan subtask planning asked for user input or approval. Asking Pi to restate the subtask plan and infer the missing decisions.",
+    level: "warning",
+  });
+
+  const retrySubtaskPrompt = harness.sentUserMessages[2] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: retrySubtaskPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildNonCompliantAutoPlanSubtaskText() }],
+      },
+    ],
+  });
+
+  expect(harness.uiStub.notifications).toContainEqual({
+    message:
+      "Autoplan subtask planning kept asking for user input or approval after one retry. Stopping autoplan.",
+    level: "error",
+  });
+
+  await harness.runCommand("autoplan", "status");
+  expect(harness.uiStub.notifications).toContainEqual({
+    message: "Autoplan: idle",
+    level: "info",
+  });
+});
+
+test("/autoplan retries non-compliant hidden reviews once and then stops on a repeated violation", async () => {
+  const harness = createPlanExtensionHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+  });
+
+  await harness.runCommand("autoplan", "Rewrite this in Rust");
+
+  const topLevelPrompt = harness.sentUserMessages[0] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: topLevelPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  const subtaskPrompt = harness.sentUserMessages[1] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: subtaskPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  await harness.emit("turn_end", {
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "Finished the first subtask step [DONE:1]" }],
+    },
+  });
+  await harness.emit("turn_end", {
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "Finished the second subtask step [DONE:2]" }],
+    },
+  });
+
+  const reviewPrompt = String(harness.sentMessages.at(-1)?.content ?? "");
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "custom",
+        content: reviewPrompt,
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildNonCompliantAutoPlanReviewText() }],
+      },
+    ],
+  });
+
+  const retryReviewPrompt = String(harness.sentMessages.at(-1)?.content ?? "");
+  expect(retryReviewPrompt).toContain(
+    "The previous autoplan progress review violated the post-approval autoplan policy.",
+  );
+  expect(retryReviewPrompt).toContain("Infer the best repo-consistent choice and continue.");
+  expect(harness.uiStub.notifications).toContainEqual({
+    message: "Autoplan review asked for user input or approval. Asking for a stricter restatement.",
+    level: "warning",
+  });
+
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "custom",
+        content: retryReviewPrompt,
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildNonCompliantAutoPlanReviewText() }],
+      },
+    ],
+  });
+
+  expect(harness.uiStub.notifications).toContainEqual({
+    message: "Autoplan review kept asking for user input or approval after one retry. Stopping autoplan.",
+    level: "error",
+  });
+
+  await harness.runCommand("autoplan", "status");
+  expect(harness.uiStub.notifications).toContainEqual({
+    message: "Autoplan: idle",
+    level: "info",
+  });
 });
 
 test("/autoplan preserves the approved top-level plan text across review updates and session compaction", async () => {

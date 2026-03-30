@@ -20,6 +20,7 @@ import {
   type PlanApprovalPreviewStep,
 } from "./plan-action-ui";
 import {
+  detectAutoPlanOutputComplianceIssues,
   extractDoneSteps,
   extractPlanSteps,
   extractSkippedSteps,
@@ -30,6 +31,7 @@ import {
   normalizeArg,
   parseCritiqueVerdict,
   toTodoItems,
+  type AutoPlanOutputComplianceIssue,
   type PlanStep,
   type TodoItem,
 } from "./utils";
@@ -201,6 +203,7 @@ interface AutoPlanReviewState {
   prompt?: string;
   missingOutputRetries: number;
   parseRecoveryAttempted: boolean;
+  complianceRecoveryAttempted: boolean;
 }
 
 interface AutoPlanSubtaskExecutionResumeState {
@@ -212,6 +215,7 @@ interface AutoPlanSubtaskExecutionResumeState {
 
 class AutoPlanSubtaskWorkflow extends GuidedWorkflow {
   private parseRecoveryAttempted = false;
+  private complianceRecoveryAttempted = false;
 
   constructor(
     private readonly pi: ExtensionAPI,
@@ -243,11 +247,17 @@ class AutoPlanSubtaskWorkflow extends GuidedWorkflow {
         (pendingResponseKind === "planning" || pendingResponseKind === "revision") &&
         lastAssistantText
       ) {
+        const complianceIssues = detectAutoPlanOutputComplianceIssues(lastAssistantText);
+        if (complianceIssues.length > 0) {
+          return this.handlePolicyViolation(lastAssistantText, complianceIssues, ctx);
+        }
+
         const extracted = extractTodoItems(lastAssistantText);
         if (extracted.length === 0) {
           return this.handleUnparseablePlanningDraft(lastAssistantText, ctx);
         }
         this.parseRecoveryAttempted = false;
+        this.complianceRecoveryAttempted = false;
       }
     }
 
@@ -256,6 +266,7 @@ class AutoPlanSubtaskWorkflow extends GuidedWorkflow {
 
   async handleSessionShutdown(event: SessionShutdownEvent, ctx: ExtensionContext): Promise<void> {
     this.parseRecoveryAttempted = false;
+    this.complianceRecoveryAttempted = false;
     await super.handleSessionShutdown(event, ctx);
   }
 
@@ -320,6 +331,27 @@ class AutoPlanSubtaskWorkflow extends GuidedWorkflow {
     await super.handleSessionShutdown({ reason: "autoplan-subtask-parse-failed" }, ctx);
     return { kind: "recoverable_error", reason: "autoplan_subtask_unparseable" };
   }
+
+  private async handlePolicyViolation(
+    draftText: string,
+    issues: AutoPlanOutputComplianceIssue[],
+    ctx: ExtensionContext,
+  ): Promise<GuidedWorkflowResult> {
+    if (!this.complianceRecoveryAttempted) {
+      this.complianceRecoveryAttempted = true;
+      notify(
+        this.pi,
+        ctx,
+        "Autoplan subtask planning asked for user input or approval. Asking Pi to restate the subtask plan and infer the missing decisions.",
+        "warning",
+      );
+      await super.handleSessionShutdown({ reason: "autoplan-subtask-policy-retry" }, ctx);
+      return super.handleCommand(buildAutoPlanSubtaskComplianceRecoveryPrompt(draftText, issues), ctx);
+    }
+
+    this.complianceRecoveryAttempted = false;
+    return { kind: "recoverable_error", reason: "autoplan_subtask_policy_violation" };
+  }
 }
 
 export class PiPlanWorkflow extends GuidedWorkflow {
@@ -342,6 +374,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     awaitingResponse: false,
     missingOutputRetries: 0,
     parseRecoveryAttempted: false,
+    complianceRecoveryAttempted: false,
   };
   private readonly autoPlanSubtaskWorkflow: AutoPlanSubtaskWorkflow;
 
@@ -762,7 +795,15 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     }
 
     if (this.autoPlanSubtaskWorkflow.getStateSnapshot().phase !== "idle") {
-      return this.autoPlanSubtaskWorkflow.handleAgentEnd(event, ctx);
+      const result = await this.autoPlanSubtaskWorkflow.handleAgentEnd(event, ctx);
+      if (result.reason === "autoplan_subtask_policy_violation") {
+        await this.stopAutoPlan(
+          ctx,
+          "Autoplan subtask planning kept asking for user input or approval after one retry. Stopping autoplan.",
+          "error",
+        );
+      }
+      return result;
     }
 
     if (this.getStateSnapshot().phase === "executing") {
@@ -1455,6 +1496,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       prompt,
       missingOutputRetries: 0,
       parseRecoveryAttempted: false,
+      complianceRecoveryAttempted: false,
     };
 
     try {
@@ -1520,6 +1562,16 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       return this.retryAutoPlanReview(ctx, "Autoplan review returned no usable output.");
     }
 
+    const complianceIssues = detectAutoPlanOutputComplianceIssues(lastAssistantText);
+    if (complianceIssues.length > 0) {
+      return this.retryAutoPlanReview(
+        ctx,
+        "Autoplan review asked for user input or approval. Asking for a stricter restatement.",
+        buildAutoPlanReviewComplianceRecoveryPrompt(lastAssistantText, complianceIssues),
+        { complianceRecovery: true },
+      );
+    }
+
     const reviewOutcome = this.applyAutoPlanReviewText(lastAssistantText, ctx);
     if (reviewOutcome === "retry") {
       return this.retryAutoPlanReview(
@@ -1583,10 +1635,10 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     ctx: ExtensionContext,
     message: string,
     promptOverride?: string,
-    options: { parseRecovery?: boolean } = {},
+    options: { parseRecovery?: boolean; complianceRecovery?: boolean } = {},
   ): Promise<GuidedWorkflowResult> {
     const maxMissingOutputRetries = 2;
-    if (!options.parseRecovery) {
+    if (!options.parseRecovery && !options.complianceRecovery) {
       this.autoPlanReview.missingOutputRetries += 1;
       if (this.autoPlanReview.missingOutputRetries > maxMissingOutputRetries) {
         await this.continueAutoPlanAfterReviewFallback(
@@ -1608,7 +1660,19 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       this.autoPlanReview.parseRecoveryAttempted = true;
     }
 
-    notify(this.pi, ctx, message, options.parseRecovery ? "warning" : "warning");
+    if (options.complianceRecovery) {
+      if (this.autoPlanReview.complianceRecoveryAttempted) {
+        await this.stopAutoPlan(
+          ctx,
+          "Autoplan review kept asking for user input or approval after one retry. Stopping autoplan.",
+          "error",
+        );
+        return { kind: "recoverable_error", reason: "autoplan_review_policy_violation" };
+      }
+      this.autoPlanReview.complianceRecoveryAttempted = true;
+    }
+
+    notify(this.pi, ctx, message, "warning");
     return this.sendAutoPlanReviewPrompt(promptOverride ?? this.autoPlanReview.prompt ?? "", ctx);
   }
 
@@ -1725,6 +1789,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       awaitingResponse: false,
       missingOutputRetries: 0,
       parseRecoveryAttempted: false,
+      complianceRecoveryAttempted: false,
     };
   }
 
@@ -1748,7 +1813,11 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     notify(this.pi, ctx, message, "info");
   }
 
-  private async stopAutoPlan(ctx: ExtensionContext, message: string): Promise<void> {
+  private async stopAutoPlan(
+    ctx: ExtensionContext,
+    message: string,
+    type: "info" | "warning" | "error" = "info",
+  ): Promise<void> {
     if (this.planModeEnabled || this.restoreTools) {
       this.restoreNormalTools();
     }
@@ -1760,7 +1829,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     this.resetPlanningDraft();
     this.clearAutoPlanState();
     this.setStatus(ctx);
-    notify(this.pi, ctx, message, "info");
+    notify(this.pi, ctx, message, type);
   }
 
   private getExecutionPrompt(): string {
@@ -2373,6 +2442,65 @@ function buildAutoPlanReviewParseRecoveryPrompt(reviewText: string): string {
     "Previous review:",
     reviewText,
   ].join("\n");
+}
+
+function formatAutoPlanComplianceIssues(issues: AutoPlanOutputComplianceIssue[]): string {
+  return issues
+    .map((issue) => {
+      switch (issue) {
+        case "asks_user_decision":
+          return "asked the user for a decision";
+        case "requests_approval":
+          return "requested approval";
+        case "defers_instead_of_inferring":
+          return "deferred instead of inferring and continuing";
+      }
+    })
+    .join(", ");
+}
+
+function buildAutoPlanSubtaskComplianceRecoveryPrompt(
+  draftText: string,
+  issues: AutoPlanOutputComplianceIssue[],
+): string {
+  const issueSummary = formatAutoPlanComplianceIssues(issues);
+  return [
+    "The previous approved-subtask planning response violated the post-approval autoplan policy.",
+    issueSummary ? `Problem: it ${issueSummary}.` : undefined,
+    "Restate the same subtask plan.",
+    "Do not ask the user questions.",
+    "Do not request approval.",
+    "Infer the best repo-consistent choice and continue.",
+    "Return the required plan output contract with an explicit Plan: section and numbered executable steps.",
+    "End with: Ready to execute when approved.",
+    "",
+    "Previous response:",
+    draftText,
+  ]
+    .filter((line): line is string => typeof line === "string" && line.length > 0)
+    .join("\n");
+}
+
+function buildAutoPlanReviewComplianceRecoveryPrompt(
+  reviewText: string,
+  issues: AutoPlanOutputComplianceIssue[],
+): string {
+  const issueSummary = formatAutoPlanComplianceIssues(issues);
+  return [
+    "The previous autoplan progress review violated the post-approval autoplan policy.",
+    issueSummary ? `Problem: it ${issueSummary}.` : undefined,
+    "Restate the review.",
+    "Do not ask the user questions.",
+    "Do not request approval.",
+    "Infer the best repo-consistent choice and continue.",
+    "If the goal is complete, reply with exactly: Status: COMPLETE",
+    "Otherwise include an explicit Plan: section with numbered remaining tasks and end with: Continue autoplan.",
+    "",
+    "Previous review:",
+    reviewText,
+  ]
+    .filter((line): line is string => typeof line === "string" && line.length > 0)
+    .join("\n");
 }
 
 function isAutoPlanCompleteResponse(text: string): boolean {
