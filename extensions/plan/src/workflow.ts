@@ -335,6 +335,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   private parseRecoveryAttempted = false;
   private autoPlanMode: AutoPlanMode = "off";
   private autoPlanGoal = "";
+  private autoPlanApprovedPlanText = "";
   private autoPlanPendingStart = false;
   private autoPlanOuterStep?: number;
   private autoPlanReview: AutoPlanReviewState = {
@@ -547,6 +548,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
 
     this.autoPlanMode = "bootstrap";
     this.autoPlanGoal = raw;
+    this.autoPlanApprovedPlanText = "";
     this.autoPlanPendingStart = false;
     this.autoPlanOuterStep = undefined;
     this.resetAutoPlanReviewState();
@@ -1131,6 +1133,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     this.autoPlanPendingStart = this.autoPlanMode === "bootstrap";
     if (this.autoPlanPendingStart) {
       this.autoPlanMode = "executing";
+      this.autoPlanApprovedPlanText = this.getLatestPlanText()?.trim() ?? "";
     }
     this.resetPlanningDraft();
     this.exitPlanMode(ctx, "Plan approved. Entering YOLO mode for execution.");
@@ -1703,6 +1706,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   private clearAutoPlanState(): void {
     this.autoPlanMode = "off";
     this.autoPlanGoal = "";
+    this.autoPlanApprovedPlanText = "";
     this.autoPlanPendingStart = false;
     this.autoPlanOuterStep = undefined;
     this.resetAutoPlanReviewState();
@@ -2113,6 +2117,12 @@ export function buildApprovalReviewState(
     badges: buildReviewBadges(planText, steps),
     wasRevised: options.wasRevised ?? false,
   };
+}
+
+export function getApprovedAutoPlanTextForTesting(workflow: PiPlanWorkflow): string {
+  return (
+    (workflow as unknown as { autoPlanApprovedPlanText?: string }).autoPlanApprovedPlanText ?? ""
+  );
 }
 
 function summarizeExecutionValues(values: string[]): string | undefined {

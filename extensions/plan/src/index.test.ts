@@ -49,6 +49,7 @@ mock.module("@mariozechner/pi-tui", () => ({
 }));
 
 const { default: planExtension } = await import("./index");
+const { PiPlanWorkflow, getApprovedAutoPlanTextForTesting } = await import("./workflow");
 
 type CommandHandler = (args: string, ctx: ExtensionContext) => Promise<void> | void;
 type EventHandler = (event: unknown, ctx: ExtensionContext) => Promise<unknown> | unknown;
@@ -186,6 +187,69 @@ function createPlanExtensionHarness(options: HarnessOptions = {}) {
     runCommand,
     emit,
     emitWithResult,
+  };
+}
+
+function createDirectWorkflowHarness(options: HarnessOptions = {}) {
+  const sentUserMessages: string[] = [];
+  const sentMessages: Array<{ customType?: string; content?: unknown; display?: boolean }> = [];
+  const allTools = [
+    { name: "read" },
+    { name: "bash" },
+    { name: "grep" },
+    { name: "find" },
+    { name: "ls" },
+    { name: "edit" },
+    { name: "write" },
+    { name: "ask_user_question" },
+    ...(options.extraTools ?? []).map((name) => ({ name })),
+  ];
+  let activeTools = allTools.map((tool) => tool.name);
+
+  const uiStub = createUiStub(options.customSelection);
+  const hasUI = options.hasUI ?? false;
+  const ctx = {
+    hasUI,
+    ui: uiStub.ui,
+  } as ExtensionContext;
+
+  const pi = {
+    getAllTools() {
+      return allTools;
+    },
+    getActiveTools() {
+      return activeTools;
+    },
+    setActiveTools(tools: string[]) {
+      activeTools = [...tools];
+    },
+    sendUserMessage(content: string) {
+      sentUserMessages.push(content);
+    },
+    sendMessage(message: { customType?: string; content?: unknown; display?: boolean }) {
+      sentMessages.push(message);
+    },
+  };
+
+  const workflow = new PiPlanWorkflow(pi as never);
+
+  return {
+    workflow,
+    ctx,
+    uiStub,
+    sentMessages,
+    sentUserMessages,
+    getActiveTools: () => [...activeTools],
+    handleAutoPlanCommand: async (args: string) =>
+      workflow.handleAutoPlanCommand(args, ctx as never),
+    handleAgentEnd: async (event: unknown) => workflow.handleAgentEnd(event as never, ctx as never),
+    handleTurnEnd: async (event: unknown) => workflow.handleTurnEnd(event as never, ctx as never),
+    handleSessionCompact: async (event: unknown) =>
+      workflow.handleSessionCompact(event as never, ctx as never),
+    handleSessionSwitch: async (event: unknown) =>
+      workflow.handleSessionSwitch(event as never, ctx as never),
+    handleSessionShutdown: async (event: unknown) =>
+      workflow.handleSessionShutdown(event as never, ctx as never),
   };
 }
 
@@ -357,6 +421,49 @@ async function enterNonUiApprovalState(harness: ReturnType<typeof createPlanExte
     harness,
     "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
   );
+}
+
+async function enterApprovedAutoPlanState(
+  harness: ReturnType<typeof createDirectWorkflowHarness>,
+  goal: string = "Rewrite this in Rust",
+  planText: string = buildPlanText(),
+) {
+  await harness.handleAutoPlanCommand(goal);
+
+  const planningPrompt = harness.sentUserMessages[0] ?? "";
+  await harness.handleAgentEnd({
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: planningPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: planText }],
+      },
+    ],
+  });
+
+  const critiquePrompt = String(harness.sentMessages.at(-1)?.content ?? "");
+  expect(critiquePrompt).toContain("workflow-request-id");
+
+  await harness.handleAgentEnd({
+    messages: [
+      {
+        role: "custom",
+        content: critiquePrompt,
+      },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+          },
+        ],
+      },
+    ],
+  });
 }
 
 async function invokeToolCall(
@@ -1000,6 +1107,118 @@ test("/autoplan auto-plans each approved subtask without asking new questions", 
   expect(harness.sentUserMessages[4]).toContain(
     "Current approved high-level task 2: Finalize the rust module wiring",
   );
+});
+
+test("/autoplan preserves the approved top-level plan text across review updates and session compaction", async () => {
+  const harness = createDirectWorkflowHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+  });
+  const approvedPlanText = buildPlanText();
+
+  await enterApprovedAutoPlanState(harness, "Rewrite this in Rust", approvedPlanText);
+
+  expect(getApprovedAutoPlanTextForTesting(harness.workflow)).toBe(approvedPlanText);
+  expect(harness.sentUserMessages[1]).toContain("Current approved high-level task 1");
+
+  const subtaskPrompt = harness.sentUserMessages[1] ?? "";
+  await harness.handleAgentEnd({
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: subtaskPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+
+  const subtaskCritiquePrompt = String(harness.sentMessages.at(-1)?.content ?? "");
+  await harness.handleAgentEnd({
+    messages: [
+      {
+        role: "custom",
+        content: subtaskCritiquePrompt,
+      },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+          },
+        ],
+      },
+    ],
+  });
+
+  await harness.handleTurnEnd({
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "Finished the first subtask step [DONE:1]" }],
+    },
+  });
+  await harness.handleTurnEnd({
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "Finished the second subtask step [DONE:2]" }],
+    },
+  });
+
+  const reviewPrompt = String(harness.sentMessages.at(-1)?.content ?? "");
+  await harness.handleAgentEnd({
+    messages: [
+      {
+        role: "custom",
+        content: reviewPrompt,
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildAutoPlanReviewText() }],
+      },
+    ],
+  });
+
+  expect(getApprovedAutoPlanTextForTesting(harness.workflow)).toBe(approvedPlanText);
+
+  await harness.handleSessionCompact(SESSION_COMPACT_EVENT);
+
+  expect(getApprovedAutoPlanTextForTesting(harness.workflow)).toBe(approvedPlanText);
+});
+
+test("/autoplan clears the approved top-level plan text on stop, finish, and session reset", async () => {
+  const stopHarness = createDirectWorkflowHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+  });
+  await enterApprovedAutoPlanState(stopHarness);
+  expect(getApprovedAutoPlanTextForTesting(stopHarness.workflow)).toBe(buildPlanText());
+  await stopHarness.handleAutoPlanCommand("stop");
+  expect(getApprovedAutoPlanTextForTesting(stopHarness.workflow)).toBe("");
+
+  const finishHarness = createDirectWorkflowHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+  });
+  await enterApprovedAutoPlanState(finishHarness);
+  expect(getApprovedAutoPlanTextForTesting(finishHarness.workflow)).toBe(buildPlanText());
+  await (
+    finishHarness.workflow as unknown as {
+      finishAutoPlan(ctx: ExtensionContext, message: string): Promise<void>;
+    }
+  ).finishAutoPlan(finishHarness.ctx, "Autoplan complete.");
+  expect(getApprovedAutoPlanTextForTesting(finishHarness.workflow)).toBe("");
+
+  const resetHarness = createDirectWorkflowHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+  });
+  await enterApprovedAutoPlanState(resetHarness);
+  expect(getApprovedAutoPlanTextForTesting(resetHarness.workflow)).toBe(buildPlanText());
+  await resetHarness.handleSessionSwitch(SESSION_RESET_EVENTS[0][1]);
+  expect(getApprovedAutoPlanTextForTesting(resetHarness.workflow)).toBe("");
 });
 
 test("/autoplan continues to the next inner step after a skipped subtask step", async () => {
