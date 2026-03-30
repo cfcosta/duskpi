@@ -821,6 +821,83 @@ test("/autoplan falls back to the existing backlog when progress review is unpar
   });
 });
 
+test("/autoplan ignores Status: COMPLETE while tracked backlog still exists", async () => {
+  const harness = createPlanExtensionHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+  });
+
+  await harness.runCommand("autoplan", "Rewrite this in Rust");
+
+  const topLevelPrompt = harness.sentUserMessages[0] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: topLevelPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  const subtaskPrompt = harness.sentUserMessages[1] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: subtaskPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  await harness.emit("turn_end", {
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "Finished the first subtask step [DONE:1]" }],
+    },
+  });
+  await harness.emit("turn_end", {
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "Finished the second subtask step [DONE:2]" }],
+    },
+  });
+
+  const reviewPrompt = String(harness.sentMessages.at(-1)?.content ?? "");
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "custom",
+        content: reviewPrompt,
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildAutoPlanCompleteText() }],
+      },
+    ],
+  });
+
+  expect(harness.sentUserMessages).toHaveLength(5);
+  expect(harness.sentUserMessages[4]).toContain(
+    "Current approved high-level task 2: Approval action UI to show a compact summary",
+  );
+});
+
 test("/autoplan auto-plans each approved subtask without asking new questions", async () => {
   const harness = createPlanExtensionHarness({
     hasUI: true,
