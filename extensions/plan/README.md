@@ -8,6 +8,7 @@ This directory is the repo-local copy bundled under `extensions/plan`. It is not
 
 - default execution-first mode (YOLO)
 - read-only `/plan` mode for investigation and plan drafting
+- `/autoplan` for long-term goals: approve one top-level plan, then recursively re-plan and execute each approved subtask
 - an internal hidden critique and revision pass before approval
 - one automatic draft-reformat retry when Pi returns a non-parseable plan without an explicit `Plan:` section
 - an approval menu with approve, continue, regenerate, and exit actions
@@ -22,6 +23,7 @@ This directory is the repo-local copy bundled under `extensions/plan`. It is not
 ```txt
 /plan on
 /plan Refactor command parser to support aliases
+/autoplan Rewrite this subsystem in Rust
 ```
 
 ## Why
@@ -112,10 +114,11 @@ If no interactive UI is available while approval is pending, the same approval s
 
 ## Modes
 
-| Mode           | Behavior                                                 | Safety policy                               |
-| -------------- | -------------------------------------------------------- | ------------------------------------------- |
-| Default (YOLO) | Executes directly unless you explicitly request planning | No extra restrictions                       |
-| Plan (`/plan`) | Gathers evidence and returns an execution plan           | Read-only tools plus mutating action blocks |
+| Mode                   | Behavior                                                                                              | Safety policy                                          |
+| ---------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| Default (YOLO)         | Executes directly unless you explicitly request planning                                              | No extra restrictions                                  |
+| Plan (`/plan`)         | Gathers evidence and returns an execution plan                                                        | Read-only tools plus mutating action blocks            |
+| Autoplan (`/autoplan`) | Gets one user-approved top-level plan, then re-plans and executes each approved subtask automatically | Read-only while planning, normal tools while executing |
 
 ## Plan-mode guardrails
 
@@ -170,6 +173,9 @@ When a plan includes nested step metadata like target files/components, validati
 - `/plan off` — disable plan mode
 - `/plan status` — show current status
 - `/plan <task>` — enable mode if needed and start planning for `<task>`
+- `/autoplan <goal>` — create a top-level plan for a long-term goal, wait for the usual approval, then recursively plan and execute each approved subtask without asking new questions or approvals for the inner subplans
+- `/autoplan status` — show the current autoplan loop state
+- `/autoplan stop` — stop the current autoplan loop and clear its transient state
 - `/plan approve` — when approval is pending and no interactive UI is available, approve and start execution
 - `/plan continue <note>` — when approval is pending and no interactive UI is available, continue planning with a required note
 - `/plan regenerate` — when approval is pending and no interactive UI is available, rebuild the plan from scratch

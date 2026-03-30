@@ -155,13 +155,126 @@ Return this exact structure:
 Use PASS only if the plan is executable as-is. Use REFINE if the plan is salvageable with targeted improvements. Use REJECT if the plan is too vague or unsafe and should be replaced.
 `.trim();
 
+const AUTOPLAN_SUBTASK_SYSTEM_PROMPT = `
+[AUTOPLAN SUBTASK PLANNING - READ ONLY]
+You are planning a single approved subtask inside an already-approved long-term goal.
+
+Hard rules:
+- Stay read-only while planning.
+- Do not ask the user questions.
+- Do not request approval.
+- Make the best reasonable decisions from the repo, the approved parent goal, and existing patterns.
+- Return a concrete executable plan with an explicit Plan: section and numbered steps.
+`.trim();
+
+const AUTOPLAN_REVIEW_SYSTEM_PROMPT = `
+[AUTOPLAN PROGRESS REVIEW - READ ONLY]
+You are reviewing progress against an already-approved long-term goal.
+
+Hard rules:
+- Stay read-only.
+- Do not ask the user questions.
+- Do not request approval.
+- Decide whether the long-term goal is complete or what high-level tasks remain.
+- If work remains, return an explicit Plan: section with numbered remaining tasks.
+`.trim();
+
 export const PLAN_COMMAND_DESCRIPTION =
   "Enable read-only planning mode. Usage: /plan, /plan on, /plan off, /plan status, /plan <task>";
+export const AUTOPLAN_COMMAND_DESCRIPTION =
+  "Plan a long-term goal, get approval once, then recursively plan and execute each approved subtask";
 export const TODOS_COMMAND_DESCRIPTION = "Show current plan execution progress";
 
 type ApprovalReviewState = PlanApprovalDetails;
 
 type PendingPiPlanResponseKind = "planning" | "critique" | "revision";
+type AutoPlanMode = "off" | "bootstrap" | "executing";
+type AutoPlanReviewOutcome = "continue" | "complete" | "retry";
+
+interface AutoPlanReviewState {
+  pendingRequestId?: string;
+  awaitingResponse: boolean;
+  prompt?: string;
+  missingOutputRetries: number;
+  parseRecoveryAttempted: boolean;
+}
+
+class AutoPlanSubtaskWorkflow extends GuidedWorkflow {
+  private parseRecoveryAttempted = false;
+
+  constructor(
+    private readonly pi: ExtensionAPI,
+    options: ConstructorParameters<typeof GuidedWorkflow>[1],
+  ) {
+    super(pi, options);
+  }
+
+  async handleAgentEnd(event: AgentEndEvent, ctx: ExtensionContext): Promise<GuidedWorkflowResult> {
+    const phase = this.getStateSnapshot().phase;
+    if (phase === "executing") {
+      return { kind: "ok" };
+    }
+
+    const messages = event.messages ?? [];
+    const pendingResponseKind = getPendingPiPlanResponseKind(messages);
+    const lastAssistantText = [...messages]
+      .reverse()
+      .map(getAssistantTextFromMessage)
+      .find((text) => text.length > 0);
+
+    if (this.hasPendingPlanningRequest()) {
+      const correlationFailure = validatePendingPlanningResponse(this.getStateSnapshot(), messages);
+      if (correlationFailure) {
+        return correlationFailure;
+      }
+
+      if (
+        (pendingResponseKind === "planning" || pendingResponseKind === "revision") &&
+        lastAssistantText
+      ) {
+        const extracted = extractTodoItems(lastAssistantText);
+        if (extracted.length === 0) {
+          return this.handleUnparseablePlanningDraft(lastAssistantText, ctx);
+        }
+        this.parseRecoveryAttempted = false;
+      }
+    }
+
+    return super.handleAgentEnd(event, ctx);
+  }
+
+  async handleSessionShutdown(event: SessionShutdownEvent, ctx: ExtensionContext): Promise<void> {
+    this.parseRecoveryAttempted = false;
+    await super.handleSessionShutdown(event, ctx);
+  }
+
+  private hasPendingPlanningRequest(): boolean {
+    const state = this.getStateSnapshot();
+    return state.phase !== "idle" && state.awaitingResponse;
+  }
+
+  private async handleUnparseablePlanningDraft(
+    draftText: string,
+    ctx: ExtensionContext,
+  ): Promise<GuidedWorkflowResult> {
+    if (!this.parseRecoveryAttempted) {
+      this.parseRecoveryAttempted = true;
+      notify(
+        this.pi,
+        ctx,
+        "Autoplan couldn't extract subtask steps. Asking Pi to restate the subtask plan with an explicit Plan: section.",
+        "warning",
+      );
+      await super.handleSessionShutdown({ reason: "autoplan-subtask-parse-retry" }, ctx);
+      return super.handleCommand(buildParseRecoveryPrompt(draftText), ctx);
+    }
+
+    this.parseRecoveryAttempted = false;
+    notify(this.pi, ctx, "Autoplan couldn't extract subtask steps after one retry.", "error");
+    await super.handleSessionShutdown({ reason: "autoplan-subtask-parse-failed" }, ctx);
+    return { kind: "recoverable_error", reason: "autoplan_subtask_unparseable" };
+  }
+}
 
 export class PiPlanWorkflow extends GuidedWorkflow {
   private planModeEnabled = false;
@@ -174,6 +287,16 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   private planWasRevised = false;
   private executionConstraintNote = "";
   private parseRecoveryAttempted = false;
+  private autoPlanMode: AutoPlanMode = "off";
+  private autoPlanGoal = "";
+  private autoPlanPendingStart = false;
+  private autoPlanOuterStep?: number;
+  private autoPlanReview: AutoPlanReviewState = {
+    awaitingResponse: false,
+    missingOutputRetries: 0,
+    parseRecoveryAttempted: false,
+  };
+  private readonly autoPlanSubtaskWorkflow: AutoPlanSubtaskWorkflow;
 
   constructor(private readonly pi: ExtensionAPI) {
     let self!: PiPlanWorkflow;
@@ -256,6 +379,70 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     });
 
     self = this;
+    this.autoPlanSubtaskWorkflow = new AutoPlanSubtaskWorkflow(pi, {
+      id: `${STATUS_KEY}-autoplan-subtask`,
+      parseGoalArg: parsePlanGoalArg,
+      buildPlanningPrompt: ({ goal }) => {
+        return [
+          "Plan this approved subtask in read-only mode before making any changes.",
+          "Do not ask the user questions.",
+          "Do not request approval.",
+          "Make the best reasonable decisions from the approved parent goal, the repo, and existing patterns.",
+          "Return a concrete implementation plan that follows the required plan-mode response contract.",
+          "",
+          `Task: ${goal ?? "Create a concrete implementation plan."}`,
+        ].join("\n");
+      },
+      critique: {
+        buildCritiquePrompt: ({ planText }) => {
+          return `${PLAN_CRITIQUE_PROMPT}\n\nPlan to critique:\n\n${planText}`;
+        },
+        buildRevisionPrompt: ({ planText, critiqueText }) => {
+          return [
+            "Revise the latest plan using the critique below.",
+            "Keep planning read-only, do not ask the user questions, and return the full plan again using the required plan output contract.",
+            "Make each step atomic, executable, validation-backed, and suitable for one jujutsu commit.",
+            "",
+            "Original plan:",
+            planText,
+            "",
+            "Critique:",
+            critiqueText,
+          ].join("\n");
+        },
+        parseCritiqueVerdict,
+        customMessageType: "autoplan-subtask-internal",
+      },
+      planningPolicy: {
+        isWriteCapableTool(toolName) {
+          return isPlanWriteCapableTool(toolName);
+        },
+        isSafeReadOnlyCommand(command) {
+          return isSafeReadOnlyCommand(command);
+        },
+        writeBlockedReason: PLAN_MODE_WRITE_BLOCKED_REASON,
+        bashBlockedReason(command) {
+          return buildPlanModeBashBlockedReason(command);
+        },
+      },
+      approval: {
+        selectAction() {
+          return { action: "approve" };
+        },
+      },
+      execution: {
+        extractItems({ planText }) {
+          return extractTodoItems(planText).map((item) => ({ ...item }));
+        },
+        buildExecutionPrompt({ currentStep, note, planText }) {
+          return self.buildExecutionPrompt(currentStep, planText, note);
+        },
+      },
+      text: {
+        alreadyRunning: "Autoplan is already processing a subtask.",
+        sendFailed: "Autoplan stopped: failed to send a subtask prompt.",
+      },
+    });
   }
 
   async handleTodosCommand(_args: unknown, ctx: ExtensionContext): Promise<void> {
@@ -280,6 +467,49 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       `Plan progress ${progress.completedSteps}/${progress.totalSteps}\n${lines.join("\n")}`,
       "info",
     );
+  }
+
+  async handleAutoPlanCommand(args: unknown, ctx: ExtensionContext): Promise<GuidedWorkflowResult> {
+    const raw = typeof args === "string" ? args.trim() : "";
+
+    const nonUiApprovalResult = await this.handleNonUiApprovalCommand(raw, ctx);
+    if (nonUiApprovalResult) {
+      return nonUiApprovalResult;
+    }
+
+    if (raw.length === 0) {
+      notify(this.pi, ctx, "Usage: /autoplan <long-term goal>", "info");
+      return { kind: "ok" };
+    }
+
+    const command = normalizeArg(raw);
+    if (["status", "state"].includes(command)) {
+      notify(this.pi, ctx, this.getAutoPlanStatusText());
+      return { kind: "ok" };
+    }
+
+    if (["off", "disable", "stop", "exit"].includes(command)) {
+      await this.stopAutoPlan(ctx, "Autoplan stopped.");
+      return { kind: "ok" };
+    }
+
+    if (this.getStateSnapshot().phase !== "idle" || this.autoPlanMode !== "off") {
+      notify(this.pi, ctx, "Plan mode is already enabled.", "warning");
+      return { kind: "blocked", reason: "already_running" };
+    }
+
+    this.autoPlanMode = "bootstrap";
+    this.autoPlanGoal = raw;
+    this.autoPlanPendingStart = false;
+    this.autoPlanOuterStep = undefined;
+    this.resetAutoPlanReviewState();
+
+    if (!this.planModeEnabled) {
+      this.enterPlanMode(ctx);
+    }
+
+    this.resetParseRecoveryState();
+    return this.startPlanningRequest(raw, ctx);
   }
 
   async handleCommand(args: unknown, ctx: ExtensionContext): Promise<GuidedWorkflowResult> {
@@ -331,6 +561,46 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     event: ToolCallEvent,
     ctx: ExtensionContext,
   ): Promise<{ block: true; reason: string } | void> {
+    if (this.autoPlanReview.awaitingResponse) {
+      if ((event.toolName ?? "").trim().toLowerCase() === "ask_user_question") {
+        return {
+          block: true,
+          reason: "Autoplan progress review must not ask the user new questions.",
+        };
+      }
+      if (isPlanWriteCapableTool(event.toolName)) {
+        return {
+          block: true,
+          reason: PLAN_MODE_WRITE_BLOCKED_REASON,
+        };
+      }
+      if (isBashToolName(event.toolName)) {
+        const input = event.input as { command?: unknown };
+        const command = typeof input.command === "string" ? input.command : "";
+        if (!isSafeReadOnlyCommand(command)) {
+          return {
+            block: true,
+            reason: buildPlanModeBashBlockedReason(command),
+          };
+        }
+      }
+      return;
+    }
+
+    const autoPlanSubtaskPhase = this.autoPlanSubtaskWorkflow.getStateSnapshot().phase;
+    if (autoPlanSubtaskPhase !== "idle") {
+      if (
+        (autoPlanSubtaskPhase === "planning" || autoPlanSubtaskPhase === "approval") &&
+        (event.toolName ?? "").trim().toLowerCase() === "ask_user_question"
+      ) {
+        return {
+          block: true,
+          reason: "Autoplan subtask planning must not ask the user new questions.",
+        };
+      }
+      return this.autoPlanSubtaskWorkflow.handleToolCall(event, ctx);
+    }
+
     if (!this.planModeEnabled) {
       return;
     }
@@ -362,6 +632,25 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     event: BeforeAgentStartEvent,
     _ctx: ExtensionContext,
   ): Promise<{ systemPrompt: string }> {
+    const autoPlanSubtaskPhase = this.autoPlanSubtaskWorkflow.getStateSnapshot().phase;
+    if (this.autoPlanReview.awaitingResponse) {
+      return {
+        systemPrompt: `${event.systemPrompt}\n\n${AUTOPLAN_REVIEW_SYSTEM_PROMPT}`,
+      };
+    }
+
+    if (autoPlanSubtaskPhase === "planning" || autoPlanSubtaskPhase === "approval") {
+      return {
+        systemPrompt: `${event.systemPrompt}\n\n${AUTOPLAN_SUBTASK_SYSTEM_PROMPT}`,
+      };
+    }
+
+    if (autoPlanSubtaskPhase === "executing") {
+      return {
+        systemPrompt: `${event.systemPrompt}\n\n${YOLO_MODE_SYSTEM_PROMPT}`,
+      };
+    }
+
     if (this.planModeEnabled) {
       return {
         systemPrompt: `${event.systemPrompt}\n\n${PLAN_MODE_SYSTEM_PROMPT}`,
@@ -380,6 +669,17 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   }
 
   async handleTurnEnd(event: TurnEndEvent, ctx: ExtensionContext): Promise<void> {
+    const autoPlanSubtaskState = this.autoPlanSubtaskWorkflow.getStateSnapshot();
+    if (autoPlanSubtaskState.phase !== "idle") {
+      const beforePhase = autoPlanSubtaskState.phase;
+      await this.autoPlanSubtaskWorkflow.handleTurnEnd(event, ctx);
+      const afterPhase = this.autoPlanSubtaskWorkflow.getStateSnapshot().phase;
+      if (beforePhase === "executing" && afterPhase === "idle") {
+        await this.handleCompletedAutoPlanSubtask(ctx);
+      }
+      return;
+    }
+
     const beforeState = this.getStateSnapshot();
     const beforeExecution = this.getExecutionSnapshot();
 
@@ -394,6 +694,14 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       .reverse()
       .map(getAssistantTextFromMessage)
       .find((text) => text.length > 0);
+
+    if (this.autoPlanReview.awaitingResponse) {
+      return this.handleAutoPlanReviewAgentEnd(event, ctx, messages, lastAssistantText);
+    }
+
+    if (this.autoPlanSubtaskWorkflow.getStateSnapshot().phase !== "idle") {
+      return this.autoPlanSubtaskWorkflow.handleAgentEnd(event, ctx);
+    }
 
     if (this.getStateSnapshot().phase === "executing") {
       return { kind: "ok" };
@@ -448,6 +756,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
         const beforePhase = this.getStateSnapshot().phase;
         const result = await super.handleAgentEnd(event, ctx);
         this.syncExecutionShadowFromGuided(beforePhase, beforeExecution, ctx);
+        await this.maybeStartPendingAutoPlan(ctx, result);
         return result;
       }
 
@@ -475,6 +784,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
         }
       }
 
+      await this.maybeStartPendingAutoPlan(ctx, result);
       return result;
     }
 
@@ -517,6 +827,10 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       this.restoreNormalTools();
     }
 
+    await this.autoPlanSubtaskWorkflow.handleSessionShutdown(
+      { reason: "autoplan-session-boundary-reset" },
+      ctx,
+    );
     await super.handleSessionShutdown({ reason: "plan-session-boundary-reset" }, ctx);
     this.resetLocalLifecycleState();
     this.clearPlanUiState(ctx);
@@ -593,7 +907,9 @@ export class PiPlanWorkflow extends GuidedWorkflow {
 
     approval.selectAction = async () => selection;
     try {
-      return await workflow.handleApprovalReady(ctx);
+      const result = await workflow.handleApprovalReady(ctx);
+      await this.maybeStartPendingAutoPlan(ctx, result);
+      return result;
     } finally {
       approval.selectAction = originalSelectAction;
     }
@@ -612,6 +928,34 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     }
 
     return "Plan mode: OFF (default YOLO mode)";
+  }
+
+  private getAutoPlanStatusText(): string {
+    if (this.autoPlanMode === "bootstrap") {
+      return "Autoplan: waiting for the top-level plan approval";
+    }
+
+    if (this.autoPlanReview.awaitingResponse) {
+      return "Autoplan: reviewing progress against the long-term goal";
+    }
+
+    const subtaskPhase = this.autoPlanSubtaskWorkflow.getStateSnapshot().phase;
+    if (
+      this.autoPlanMode === "executing" &&
+      (subtaskPhase === "planning" || subtaskPhase === "approval")
+    ) {
+      return "Autoplan: planning the current approved subtask";
+    }
+
+    if (this.autoPlanMode === "executing" && subtaskPhase === "executing") {
+      return "Autoplan: executing the current approved subtask";
+    }
+
+    if (this.autoPlanMode === "executing") {
+      return "Autoplan: ready to start the next approved subtask";
+    }
+
+    return "Autoplan: idle";
   }
 
   private hasPendingPlanningRequest(): boolean {
@@ -657,16 +1001,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   }
 
   private buildParseRecoveryPrompt(draftText: string): string {
-    return [
-      "The previous response did not include a parseable plan.",
-      "Restate the same proposed implementation plan using the required plan output contract.",
-      "Keep the same scope and intent.",
-      "Include an explicit Plan: section with numbered executable steps.",
-      "End with: Ready to execute when approved.",
-      "",
-      "Previous draft:",
-      draftText,
-    ].join("\n");
+    return buildParseRecoveryPrompt(draftText);
   }
 
   private async selectApprovalAction(
@@ -742,11 +1077,18 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   private handleApprovalApprove(note: string | undefined, ctx: ExtensionContext): void {
     this.executionMode = this.todoItems.length > 0;
     this.executionConstraintNote = note?.trim() ?? "";
+    this.autoPlanPendingStart = this.autoPlanMode === "bootstrap";
+    if (this.autoPlanPendingStart) {
+      this.autoPlanMode = "executing";
+    }
     this.resetPlanningDraft();
     this.exitPlanMode(ctx, "Plan approved. Entering YOLO mode for execution.");
   }
 
   private handleApprovalExit(ctx: ExtensionContext): void {
+    if (this.autoPlanMode === "bootstrap") {
+      this.clearAutoPlanState();
+    }
     this.exitPlanMode(ctx, "Exited plan mode without execution.", {
       resetProgress: true,
     });
@@ -864,6 +1206,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     this.todoItems = [];
     this.resetExecutionState();
     this.resetPlanningDraft();
+    this.clearAutoPlanState();
   }
 
   private getAllToolNames(): string[] {
@@ -889,6 +1232,383 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   private resetExecutionState(): void {
     this.executionMode = false;
     this.executionConstraintNote = "";
+  }
+
+  private async maybeStartPendingAutoPlan(
+    ctx: ExtensionContext,
+    result: GuidedWorkflowResult,
+  ): Promise<void> {
+    if (!this.autoPlanPendingStart || result.kind !== "ok") {
+      return;
+    }
+
+    this.autoPlanPendingStart = false;
+    await this.startNextAutoPlanSubtask(ctx);
+  }
+
+  private async startNextAutoPlanSubtask(ctx: ExtensionContext): Promise<void> {
+    if (this.autoPlanMode !== "executing" || this.autoPlanReview.awaitingResponse) {
+      return;
+    }
+
+    if (this.autoPlanSubtaskWorkflow.getStateSnapshot().phase !== "idle") {
+      return;
+    }
+
+    const currentStep = this.getCurrentOuterExecutionItem();
+    if (!currentStep) {
+      await this.finishAutoPlan(ctx, "Autoplan complete.");
+      return;
+    }
+
+    this.autoPlanOuterStep = currentStep.step;
+    const result = await this.autoPlanSubtaskWorkflow.handleCommand(
+      this.buildAutoPlanSubtaskGoal(currentStep),
+      ctx,
+    );
+
+    if (result.kind !== "ok") {
+      notify(this.pi, ctx, "Autoplan couldn't start the next approved subtask.", "error");
+    }
+  }
+
+  private buildAutoPlanSubtaskGoal(currentStep: GuidedWorkflowExecutionItem): string {
+    const remaining = this.getExecutionSnapshot().items.filter((item) => !item.completed);
+    const backlog = remaining.map((item) => `${item.step}. ${item.text}`).join("\n");
+
+    return [
+      `Long-term goal: ${this.autoPlanGoal}`,
+      `Current approved high-level task ${currentStep.step}: ${currentStep.text}`,
+      backlog.length > 0 ? "Remaining high-level backlog for context:" : undefined,
+      backlog.length > 0 ? backlog : undefined,
+      "Plan only the current approved high-level task.",
+      "Do not ask the user questions.",
+      "Do not ask for approval.",
+    ]
+      .filter((line): line is string => typeof line === "string" && line.length > 0)
+      .join("\n");
+  }
+
+  private async handleCompletedAutoPlanSubtask(ctx: ExtensionContext): Promise<void> {
+    if (typeof this.autoPlanOuterStep !== "number") {
+      return;
+    }
+
+    this.markOuterExecutionStepCompleted(this.autoPlanOuterStep);
+    this.autoPlanOuterStep = undefined;
+    this.todoItems = this.buildCompactTodoItems(
+      this.getLatestPlanText(),
+      this.getExecutionSnapshot().items,
+    );
+    this.setStatus(ctx);
+    await this.startAutoPlanReview(ctx);
+  }
+
+  private async startAutoPlanReview(ctx: ExtensionContext): Promise<void> {
+    const prompt = this.buildAutoPlanReviewPrompt();
+    const requestId = this.nextAutoPlanReviewRequestId();
+    const promptWithRequestId = `${prompt}\n\n${buildWorkflowRequestIdMarker(requestId)}`;
+
+    this.autoPlanReview = {
+      pendingRequestId: requestId,
+      awaitingResponse: true,
+      prompt,
+      missingOutputRetries: 0,
+      parseRecoveryAttempted: false,
+    };
+
+    try {
+      this.pi.sendMessage(
+        {
+          customType: "autoplan-review-internal",
+          content: promptWithRequestId,
+          display: false,
+        },
+        {
+          triggerTurn: true,
+          deliverAs: "followUp",
+        },
+      );
+    } catch {
+      await this.continueAutoPlanAfterReviewFallback(
+        ctx,
+        "Autoplan couldn't start the goal progress review, so it will continue with the existing approved backlog.",
+      );
+    }
+  }
+
+  private buildAutoPlanReviewPrompt(): string {
+    const completed = this.getExecutionSnapshot()
+      .items.filter((item) => item.completed)
+      .map((item) => `${item.step}. ${item.text}`)
+      .join("\n");
+    const remaining = this.getExecutionSnapshot()
+      .items.filter((item) => !item.completed)
+      .map((item) => `${item.step}. ${item.text}`)
+      .join("\n");
+
+    return [
+      "Review progress against the approved long-term goal.",
+      `Long-term goal: ${this.autoPlanGoal}`,
+      completed ? "Completed high-level tasks:" : undefined,
+      completed || undefined,
+      remaining ? "Current remaining high-level backlog before review:" : undefined,
+      remaining || undefined,
+      "Inspect the current repo state if needed.",
+      "Do not ask the user questions.",
+      "Do not request approval.",
+      "Return either exactly 'Status: COMPLETE' if the long-term goal is finished, or return a remaining high-level Plan: section with numbered executable tasks.",
+      "If work remains, end with: Continue autoplan.",
+    ]
+      .filter((line): line is string => typeof line === "string" && line.length > 0)
+      .join("\n");
+  }
+
+  private async handleAutoPlanReviewAgentEnd(
+    _event: AgentEndEvent,
+    ctx: ExtensionContext,
+    messages: unknown[],
+    lastAssistantText: string | undefined,
+  ): Promise<GuidedWorkflowResult> {
+    const correlationFailure = validateAutoPlanReviewResponse(this.autoPlanReview, messages);
+    if (correlationFailure) {
+      return correlationFailure;
+    }
+
+    if (!lastAssistantText) {
+      return this.retryAutoPlanReview(ctx, "Autoplan review returned no usable output.");
+    }
+
+    const reviewOutcome = this.applyAutoPlanReviewText(lastAssistantText, ctx);
+    if (reviewOutcome === "retry") {
+      return this.retryAutoPlanReview(
+        ctx,
+        "Autoplan couldn't extract a remaining task list. Asking for a stricter restatement.",
+        buildAutoPlanReviewParseRecoveryPrompt(lastAssistantText),
+        { parseRecovery: true },
+      );
+    }
+
+    this.resetAutoPlanReviewState();
+
+    if (reviewOutcome === "complete") {
+      await this.finishAutoPlan(ctx, "Autoplan complete.");
+      return { kind: "ok" };
+    }
+
+    this.setStatus(ctx);
+    await this.startNextAutoPlanSubtask(ctx);
+    return { kind: "ok" };
+  }
+
+  private applyAutoPlanReviewText(
+    reviewText: string,
+    ctx: ExtensionContext,
+  ): AutoPlanReviewOutcome {
+    const remainingItems = extractTodoItems(reviewText);
+    if (remainingItems.length === 0) {
+      if (isAutoPlanCompleteResponse(reviewText)) {
+        return "complete";
+      }
+
+      if (!this.autoPlanReview.parseRecoveryAttempted) {
+        return "retry";
+      }
+
+      notify(
+        this.pi,
+        ctx,
+        "Autoplan couldn't update the remaining backlog cleanly, so it will continue with the existing tracked tasks.",
+        "warning",
+      );
+      return this.getCurrentOuterExecutionItem() ? "continue" : "complete";
+    }
+
+    this.replaceOuterExecutionBacklog(remainingItems);
+    return this.getCurrentOuterExecutionItem() ? "continue" : "complete";
+  }
+
+  private async retryAutoPlanReview(
+    ctx: ExtensionContext,
+    message: string,
+    promptOverride?: string,
+    options: { parseRecovery?: boolean } = {},
+  ): Promise<GuidedWorkflowResult> {
+    const maxMissingOutputRetries = 2;
+    if (!options.parseRecovery) {
+      this.autoPlanReview.missingOutputRetries += 1;
+      if (this.autoPlanReview.missingOutputRetries > maxMissingOutputRetries) {
+        await this.continueAutoPlanAfterReviewFallback(
+          ctx,
+          `${message} Continuing with the existing approved backlog instead.`,
+        );
+        return { kind: "recoverable_error", reason: "autoplan_review_failed" };
+      }
+    }
+
+    if (options.parseRecovery) {
+      if (this.autoPlanReview.parseRecoveryAttempted) {
+        await this.continueAutoPlanAfterReviewFallback(
+          ctx,
+          `${message} Continuing with the existing approved backlog instead.`,
+        );
+        return { kind: "recoverable_error", reason: "autoplan_review_unparseable" };
+      }
+      this.autoPlanReview.parseRecoveryAttempted = true;
+    }
+
+    notify(this.pi, ctx, message, options.parseRecovery ? "warning" : "warning");
+    return this.sendAutoPlanReviewPrompt(promptOverride ?? this.autoPlanReview.prompt ?? "", ctx);
+  }
+
+  private sendAutoPlanReviewPrompt(prompt: string, ctx: ExtensionContext): GuidedWorkflowResult {
+    if (!prompt) {
+      return { kind: "recoverable_error", reason: "missing_autoplan_review_prompt" };
+    }
+
+    const requestId = this.nextAutoPlanReviewRequestId();
+    const promptWithRequestId = `${prompt}\n\n${buildWorkflowRequestIdMarker(requestId)}`;
+    this.autoPlanReview.pendingRequestId = requestId;
+    this.autoPlanReview.awaitingResponse = true;
+    this.autoPlanReview.prompt = prompt;
+
+    try {
+      this.pi.sendMessage(
+        {
+          customType: "autoplan-review-internal",
+          content: promptWithRequestId,
+          display: false,
+        },
+        {
+          triggerTurn: true,
+          deliverAs: "followUp",
+        },
+      );
+      return { kind: "ok" };
+    } catch {
+      void this.continueAutoPlanAfterReviewFallback(
+        ctx,
+        "Autoplan couldn't resend the progress review prompt, so it will continue with the existing approved backlog.",
+      );
+      return { kind: "recoverable_error", reason: "autoplan_review_send_failed" };
+    }
+  }
+
+  private async continueAutoPlanAfterReviewFallback(
+    ctx: ExtensionContext,
+    message: string,
+  ): Promise<void> {
+    this.resetAutoPlanReviewState();
+    notify(this.pi, ctx, message, "warning");
+
+    if (this.getCurrentOuterExecutionItem()) {
+      this.setStatus(ctx);
+      await this.startNextAutoPlanSubtask(ctx);
+      return;
+    }
+
+    await this.finishAutoPlan(ctx, "Autoplan complete.");
+  }
+
+  private replaceOuterExecutionBacklog(remainingItems: TodoItem[]): void {
+    const completedItems = this.getExecutionSnapshot().items.filter((item) => item.completed);
+    const nextItems = [
+      ...completedItems.map((item, index) => ({
+        step: index + 1,
+        text: item.text,
+        completed: true,
+      })),
+      ...remainingItems.map((item, index) => ({
+        step: completedItems.length + index + 1,
+        text: item.text,
+        completed: false,
+      })),
+    ];
+
+    this.setOuterExecutionItems(nextItems);
+    this.setOuterLatestPlanText(buildSyntheticPlanText(nextItems));
+    this.todoItems = nextItems.map((item) => ({ ...item }));
+  }
+
+  private markOuterExecutionStepCompleted(step: number): void {
+    const internals = this.getOuterGuidedInternals();
+    const items = internals.executionItems ?? [];
+    const target = items.find((item) => item.step === step);
+    if (target) {
+      target.completed = true;
+    }
+  }
+
+  private getCurrentOuterExecutionItem(): GuidedWorkflowExecutionItem | undefined {
+    return this.getExecutionSnapshot().items.find((item) => !item.completed);
+  }
+
+  private setOuterExecutionItems(items: GuidedWorkflowExecutionItem[]): void {
+    const internals = this.getOuterGuidedInternals();
+    internals.executionItems = items.map((item) => ({ ...item }));
+  }
+
+  private setOuterLatestPlanText(planText: string): void {
+    const internals = this.getOuterGuidedInternals();
+    internals.latestPlanText = planText;
+    this.latestPlanDraft = planText;
+  }
+
+  private getOuterGuidedInternals(): {
+    executionItems?: GuidedWorkflowExecutionItem[];
+    latestPlanText?: string;
+  } {
+    return this as unknown as {
+      executionItems?: GuidedWorkflowExecutionItem[];
+      latestPlanText?: string;
+    };
+  }
+
+  private nextAutoPlanReviewRequestId(): string {
+    const current = Number((this.autoPlanReview.pendingRequestId ?? "").match(/(\d+)$/)?.[1] ?? 0);
+    return `${STATUS_KEY}-autoplan-review-${current + 1}`;
+  }
+
+  private resetAutoPlanReviewState(): void {
+    this.autoPlanReview = {
+      awaitingResponse: false,
+      missingOutputRetries: 0,
+      parseRecoveryAttempted: false,
+    };
+  }
+
+  private clearAutoPlanState(): void {
+    this.autoPlanMode = "off";
+    this.autoPlanGoal = "";
+    this.autoPlanPendingStart = false;
+    this.autoPlanOuterStep = undefined;
+    this.resetAutoPlanReviewState();
+  }
+
+  private async finishAutoPlan(ctx: ExtensionContext, message: string): Promise<void> {
+    await this.autoPlanSubtaskWorkflow.handleSessionShutdown({ reason: "autoplan-finished" }, ctx);
+    await super.handleSessionShutdown({ reason: "autoplan-finished" }, ctx);
+    this.todoItems = [];
+    this.resetExecutionState();
+    this.resetPlanningDraft();
+    this.clearAutoPlanState();
+    this.setStatus(ctx);
+    notify(this.pi, ctx, message, "info");
+  }
+
+  private async stopAutoPlan(ctx: ExtensionContext, message: string): Promise<void> {
+    if (this.planModeEnabled || this.restoreTools) {
+      this.restoreNormalTools();
+    }
+    await this.autoPlanSubtaskWorkflow.handleSessionShutdown({ reason: "autoplan-stopped" }, ctx);
+    await super.handleSessionShutdown({ reason: "autoplan-stopped" }, ctx);
+    this.planModeEnabled = false;
+    this.todoItems = [];
+    this.resetExecutionState();
+    this.resetPlanningDraft();
+    this.clearAutoPlanState();
+    this.setStatus(ctx);
+    notify(this.pi, ctx, message, "info");
   }
 
   private getExecutionPrompt(): string {
@@ -925,6 +1645,14 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     planText: string,
     note?: string,
   ): string {
+    if (
+      this.autoPlanMode === "executing" &&
+      this.getStateSnapshot().phase === "executing" &&
+      this.autoPlanSubtaskWorkflow.getStateSnapshot().phase === "idle"
+    ) {
+      return "";
+    }
+
     const stepDetails = describeExecutionStep(planText, currentStep);
 
     return [
@@ -1313,6 +2041,107 @@ function selectVisibleTodoItems(
     hiddenBefore: start,
     items: todoItems.slice(start, start + visibleTaskLines),
   };
+}
+
+function buildParseRecoveryPrompt(draftText: string): string {
+  return [
+    "The previous response did not include a parseable plan.",
+    "Restate the same proposed implementation plan using the required plan output contract.",
+    "Keep the same scope and intent.",
+    "Include an explicit Plan: section with numbered executable steps.",
+    "End with: Ready to execute when approved.",
+    "",
+    "Previous draft:",
+    draftText,
+  ].join("\n");
+}
+
+function buildWorkflowRequestIdMarker(requestId: string): string {
+  return `<!-- workflow-request-id:${requestId} -->`;
+}
+
+function validatePendingPlanningResponse(
+  state: { pendingRequestId?: string },
+  messages: unknown[],
+): GuidedWorkflowResult | undefined {
+  const pendingRequestId = state.pendingRequestId;
+  const lastPromptText = extractLastPromptText(messages);
+  const observedRequestId = lastPromptText ? extractRequestId(lastPromptText) : undefined;
+  if (!pendingRequestId || observedRequestId !== pendingRequestId) {
+    return { kind: "blocked", reason: "unmatched_agent_end" };
+  }
+
+  return undefined;
+}
+
+function getPendingPiPlanResponseKind(messages: unknown[]): PendingPiPlanResponseKind | undefined {
+  const lastPrompt = extractLastPrompt(messages);
+  if (!lastPrompt) {
+    return undefined;
+  }
+
+  if (lastPrompt.role === "user") {
+    return "planning";
+  }
+
+  const promptText = extractMessageText(lastPrompt.content);
+  if (!promptText) {
+    return undefined;
+  }
+
+  if (promptText.includes("Revise the latest plan using the critique below.")) {
+    return "revision";
+  }
+
+  if (
+    promptText.includes("Critique the latest proposed implementation plan for execution quality.")
+  ) {
+    return "critique";
+  }
+
+  return undefined;
+}
+
+function validateAutoPlanReviewResponse(
+  review: AutoPlanReviewState,
+  messages: unknown[],
+): GuidedWorkflowResult | undefined {
+  const pendingRequestId = review.pendingRequestId;
+  const lastPromptText = extractLastPromptText(messages);
+  const observedRequestId = lastPromptText ? extractRequestId(lastPromptText) : undefined;
+  if (!pendingRequestId || observedRequestId !== pendingRequestId) {
+    return { kind: "blocked", reason: "unmatched_agent_end" };
+  }
+
+  return undefined;
+}
+
+function buildAutoPlanReviewParseRecoveryPrompt(reviewText: string): string {
+  return [
+    "The previous progress review did not clearly say whether the long-term goal is complete or provide a parseable remaining Plan: section.",
+    "Restate the review.",
+    "If the goal is complete, reply with exactly: Status: COMPLETE",
+    "Otherwise include an explicit Plan: section with numbered remaining tasks and end with: Continue autoplan.",
+    "",
+    "Previous review:",
+    reviewText,
+  ].join("\n");
+}
+
+function isAutoPlanCompleteResponse(text: string): boolean {
+  return /^\s*status\s*:\s*complete\s*$/im.test(text) || /^\s*complete\s*$/im.test(text);
+}
+
+function buildSyntheticPlanText(items: GuidedWorkflowExecutionItem[]): string {
+  return [
+    "1) Task understanding",
+    "2) Codebase findings",
+    "3) Approach options / trade-offs",
+    "4) Open questions / assumptions",
+    "5) Plan:",
+    ...items.map((item) => `${item.step}. ${item.text}`),
+    "6) Ready to execute when approved.",
+  ].join("\n");
 }
 
 function parsePlanGoalArg(args: unknown): string | undefined {

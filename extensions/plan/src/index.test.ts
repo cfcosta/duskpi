@@ -238,6 +238,21 @@ function buildLongPlanText(stepCount = 8): string {
   ].join("\n");
 }
 
+function buildAutoPlanReviewText(): string {
+  return [
+    "1) Progress summary",
+    "2) Remaining gaps",
+    "3) Plan:",
+    "1. Finalize the rust module wiring",
+    "2. Remove the legacy implementation path",
+    "4) Continue autoplan.",
+  ].join("\n");
+}
+
+function buildAutoPlanCompleteText(): string {
+  return "Status: COMPLETE";
+}
+
 function buildUnparseablePlanText(): string {
   return [
     "1) Task understanding",
@@ -609,7 +624,7 @@ test("extractTodoItems handles indented plan steps under the numbered plan secti
 test("plan extension registers the guided workflow listener surface plus todos", () => {
   const harness = createPlanExtensionHarness();
 
-  expect([...harness.commands.keys()].sort()).toEqual(["plan", "todos"]);
+  expect([...harness.commands.keys()].sort()).toEqual(["autoplan", "plan", "todos"]);
   expect([...harness.eventHandlers.keys()].sort()).toEqual([
     "agent_end",
     "before_agent_start",
@@ -640,6 +655,255 @@ test("one-shot /plan task enables plan mode and starts a correlated planning req
   expect(harness.sentUserMessages).toHaveLength(1);
   expect(harness.sentUserMessages[0]).toContain("Investigate flaky prompt extraction");
   expect(extractRequestId(harness.sentUserMessages[0] ?? "")).toBeTruthy();
+});
+
+test("/autoplan starts with the normal top-level planning flow", async () => {
+  const harness = createPlanExtensionHarness();
+
+  await harness.runCommand("autoplan", "Rewrite this in Rust");
+
+  expect(harness.getActiveTools()).toEqual([
+    "read",
+    "bash",
+    "grep",
+    "find",
+    "ls",
+    "ask_user_question",
+  ]);
+  expect(harness.sentUserMessages).toHaveLength(1);
+  expect(harness.sentUserMessages[0]).toContain("Rewrite this in Rust");
+  expect(extractRequestId(harness.sentUserMessages[0] ?? "")).toBeTruthy();
+});
+
+test("non-ui /autoplan approve starts the recursive subtask loop", async () => {
+  const harness = createPlanExtensionHarness();
+
+  await harness.runCommand("autoplan", "Rewrite this in Rust");
+
+  const topLevelPrompt = harness.sentUserMessages[0] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: topLevelPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  await harness.runCommand("autoplan", "approve");
+
+  expect(harness.sentUserMessages).toHaveLength(2);
+  expect(harness.sentUserMessages[1]).toContain("Current approved high-level task 1");
+});
+
+test("/autoplan falls back to the existing backlog when progress review is unparseable", async () => {
+  const harness = createPlanExtensionHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+  });
+
+  await harness.runCommand("autoplan", "Rewrite this in Rust");
+
+  const topLevelPrompt = harness.sentUserMessages[0] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: topLevelPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  const subtaskPrompt = harness.sentUserMessages[1] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: subtaskPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  await harness.emit("turn_end", {
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "Finished the first subtask step [DONE:1]" }],
+    },
+  });
+  await harness.emit("turn_end", {
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "Finished the second subtask step [DONE:2]" }],
+    },
+  });
+
+  const reviewPrompt = String(harness.sentMessages.at(-1)?.content ?? "");
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "custom",
+        content: reviewPrompt,
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildUnparseablePlanText() }],
+      },
+    ],
+  });
+
+  const retryReviewPrompt = String(harness.sentMessages.at(-1)?.content ?? "");
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "custom",
+        content: retryReviewPrompt,
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildUnparseablePlanText() }],
+      },
+    ],
+  });
+
+  expect(harness.sentUserMessages.at(-1)).toContain(
+    "Current approved high-level task 2: Approval action UI to show a compact summary",
+  );
+  expect(harness.uiStub.notifications).toContainEqual({
+    message: "Autoplan couldn't extract a remaining task list. Asking for a stricter restatement.",
+    level: "warning",
+  });
+  expect(harness.uiStub.notifications).toContainEqual({
+    message:
+      "Autoplan couldn't update the remaining backlog cleanly, so it will continue with the existing tracked tasks.",
+    level: "warning",
+  });
+});
+
+test("/autoplan auto-plans each approved subtask without asking new questions", async () => {
+  const harness = createPlanExtensionHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+  });
+
+  await harness.runCommand("autoplan", "Rewrite this in Rust");
+
+  const topLevelPrompt = harness.sentUserMessages[0] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: topLevelPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  expect(harness.sentUserMessages).toHaveLength(2);
+  expect(harness.sentUserMessages[1]).toContain("Current approved high-level task 1");
+  expect(harness.sentUserMessages[1]).toContain("Do not ask the user questions.");
+  expect(harness.sentUserMessages[1]).not.toContain("Complete only step 1:");
+
+  await expect(
+    invokeToolCall(harness, { toolName: "ask_user_question", input: { questions: [] } }),
+  ).resolves.toEqual({
+    block: true,
+    reason: "Autoplan subtask planning must not ask the user new questions.",
+  });
+
+  const subtaskPrompt = harness.sentUserMessages[1] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: subtaskPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  expect(harness.sentUserMessages).toHaveLength(3);
+  expect(harness.sentUserMessages[2]).toContain(
+    "Complete only step 1: Add a regression test for prompt leakage",
+  );
+
+  await harness.emit("turn_end", {
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "Finished the first subtask step [DONE:1]" }],
+    },
+  });
+  expect(harness.sentUserMessages).toHaveLength(4);
+  expect(harness.sentUserMessages[3]).toContain(
+    "Complete only step 2: Update the approval action UI to show a compact summary",
+  );
+
+  await harness.emit("turn_end", {
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "Finished the second subtask step [DONE:2]" }],
+    },
+  });
+
+  expect(harness.sentMessages.at(-1)).toEqual(
+    expect.objectContaining({ customType: "autoplan-review-internal", display: false }),
+  );
+
+  const reviewPrompt = String(harness.sentMessages.at(-1)?.content ?? "");
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "custom",
+        content: reviewPrompt,
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildAutoPlanReviewText() }],
+      },
+    ],
+  });
+
+  expect(harness.sentUserMessages).toHaveLength(5);
+  expect(harness.sentUserMessages[4]).toContain(
+    "Current approved high-level task 2: Finalize the rust module wiring",
+  );
 });
 
 test("planning prompt asks Pi to proactively surface change decisions with questionnaires", async () => {

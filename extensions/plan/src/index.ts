@@ -3,7 +3,12 @@ import {
   type ExtensionAPI,
 } from "../../../packages/workflow-core/src/index";
 import { registerAskUserQuestionTool } from "./ask-user-question-tool";
-import { PLAN_COMMAND_DESCRIPTION, PiPlanWorkflow, TODOS_COMMAND_DESCRIPTION } from "./workflow";
+import {
+  AUTOPLAN_COMMAND_DESCRIPTION,
+  PLAN_COMMAND_DESCRIPTION,
+  PiPlanWorkflow,
+  TODOS_COMMAND_DESCRIPTION,
+} from "./workflow";
 
 export default function planExtension(api: ExtensionAPI): void {
   registerAskUserQuestionTool(api);
@@ -14,6 +19,11 @@ export default function planExtension(api: ExtensionAPI): void {
     commandName: "plan",
     description: PLAN_COMMAND_DESCRIPTION,
     createWorkflow: () => workflow,
+  });
+
+  api.registerCommand("autoplan", {
+    description: AUTOPLAN_COMMAND_DESCRIPTION,
+    handler: workflow.handleAutoPlanCommand.bind(workflow),
   });
 
   api.registerCommand("todos", {

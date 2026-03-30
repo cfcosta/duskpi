@@ -153,9 +153,12 @@ The bundled `plan` extension uses the same package's `GuidedWorkflow` runtime in
 The bundled `plan` extension adds:
 
 - `/plan`
+- `/autoplan`
 - `/todos`
 
 Use `/plan` when you want Pi to stay read-only while it investigates, proposes an execution plan, runs an internal critique pass, and waits for approval before switching back to execution.
+
+Use `/autoplan` when the top-level goal needs multiple rounds of planning: it gets one approved high-level plan first, then re-plans and executes each approved subtask automatically while checking whether new tasks are still needed.
 
 This is useful when you want:
 
@@ -239,6 +242,7 @@ That is why commands like these should be present right away:
 - `/test-audit`
 - `/refactor`
 - `/plan`
+- `/autoplan`
 - `/todos`
 - `/autoresearch`
 - `/btw`
