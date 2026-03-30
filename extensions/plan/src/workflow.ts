@@ -1507,8 +1507,18 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     ctx: ExtensionContext,
   ): AutoPlanReviewOutcome {
     const remainingItems = extractTodoItems(reviewText);
+    const hasTrackedBacklog = Boolean(this.getCurrentOuterExecutionItem());
     if (remainingItems.length === 0) {
       if (isAutoPlanCompleteResponse(reviewText)) {
+        if (hasTrackedBacklog) {
+          notify(
+            this.pi,
+            ctx,
+            "Autoplan review reported completion, but tracked backlog still remains. Continuing with the existing tracked tasks.",
+            "warning",
+          );
+          return "continue";
+        }
         return "complete";
       }
 
@@ -1522,7 +1532,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
         "Autoplan couldn't update the remaining backlog cleanly, so it will continue with the existing tracked tasks.",
         "warning",
       );
-      return this.getCurrentOuterExecutionItem() ? "continue" : "complete";
+      return hasTrackedBacklog ? "continue" : "complete";
     }
 
     this.replaceOuterExecutionBacklog(remainingItems);
@@ -2302,7 +2312,7 @@ function buildAutoPlanReviewParseRecoveryPrompt(reviewText: string): string {
 }
 
 function isAutoPlanCompleteResponse(text: string): boolean {
-  return /^\s*status\s*:\s*complete\s*$/im.test(text) || /^\s*complete\s*$/im.test(text);
+  return /^\s*status\s*:\s*complete\s*$/i.test(text) || /^\s*complete\s*$/i.test(text);
 }
 
 function buildSyntheticPlanText(items: GuidedWorkflowExecutionItem[]): string {
