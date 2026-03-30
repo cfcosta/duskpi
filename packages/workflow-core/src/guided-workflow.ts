@@ -89,6 +89,7 @@ export interface GuidedWorkflowExecutionItem {
   step: number;
   text: string;
   completed: boolean;
+  skipped?: boolean;
 }
 
 export interface GuidedWorkflowExecutionPromptArgs extends GuidedWorkflowApprovalPromptArgs {
@@ -107,6 +108,7 @@ export interface GuidedWorkflowExecutionOptions {
   ) => Array<Omit<GuidedWorkflowExecutionItem, "completed"> | GuidedWorkflowExecutionItem>;
   buildExecutionPrompt: (args: GuidedWorkflowExecutionPromptArgs) => string;
   extractDoneStepNumbers?: (text: string) => number[];
+  extractSkippedStepNumbers?: (text: string) => number[];
 }
 
 export interface GuidedWorkflowOptions {
@@ -289,7 +291,7 @@ export class GuidedWorkflow implements GuidedWorkflowController {
       return undefined;
     }
 
-    if (this.executionItems.length > 0 && this.executionItems.every((item) => item.completed)) {
+    if (this.executionItems.length > 0 && this.executionItems.every((item) => item.completed || item.skipped)) {
       this.resetWorkflowState();
       return undefined;
     }
@@ -590,6 +592,7 @@ export class GuidedWorkflow implements GuidedWorkflowController {
         step: item.step,
         text: item.text,
         completed: "completed" in item ? item.completed : false,
+        ...("skipped" in item && item.skipped ? { skipped: item.skipped } : {}),
       }))
       .sort((left, right) => {
         return left.step - right.step || left.text.localeCompare(right.text);
@@ -597,7 +600,7 @@ export class GuidedWorkflow implements GuidedWorkflowController {
   }
 
   private getCurrentExecutionStep(): GuidedWorkflowExecutionItem | undefined {
-    return this.executionItems.find((item) => !item.completed);
+    return this.executionItems.find((item) => !item.completed && !item.skipped);
   }
 
   private sendExecutionPromptForCurrentStep(ctx: ExtensionContext): GuidedWorkflowResult {
@@ -638,16 +641,31 @@ export class GuidedWorkflow implements GuidedWorkflowController {
   ): { completedCount: number; currentStepCompleted: boolean } {
     const doneSteps =
       this.options.execution?.extractDoneStepNumbers?.(text) ?? extractDoneStepNumbers(text);
+    const skippedSteps =
+      this.options.execution?.extractSkippedStepNumbers?.(text) ?? extractSkippedStepNumbers(text);
     let completedCount = 0;
     let currentStepCompleted = false;
 
     for (const step of doneSteps) {
       const item = this.executionItems.find((candidate) => candidate.step === step);
-      if (!item || item.completed) {
+      if (!item || item.completed || item.skipped) {
         continue;
       }
 
       item.completed = true;
+      completedCount += 1;
+      if (step === currentStepNumber) {
+        currentStepCompleted = true;
+      }
+    }
+
+    for (const step of skippedSteps) {
+      const item = this.executionItems.find((candidate) => candidate.step === step);
+      if (!item || item.completed || item.skipped) {
+        continue;
+      }
+
+      item.skipped = true;
       completedCount += 1;
       if (step === currentStepNumber) {
         currentStepCompleted = true;
@@ -816,6 +834,17 @@ function buildDefaultRegeneratePrompt(args: GuidedWorkflowApprovalPromptArgs): s
 function extractDoneStepNumbers(text: string): number[] {
   const steps: number[] = [];
   for (const match of text.matchAll(/\[DONE:(\d+)\]/gi)) {
+    const step = Number(match[1]);
+    if (Number.isFinite(step)) {
+      steps.push(step);
+    }
+  }
+  return steps;
+}
+
+function extractSkippedStepNumbers(text: string): number[] {
+  const steps: number[] = [];
+  for (const match of text.matchAll(/\[SKIPPED:(\d+)\]/gi)) {
     const step = Number(match[1]);
     if (Number.isFinite(step)) {
       steps.push(step);

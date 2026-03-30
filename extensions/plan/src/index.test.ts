@@ -278,6 +278,7 @@ function buildPartiallyIndentedSubtaskPlanText(): string {
   ].join("\n");
 }
 
+
 function extractRequestId(prompt: string): string | undefined {
   const match = prompt.match(/<!--\s*workflow-request-id:([^>]+)\s*-->/i);
   return match?.[1]?.trim();
@@ -998,6 +999,65 @@ test("/autoplan auto-plans each approved subtask without asking new questions", 
   expect(harness.sentUserMessages).toHaveLength(5);
   expect(harness.sentUserMessages[4]).toContain(
     "Current approved high-level task 2: Finalize the rust module wiring",
+  );
+});
+
+test("/autoplan continues to the next inner step after a skipped subtask step", async () => {
+  const harness = createPlanExtensionHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+  });
+
+  await harness.runCommand("autoplan", "Rewrite this in Rust");
+
+  const topLevelPrompt = harness.sentUserMessages[0] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: topLevelPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  const subtaskPrompt = harness.sentUserMessages[1] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: subtaskPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  expect(harness.sentUserMessages[2]).toContain("[SKIPPED:n]");
+
+  await harness.emit("turn_end", {
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "Already satisfied [SKIPPED:1]" }],
+    },
+  });
+
+  expect(harness.sentUserMessages).toHaveLength(4);
+  expect(harness.sentUserMessages[3]).toContain(
+    "Complete only step 2: Update the approval action UI to show a compact summary",
   );
 });
 
@@ -1904,6 +1964,41 @@ test("execution progress surfaces derive from guided execution snapshots", async
   await harness.runCommand("todos");
   expect(harness.uiStub.notifications.at(-1)).toEqual({
     message: "No tracked plan steps. Create a plan in /plan mode first.",
+    level: "info",
+  });
+});
+
+test("SKIPPED markers advance execution and render distinctly in progress UI", async () => {
+  const harness = createPlanExtensionHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+  });
+
+  await enterExecutionState(harness);
+
+  expect(harness.sentUserMessages[0]).toContain("[SKIPPED:n]");
+
+  await harness.emit("turn_end", {
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "Step already satisfied [SKIPPED:1]" }],
+    },
+  });
+
+  expect(harness.sentUserMessages).toHaveLength(2);
+  expect(harness.sentUserMessages[1]).toContain(
+    "Complete only step 2: Update the approval action UI to show a compact summary",
+  );
+  expect(harness.uiStub.statuses.get("plan")).toBe("📋 1/2");
+  expect(harness.uiStub.widgets.get("plan-todos")).toEqual([
+    "↷ A regression test for prompt leakage",
+    "☐ Approval action UI to show a compact summary",
+  ]);
+
+  await harness.runCommand("todos");
+  expect(harness.uiStub.notifications.at(-1)).toEqual({
+    message:
+      "Plan progress 1/2\n1. ↷ A regression test for prompt leakage\n2. ○ Approval action UI to show a compact summary",
     level: "info",
   });
 });

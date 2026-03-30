@@ -22,9 +22,11 @@ import {
 import {
   extractDoneSteps,
   extractPlanSteps,
+  extractSkippedSteps,
   extractTodoItems,
   isSafeReadOnlyCommand,
   markTodoItemsCompleted,
+  markTodoItemsSkipped,
   normalizeArg,
   parseCritiqueVerdict,
   toTodoItems,
@@ -129,7 +131,8 @@ Execution rules:
 - Use Conventional Commits.
 - Include a detailed commit description covering what changed, why, and the intended outcome.
 - Never batch multiple plan steps into one commit.
-- After the commit succeeds, include a [DONE:n] marker for the completed step and stop.
+- If the step was implemented, include a [DONE:n] marker after the commit succeeds and stop.
+- If the step is already satisfied or would require a fake/no-op commit, explain why and include [SKIPPED:n] instead, then stop.
 - Do not start the next step until the extension prompts you again.
 `.trim();
 
@@ -497,7 +500,8 @@ export class PiPlanWorkflow extends GuidedWorkflow {
 
     const visibleItems = selectVisibleTodoItems(progress.todoItems);
     const lines = visibleItems.items.map((item) => {
-      return `${item.step}. ${item.completed ? "✓" : "○"} ${item.text}`;
+      const symbol = item.skipped ? "↷" : item.completed ? "✓" : "○";
+      return `${item.step}. ${symbol} ${item.text}`;
     });
     if (visibleItems.hiddenBefore > 0) {
       lines.unshift(
@@ -1109,7 +1113,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
 
   private buildContinuePrompt(note?: string): string {
     const continueNote = note?.trim() ?? "";
-    const firstOpenStep = this.todoItems.find((item) => !item.completed);
+    const firstOpenStep = this.todoItems.find((item) => !item.completed && !item.skipped);
     if (firstOpenStep) {
       return `Continue planning from the proposed plan. User note: ${continueNote}. Focus on step ${firstOpenStep.step}: ${firstOpenStep.text}. Refine files, validation, and risks in read-only mode.`;
     }
@@ -1214,7 +1218,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     return {
       todoItems: this.buildCompactTodoItems(this.getLatestPlanText(), executionItems),
       totalSteps: executionItems.length,
-      completedSteps: executionItems.filter((item) => item.completed).length,
+      completedSteps: executionItems.filter((item) => item.completed || item.skipped).length,
     };
   }
 
@@ -1228,11 +1232,14 @@ export class PiPlanWorkflow extends GuidedWorkflow {
         step: item.step,
         text: item.text,
         completed: item.completed,
+        skipped: item.skipped,
       }));
     }
 
     const completedSteps = executionItems.filter((item) => item.completed).map((item) => item.step);
+    const skippedSteps = executionItems.filter((item) => item.skipped).map((item) => item.step);
     markTodoItemsCompleted(structuredTodoItems, completedSteps);
+    markTodoItemsSkipped(structuredTodoItems, skippedSteps);
     return structuredTodoItems;
   }
 
@@ -1320,7 +1327,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   }
 
   private buildAutoPlanSubtaskGoal(currentStep: GuidedWorkflowExecutionItem): string {
-    const remaining = this.getExecutionSnapshot().items.filter((item) => !item.completed);
+    const remaining = this.getExecutionSnapshot().items.filter((item) => !item.completed && !item.skipped);
     const backlog = remaining.map((item) => `${item.step}. ${item.text}`).join("\n");
 
     return [
@@ -1379,12 +1386,17 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     const completedSteps = new Set(
       resumeState.items.filter((item) => item.completed).map((item) => item.step),
     );
+    const skippedSteps = new Set(resumeState.items.filter((item) => item.skipped).map((item) => item.step));
     for (const step of extractDoneSteps(turnText)) {
       completedSteps.add(step);
     }
+    for (const step of extractSkippedSteps(turnText)) {
+      skippedSteps.add(step);
+    }
     markTodoItemsCompleted(recoveredItems, [...completedSteps]);
+    markTodoItemsSkipped(recoveredItems, [...skippedSteps]);
 
-    const currentStep = recoveredItems.find((item) => !item.completed);
+    const currentStep = recoveredItems.find((item) => !item.completed && !item.skipped);
     if (!currentStep) {
       return false;
     }
@@ -1444,7 +1456,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       .map((item) => `${item.step}. ${item.text}`)
       .join("\n");
     const remaining = this.getExecutionSnapshot()
-      .items.filter((item) => !item.completed)
+      .items.filter((item) => !item.completed && !item.skipped)
       .map((item) => `${item.step}. ${item.text}`)
       .join("\n");
 
@@ -1651,7 +1663,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   }
 
   private getCurrentOuterExecutionItem(): GuidedWorkflowExecutionItem | undefined {
-    return this.getExecutionSnapshot().items.find((item) => !item.completed);
+    return this.getExecutionSnapshot().items.find((item) => !item.completed && !item.skipped);
   }
 
   private setOuterExecutionItems(items: GuidedWorkflowExecutionItem[]): void {
@@ -1723,7 +1735,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   }
 
   private getExecutionPrompt(): string {
-    const remaining = this.todoItems.filter((item) => !item.completed);
+    const remaining = this.todoItems.filter((item) => !item.completed && !item.skipped);
     const currentStep = remaining[0];
 
     if (!currentStep) {
@@ -1774,7 +1786,8 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       stepDetails.validation ? `Validation method: ${stepDetails.validation}` : undefined,
       stepDetails.risks ? `Risks and rollback notes: ${stepDetails.risks}` : undefined,
       "Implement it, validate it, and create one atomic jujutsu commit for that step before ending the turn.",
-      "Use `jj commit <changed paths> -m <message>`, follow Conventional Commits, include a detailed description, and finish with the matching [DONE:n] marker after the commit succeeds.",
+      "Use `jj commit <changed paths> -m <message>`, follow Conventional Commits, and include a detailed description.",
+      "If the step is already satisfied or would require a fake/no-op commit, explain why and use [SKIPPED:n] instead of [DONE:n].",
       "Do not start the following step in the same turn.",
     ]
       .filter((line): line is string => typeof line === "string")
@@ -1801,7 +1814,13 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       this.executionMode = false;
       this.executionConstraintNote = "";
       this.setStatus(ctx);
-      notify(this.pi, ctx, "All tracked plan steps are complete.", "info");
+      const skippedAny = previousExecution.items.some((item) => item.skipped);
+      notify(
+        this.pi,
+        ctx,
+        skippedAny ? "All tracked plan steps are resolved (completed or skipped)." : "All tracked plan steps are complete.",
+        "info",
+      );
     }
   }
 
@@ -1845,6 +1864,9 @@ export class PiPlanWorkflow extends GuidedWorkflow {
           ctx.ui.theme.fg("success", "☑ ") +
           ctx.ui.theme.fg("muted", ctx.ui.theme.strikethrough(item.text))
         );
+      }
+      if (item.skipped) {
+        return `${ctx.ui.theme.fg("warning", "↷ ")}${item.text}`;
       }
       return `${ctx.ui.theme.fg("muted", "☐ ")}${item.text}`;
     });
@@ -2130,7 +2152,7 @@ function selectVisibleTodoItems(
     return { hiddenBefore: 0, items: [...todoItems] };
   }
 
-  const currentIndex = todoItems.findIndex((item) => !item.completed);
+  const currentIndex = todoItems.findIndex((item) => !item.completed && !item.skipped);
   if (currentIndex < 0) {
     const start = Math.max(0, todoItems.length - maxVisibleLines);
     return {

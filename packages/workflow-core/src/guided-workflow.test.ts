@@ -1254,6 +1254,53 @@ test("GuidedWorkflow sends the next execution prompt after completing the curren
   });
 });
 
+test("GuidedWorkflow sends the next execution prompt after skipping the current step", async () => {
+  const { api, sentUserMessages, sentUserMessageOptions } = createApi();
+  const { approval } = createApprovalOptions({
+    selection: { action: "approve" },
+  });
+  const { execution } = createExecutionOptions();
+  const workflow = new GuidedWorkflow(api, {
+    id: "guided-test",
+    parseGoalArg: parseTrimmedStringArg,
+    approval,
+    execution,
+    text: { alreadyRunning: "guided running" },
+  });
+  const { ctx } = createContext();
+
+  await workflow.handleCommand("first run", ctx);
+  await workflow.handleAgentEnd(
+    {
+      messages: [
+        { role: "user", content: [{ type: "text", text: sentUserMessages[0]! }] },
+        { role: "assistant", content: [{ type: "text", text: "draft plan" }] },
+      ],
+    },
+    ctx,
+  );
+
+  await workflow.handleTurnEnd(
+    {
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Step already satisfied [SKIPPED:1]" }],
+      },
+    },
+    ctx,
+  );
+
+  assert.equal(sentUserMessages[2], "Execute step 2: Second task");
+  assert.deepEqual(sentUserMessageOptions[2], { deliverAs: "followUp" });
+  assert.deepEqual(workflow.getExecutionSnapshot(), {
+    note: undefined,
+    items: [
+      { step: 1, text: "First task", completed: false, skipped: true },
+      { step: 2, text: "Second task", completed: false },
+    ],
+  });
+});
+
 test("GuidedWorkflow clears execution state after the final step is done", async () => {
   const { api, sentUserMessages } = createApi();
   const { approval } = createApprovalOptions({
@@ -1294,6 +1341,63 @@ test("GuidedWorkflow clears execution state after the final step is done", async
       message: {
         role: "assistant",
         content: [{ type: "text", text: "Completed second task [DONE:2]" }],
+      },
+    },
+    ctx,
+  );
+
+  assert.deepEqual(workflow.getStateSnapshot(), {
+    phase: "idle",
+    goal: undefined,
+    pendingRequestId: undefined,
+    awaitingResponse: false,
+  });
+  assert.deepEqual(workflow.getExecutionSnapshot(), {
+    note: undefined,
+    items: [],
+  });
+});
+
+test("GuidedWorkflow clears execution state after the final step is skipped", async () => {
+  const { api, sentUserMessages } = createApi();
+  const { approval } = createApprovalOptions({
+    selection: { action: "approve" },
+  });
+  const { execution } = createExecutionOptions();
+  const workflow = new GuidedWorkflow(api, {
+    id: "guided-test",
+    parseGoalArg: parseTrimmedStringArg,
+    approval,
+    execution,
+    text: { alreadyRunning: "guided running" },
+  });
+  const { ctx } = createContext();
+
+  await workflow.handleCommand("first run", ctx);
+  await workflow.handleAgentEnd(
+    {
+      messages: [
+        { role: "user", content: [{ type: "text", text: sentUserMessages[0]! }] },
+        { role: "assistant", content: [{ type: "text", text: "draft plan" }] },
+      ],
+    },
+    ctx,
+  );
+
+  await workflow.handleTurnEnd(
+    {
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "Already satisfied [SKIPPED:1]" }],
+      },
+    },
+    ctx,
+  );
+  await workflow.handleTurnEnd(
+    {
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "No code change needed [SKIPPED:2]" }],
       },
     },
     ctx,

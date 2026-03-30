@@ -112,6 +112,7 @@ export interface TodoItem {
   step: number;
   text: string;
   completed: boolean;
+  skipped?: boolean;
 }
 
 export interface PlanStep {
@@ -347,14 +348,37 @@ export function extractDoneSteps(message: string): number[] {
   return steps;
 }
 
+export function extractSkippedSteps(message: string): number[] {
+  const steps: number[] = [];
+  for (const match of message.matchAll(/\[SKIPPED:(\d+)\]/gi)) {
+    const step = Number(match[1]);
+    if (Number.isFinite(step)) {
+      steps.push(step);
+    }
+  }
+  return steps;
+}
+
 export function markTodoItemsCompleted(items: TodoItem[], completedSteps: number[]): number {
   for (const step of completedSteps) {
     const item = items.find((candidate) => candidate.step === step);
     if (item) {
       item.completed = true;
+      item.skipped = false;
     }
   }
   return completedSteps.length;
+}
+
+export function markTodoItemsSkipped(items: TodoItem[], skippedSteps: number[]): number {
+  for (const step of skippedSteps) {
+    const item = items.find((candidate) => candidate.step === step);
+    if (item) {
+      item.skipped = true;
+      item.completed = false;
+    }
+  }
+  return skippedSteps.length;
 }
 
 export function markCompletedSteps(text: string, items: TodoItem[]): number {
