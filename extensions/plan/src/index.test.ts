@@ -368,6 +368,10 @@ function buildNonCompliantAutoPlanReviewText(): string {
   ].join("\n");
 }
 
+function buildNonCompliantAutoPlanExecutionText(): string {
+  return "I need your decision on whether to keep the legacy path before continuing. [DONE:1]";
+}
+
 function extractRequestId(prompt: string): string | undefined {
   const match = prompt.match(/<!--\s*workflow-request-id:([^>]+)\s*-->/i);
   return match?.[1]?.trim();
@@ -1406,6 +1410,110 @@ test("/autoplan retries non-compliant hidden reviews once and then stops on a re
     message: "Autoplan: idle",
     level: "info",
   });
+});
+
+test("/autoplan retries non-compliant execution turns once and then stops before advancing the inner step", async () => {
+  const harness = createPlanExtensionHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+  });
+
+  await harness.runCommand("autoplan", "Rewrite this in Rust");
+
+  const topLevelPrompt = harness.sentUserMessages[0] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: topLevelPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  const subtaskPrompt = harness.sentUserMessages[1] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: subtaskPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  await harness.emit("turn_end", {
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: buildNonCompliantAutoPlanExecutionText() }],
+    },
+  });
+
+  expect(harness.sentUserMessages).toHaveLength(4);
+  expect(harness.sentUserMessages[3]).toContain(
+    "The previous inner execution response violated the post-approval autoplan policy.",
+  );
+  expect(harness.sentUserMessages[3]).toContain("Retry only step 1: Add a regression test for prompt leakage");
+  expect(harness.sentUserMessages[3]).toContain("Infer the best repo-consistent choice and continue.");
+  expect(harness.uiStub.notifications).toContainEqual({
+    message:
+      "Autoplan execution asked for user input or approval. Asking Pi to retry the same inner step and infer the missing decisions.",
+    level: "warning",
+  });
+
+  await harness.emit("turn_end", {
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: buildNonCompliantAutoPlanExecutionText() }],
+    },
+  });
+
+  expect(harness.uiStub.notifications).toContainEqual({
+    message: "Autoplan execution kept asking for user input or approval after one retry. Stopping autoplan.",
+    level: "error",
+  });
+  expect(harness.sentUserMessages).toHaveLength(4);
+
+  await harness.runCommand("autoplan", "status");
+  expect(harness.uiStub.notifications).toContainEqual({
+    message: "Autoplan: idle",
+    level: "info",
+  });
+});
+
+test("normal /plan execution remains unchanged by autoplan execution-turn recovery", async () => {
+  const harness = createPlanExtensionHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+  });
+
+  await enterExecutionState(harness);
+
+  await harness.emit("turn_end", {
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: buildNonCompliantAutoPlanExecutionText() }],
+    },
+  });
+
+  expect(harness.sentUserMessages).toHaveLength(2);
+  expect(harness.sentUserMessages[1]).toContain(
+    "Complete only step 2: Update the approval action UI to show a compact summary",
+  );
 });
 
 test("/autoplan preserves the approved top-level plan text across review updates and session compaction", async () => {

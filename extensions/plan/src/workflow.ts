@@ -213,6 +213,11 @@ interface AutoPlanSubtaskExecutionResumeState {
   items: GuidedWorkflowExecutionItem[];
 }
 
+interface AutoPlanExecutionComplianceState {
+  attempted: boolean;
+  step?: number;
+}
+
 class AutoPlanSubtaskWorkflow extends GuidedWorkflow {
   private parseRecoveryAttempted = false;
   private complianceRecoveryAttempted = false;
@@ -370,6 +375,9 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   private autoPlanApprovedPlanText = "";
   private autoPlanPendingStart = false;
   private autoPlanOuterStep?: number;
+  private autoPlanExecutionCompliance: AutoPlanExecutionComplianceState = {
+    attempted: false,
+  };
   private autoPlanReview: AutoPlanReviewState = {
     awaitingResponse: false,
     missingOutputRetries: 0,
@@ -767,6 +775,21 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       const resumeState =
         beforePhase === "executing" ? this.autoPlanSubtaskWorkflow.getExecutionResumeState() : undefined;
       const turnText = getAssistantTextFromMessage(event.message);
+
+      if (beforePhase === "executing" && turnText) {
+        const complianceIssues = detectAutoPlanOutputComplianceIssues(turnText);
+        if (complianceIssues.length > 0) {
+          await this.handleAutoPlanExecutionPolicyViolation(
+            ctx,
+            resumeState,
+            turnText,
+            complianceIssues,
+          );
+          return;
+        }
+        this.resetAutoPlanExecutionComplianceState();
+      }
+
       await this.autoPlanSubtaskWorkflow.handleTurnEnd(event, ctx);
       const afterPhase = this.autoPlanSubtaskWorkflow.getStateSnapshot().phase;
       if (beforePhase === "executing" && afterPhase === "idle") {
@@ -1355,6 +1378,10 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     return ["Approved top-level plan context:", approvedPlanText];
   }
 
+  private resetAutoPlanExecutionComplianceState(): void {
+    this.autoPlanExecutionCompliance = { attempted: false };
+  }
+
   private async maybeStartPendingAutoPlan(
     ctx: ExtensionContext,
     result: GuidedWorkflowResult,
@@ -1799,6 +1826,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     this.autoPlanApprovedPlanText = "";
     this.autoPlanPendingStart = false;
     this.autoPlanOuterStep = undefined;
+    this.resetAutoPlanExecutionComplianceState();
     this.resetAutoPlanReviewState();
   }
 
@@ -1859,6 +1887,59 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     ]
       .filter((line): line is string => typeof line === "string")
       .join("\n");
+  }
+
+  private async handleAutoPlanExecutionPolicyViolation(
+    ctx: ExtensionContext,
+    resumeState: AutoPlanSubtaskExecutionResumeState | undefined,
+    turnText: string,
+    issues: AutoPlanOutputComplianceIssue[],
+  ): Promise<void> {
+    const currentStep = resumeState?.items.find((item) => !item.completed && !item.skipped);
+    const planText = resumeState?.planText?.trim();
+    if (!currentStep || !planText) {
+      await this.stopAutoPlan(
+        ctx,
+        "Autoplan execution produced a non-compliant response and the current inner step could not be recovered. Stopping autoplan.",
+        "error",
+      );
+      return;
+    }
+
+    if (
+      this.autoPlanExecutionCompliance.attempted &&
+      this.autoPlanExecutionCompliance.step === currentStep.step
+    ) {
+      await this.stopAutoPlan(
+        ctx,
+        "Autoplan execution kept asking for user input or approval after one retry. Stopping autoplan.",
+        "error",
+      );
+      return;
+    }
+
+    this.autoPlanExecutionCompliance = {
+      attempted: true,
+      step: currentStep.step,
+    };
+
+    const prompt = buildAutoPlanExecutionComplianceRecoveryPrompt({
+      currentStep,
+      planText,
+      note: resumeState?.note,
+      approvedContextLines: this.getApprovedAutoPlanContextLines(),
+      previousResponse: turnText,
+      issues,
+    });
+
+    notify(
+      this.pi,
+      ctx,
+      "Autoplan execution asked for user input or approval. Asking Pi to retry the same inner step and infer the missing decisions.",
+      "warning",
+    );
+    this.pi.sendUserMessage(prompt, { deliverAs: "followUp" });
+    this.setStatus(ctx);
   }
 
   private buildExecutionPrompt(
@@ -2498,6 +2579,44 @@ function buildAutoPlanReviewComplianceRecoveryPrompt(
     "",
     "Previous review:",
     reviewText,
+  ]
+    .filter((line): line is string => typeof line === "string" && line.length > 0)
+    .join("\n");
+}
+
+function buildAutoPlanExecutionComplianceRecoveryPrompt(args: {
+  currentStep: GuidedWorkflowExecutionItem;
+  planText: string;
+  note?: string;
+  approvedContextLines: string[];
+  previousResponse: string;
+  issues: AutoPlanOutputComplianceIssue[];
+}): string {
+  const issueSummary = formatAutoPlanComplianceIssues(args.issues);
+  const stepDetails = describeExecutionStep(args.planText, args.currentStep);
+
+  return [
+    "The previous inner execution response violated the post-approval autoplan policy.",
+    issueSummary ? `Problem: it ${issueSummary}.` : undefined,
+    EXECUTION_TRIGGER_PROMPT,
+    `Retry only step ${args.currentStep.step}: ${stepDetails.objective}`,
+    args.note
+      ? `Honor this user execution note while implementing the step: ${args.note}`
+      : undefined,
+    ...args.approvedContextLines,
+    stepDetails.targets ? `Target files/components: ${stepDetails.targets}` : undefined,
+    stepDetails.validation ? `Validation method: ${stepDetails.validation}` : undefined,
+    stepDetails.risks ? `Risks and rollback notes: ${stepDetails.risks}` : undefined,
+    "Do not ask the user questions.",
+    "Do not request approval.",
+    "Infer the best repo-consistent choice and continue.",
+    "Implement it, validate it, and create one atomic jujutsu commit for that step before ending the turn.",
+    "Use `jj commit <changed paths> -m <message>`, follow Conventional Commits, and include a detailed description.",
+    "If the step is already satisfied or would require a fake/no-op commit, explain why and use [SKIPPED:n] instead of [DONE:n].",
+    "Do not start the following step in the same turn.",
+    "",
+    "Previous response:",
+    args.previousResponse,
   ]
     .filter((line): line is string => typeof line === "string" && line.length > 0)
     .join("\n");
