@@ -142,6 +142,11 @@ In plan mode:
 
 While considering changes, plan mode should actively surface user-owned decisions instead of silently guessing. If behavior, UX, API, schema, compatibility, rollout, validation, performance, or migration choices are still open, the agent should use `ask_user_question` to ask an interactive questionnaire before finalizing the plan. This mirrors Claude Code's clarification flow more closely:
 
+For `/autoplan`, that clarification behavior is intentionally split in two:
+
+- before the first approval, the top-level autoplan planning rounds may still ask clarification questions, including top-level continue/regenerate revisions
+- after the first approval, inner autoplan subtask planning, hidden progress review, and inner execution no longer ask new questions or approvals; they reuse the approved top-level plan text as context and infer the best repo-consistent choice instead
+
 - 1-4 questions per questionnaire, with more than one question when multiple independent choices remain
 - 2-4 suggested options per question
 - automatic free-text fallback via `Type something.`
@@ -174,7 +179,7 @@ When a plan includes nested step metadata like target files/components, validati
 - `/plan off` — disable plan mode
 - `/plan status` — show current status
 - `/plan <task>` — enable mode if needed and start planning for `<task>`
-- `/autoplan <goal>` — create a top-level plan for a long-term goal, wait for the usual approval, then recursively plan and execute each approved subtask without asking new questions or approvals for the inner subplans
+- `/autoplan <goal>` — create a top-level plan for a long-term goal, wait for the usual approval, then recursively plan and execute each approved subtask without asking new questions or approvals for the inner subplans; top-level planning before the first approval may still ask clarification questions when needed
 - `/autoplan status` — show the current autoplan loop state
 - `/autoplan stop` — stop the current autoplan loop and clear its transient state
 - `/plan approve` — when approval is pending and no interactive UI is available, approve and start execution
@@ -198,7 +203,7 @@ When `session_switch` or `session_fork` fires, the extension resets transient pl
 
 That reset restores the normal tool set, clears footer status and the todo widget, and leaves `/todos` empty until a new approved execution starts in the new session state.
 
-When `session_compact` fires inside the same session, the extension now preserves active plan/autoplan state so hidden critique or revision turns and approved execution can continue after compaction.
+When `session_compact` fires inside the same session, the extension now preserves active plan/autoplan state so hidden critique or revision turns and approved execution can continue after compaction. For `/autoplan`, that preserved state now includes the approved top-level plan text, which is reused as the canonical context for inner subtask planning, hidden progress review, and post-approval execution prompts even if the mutable high-level backlog is rewritten later in the loop.
 
 ## Project structure
 

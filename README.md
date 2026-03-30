@@ -158,7 +158,7 @@ The bundled `plan` extension adds:
 
 Use `/plan` when you want Pi to stay read-only while it investigates, proposes an execution plan, runs an internal critique pass, and waits for approval before switching back to execution.
 
-Use `/autoplan` when the top-level goal needs multiple rounds of planning: it gets one approved high-level plan first, then re-plans and executes each approved subtask automatically while checking whether new tasks are still needed.
+Use `/autoplan` when the top-level goal needs multiple rounds of planning: it gets one approved high-level plan first, then re-plans and executes each approved subtask automatically while checking whether new tasks are still needed. Top-level autoplan planning may still ask clarification questions before that first approval, but the inner autoplan loop reuses the approved top-level plan as context and keeps going without re-questioning the user.
 
 This is useful when you want:
 

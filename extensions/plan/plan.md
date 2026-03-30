@@ -25,7 +25,8 @@
 - If a draft still does not contain a parseable `Plan:` section, the extension automatically asks Pi once to restate the same draft using the required contract and an explicit `Plan:` section. A second failure stays read-only and surfaces a visible error instead of opening approval.
 - The approval UI now shows the first few compact step labels plus file/component and validation hints when the plan includes them.
 - If approval is pending without an interactive UI, `/plan approve`, `/plan continue <note>`, `/plan regenerate`, and `/plan exit` act as command-line approval fallbacks.
-- `/autoplan` reuses the top-level `/plan` approval flow once, then recursively re-plans and executes each approved subtask without new user questions or approvals for inner loops.
+- `/autoplan` reuses the top-level `/plan` approval flow once. Top-level autoplan planning before that first approval may still ask clarification questions, including continue/regenerate revisions.
+- After the first `/autoplan` approval, inner subtask planning, hidden progress review, and inner execution no longer ask new user questions or approvals. They reuse the approved top-level plan text as canonical context and infer the best repo-consistent choice instead.
 - `/autoplan` keeps going from the previously approved backlog if a hidden progress-review response is missing, ambiguous, or unparseable.
 - Execution prompts now include structured target files/components, validation, and rollback notes when present in the source plan.
 - `/todos` and the widget intentionally stay compact even when the underlying plan carries richer step metadata.
