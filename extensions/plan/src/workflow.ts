@@ -815,7 +815,8 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   }
 
   async handleSessionCompact(_event: SessionCompactEvent, ctx: ExtensionContext): Promise<void> {
-    await this.resetTransientPlanSessionState(ctx);
+    this.syncLocalLifecycleStateFromGuided();
+    this.setStatus(ctx);
   }
 
   async handleSessionShutdown(_event: SessionShutdownEvent, ctx: ExtensionContext): Promise<void> {

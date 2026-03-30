@@ -377,7 +377,7 @@ async function expectLatestNonUiStatusMessage(
 
 async function assertPlanStateReset(
   harness: ReturnType<typeof createPlanExtensionHarness>,
-  eventName: "session_switch" | "session_fork" | "session_compact",
+  eventName: "session_switch" | "session_fork",
   event: unknown,
 ) {
   await harness.emit(eventName, event);
@@ -408,11 +408,15 @@ async function assertPlanStateReset(
   });
 }
 
-const SESSION_BOUNDARY_EVENTS = [
+const SESSION_RESET_EVENTS = [
   ["session_switch", { reason: "resume", previousSessionFile: "/tmp/previous.pi" }],
   ["session_fork", { previousSessionFile: "/tmp/previous.pi" }],
-  ["session_compact", { compactionEntry: { id: "compact-1" }, fromExtension: false }],
 ] as const;
+
+const SESSION_COMPACT_EVENT = {
+  compactionEntry: { id: "compact-1" },
+  fromExtension: false,
+} as const;
 
 test("parseCritiqueVerdict accepts markdown-formatted PASS verdicts", () => {
   expect(parseCritiqueVerdict(`1) **Verdict:** PASS\n2) Issues:\n- none`)).toBe("PASS");
@@ -2019,7 +2023,7 @@ test("exit selection restores normal tools and clears tracked progress", async (
 });
 
 test("session boundary events reset transient plan state while approval is pending", async () => {
-  for (const [eventName, event] of SESSION_BOUNDARY_EVENTS) {
+  for (const [eventName, event] of SESSION_RESET_EVENTS) {
     const harness = createPlanExtensionHarness({ hasUI: true });
 
     await enterApprovalState(harness);
@@ -2039,7 +2043,7 @@ test("session boundary events reset transient plan state while approval is pendi
 });
 
 test("session boundary events reset transient plan state while approved execution is active", async () => {
-  for (const [eventName, event] of SESSION_BOUNDARY_EVENTS) {
+  for (const [eventName, event] of SESSION_RESET_EVENTS) {
     const harness = createPlanExtensionHarness({
       hasUI: true,
       customSelection: { cancelled: false, action: "approve" },
@@ -2065,6 +2069,105 @@ test("session boundary events reset transient plan state while approved executio
 
     await assertPlanStateReset(harness, eventName, event);
   }
+});
+
+test("session compact preserves transient plan state while approval is pending", async () => {
+  const harness = createPlanExtensionHarness({ hasUI: true });
+
+  await enterApprovalState(harness);
+
+  await harness.emit("session_compact", SESSION_COMPACT_EVENT);
+
+  expect(harness.getActiveTools()).toEqual([
+    "read",
+    "bash",
+    "grep",
+    "find",
+    "ls",
+    "ask_user_question",
+  ]);
+  expect(harness.uiStub.statuses.get("plan")).toBe("⏸ plan");
+
+  await harness.runCommand("plan", "status");
+  expect(harness.uiStub.notifications).toContainEqual({
+    message: "Plan mode: ON (read-only planning)",
+    level: "info",
+  });
+});
+
+test("session compact preserves the critique->revision flow", async () => {
+  const harness = createPlanExtensionHarness({ hasUI: true });
+
+  await harness.runCommand("plan", "Investigate flaky prompt extraction");
+  const planningPrompt = harness.sentUserMessages[0] ?? "";
+
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: planningPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+
+  await harness.emit("session_compact", SESSION_COMPACT_EVENT);
+
+  const critiquePrompt = String(harness.sentMessages.at(-1)?.content ?? "");
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "custom",
+        content: critiquePrompt,
+      },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: "1) Verdict: REFINE\n2) Issues:\n- split step two\n3) Required fixes:\n- revise it\n4) Summary:\n- needs tightening",
+          },
+        ],
+      },
+    ],
+  });
+
+  expect(String(harness.sentMessages.at(-1)?.content ?? "")).toContain(
+    "Revise the latest plan using the critique below.",
+  );
+  expect(harness.uiStub.notifications).toContainEqual({
+    message: "The critique requested plan refinement. Regenerating the plan.",
+    level: "warning",
+  });
+});
+
+test("session compact preserves transient plan state while approved execution is active", async () => {
+  const harness = createPlanExtensionHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+  });
+
+  await enterExecutionState(harness);
+  await harness.emit("session_compact", SESSION_COMPACT_EVENT);
+
+  expect(harness.getActiveTools()).toEqual([
+    "read",
+    "bash",
+    "grep",
+    "find",
+    "ls",
+    "edit",
+    "write",
+    "ask_user_question",
+  ]);
+  expect(harness.uiStub.statuses.get("plan")).toBe("📋 0/2");
+  expect(harness.uiStub.widgets.get("plan-todos")).toEqual([
+    "☐ A regression test for prompt leakage",
+    "☐ Approval action UI to show a compact summary",
+  ]);
 });
 
 test("session shutdown restores tools and clears stale plan-mode status", async () => {

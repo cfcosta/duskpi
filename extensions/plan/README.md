@@ -18,7 +18,7 @@ This directory is the repo-local copy bundled under `extensions/plan`. It is not
 - step-by-step approved execution with one `jj` commit per plan step
 - execution prompts that reuse the original step objective plus files, validation, and rollback notes when the plan includes them
 - status text derived from guided workflow snapshots and todo-widget output derived from guided execution snapshots
-- transient plan state reset on `session_switch`, `session_fork`, and `session_compact`
+- transient plan state reset on `session_switch` and `session_fork`, while `session_compact` now preserves active plan/autoplan flows in the same session
 
 ```txt
 /plan on
@@ -37,7 +37,8 @@ Sometimes you want speed. Sometimes you want a review point before the first edi
 - every draft plan gets a critique pass before the approval UI appears
 - malformed drafts get one automatic restatement retry before the extension surfaces a visible failure
 - approved plans run one step at a time with tracked progress
-- session switches, forks, and compaction do not carry stale transient plan state into the next boundary
+- session switches and forks do not carry stale transient plan state into the next boundary
+- same-session compaction preserves active plan/autoplan flows so critique, revision, approval, and execution can continue
 
 ## Repo architecture
 
@@ -193,9 +194,11 @@ When a plan includes nested step metadata like target files/components, validati
 
 ### Session boundary behavior
 
-When `session_switch`, `session_fork`, or `session_compact` fires, the extension resets transient plan state instead of trying to carry it across boundaries.
+When `session_switch` or `session_fork` fires, the extension resets transient plan state instead of trying to carry it across boundaries.
 
 That reset restores the normal tool set, clears footer status and the todo widget, and leaves `/todos` empty until a new approved execution starts in the new session state.
+
+When `session_compact` fires inside the same session, the extension now preserves active plan/autoplan state so hidden critique or revision turns and approved execution can continue after compaction.
 
 ## Project structure
 
