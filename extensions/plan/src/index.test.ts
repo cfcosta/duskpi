@@ -830,6 +830,72 @@ test("non-ui /autoplan approve starts the recursive subtask loop", async () => {
   expect(harness.sentUserMessages[1]).toContain("Current approved high-level task 1");
 });
 
+test("top-level /autoplan planning still allows ask_user_question before first approval", async () => {
+  const harness = createPlanExtensionHarness();
+
+  await harness.runCommand("autoplan", "Rewrite this in Rust");
+
+  await expect(
+    invokeToolCall(harness, { toolName: "ask_user_question", input: { questions: [] } }),
+  ).resolves.toBeUndefined();
+});
+
+test("top-level /autoplan continue and regenerate keep ask_user_question available before first approval", async () => {
+  const continueHarness = createPlanExtensionHarness();
+
+  await continueHarness.runCommand("autoplan", "Rewrite this in Rust");
+
+  const topLevelPrompt = continueHarness.sentUserMessages[0] ?? "";
+  await continueHarness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: topLevelPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    continueHarness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  await continueHarness.runCommand("autoplan", "continue tighten scope");
+  await expect(
+    invokeToolCall(continueHarness, { toolName: "ask_user_question", input: { questions: [] } }),
+  ).resolves.toBeUndefined();
+
+  const regenerateHarness = createPlanExtensionHarness();
+
+  await regenerateHarness.runCommand("autoplan", "Rewrite this in Rust");
+
+  const regenerateTopLevelPrompt = regenerateHarness.sentUserMessages[0] ?? "";
+  await regenerateHarness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: regenerateTopLevelPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    regenerateHarness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  await regenerateHarness.runCommand("autoplan", "regenerate");
+  await expect(
+    invokeToolCall(regenerateHarness, { toolName: "ask_user_question", input: { questions: [] } }),
+  ).resolves.toBeUndefined();
+});
+
 test("/autoplan falls back to the existing backlog when progress review is unparseable", async () => {
   const harness = createPlanExtensionHarness({
     hasUI: true,
@@ -1067,6 +1133,13 @@ test("/autoplan auto-plans each approved subtask without asking new questions", 
     "Complete only step 1: Add a regression test for prompt leakage",
   );
 
+  await expect(
+    invokeToolCall(harness, { toolName: "ask_user_question", input: { questions: [] } }),
+  ).resolves.toEqual({
+    block: true,
+    reason: "Autoplan subtask execution must not ask the user new questions.",
+  });
+
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
@@ -1088,6 +1161,13 @@ test("/autoplan auto-plans each approved subtask without asking new questions", 
   expect(harness.sentMessages.at(-1)).toEqual(
     expect.objectContaining({ customType: "autoplan-review-internal", display: false }),
   );
+
+  await expect(
+    invokeToolCall(harness, { toolName: "ask_user_question", input: { questions: [] } }),
+  ).resolves.toEqual({
+    block: true,
+    reason: "Autoplan progress review must not ask the user new questions.",
+  });
 
   const reviewPrompt = String(harness.sentMessages.at(-1)?.content ?? "");
   await harness.emit("agent_end", {

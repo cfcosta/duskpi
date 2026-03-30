@@ -610,13 +610,32 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     event: ToolCallEvent,
     ctx: ExtensionContext,
   ): Promise<{ block: true; reason: string } | void> {
-    if (this.autoPlanReview.awaitingResponse) {
-      if ((event.toolName ?? "").trim().toLowerCase() === "ask_user_question") {
+    const toolName = (event.toolName ?? "").trim().toLowerCase();
+    if (this.isAutoPlanPostApprovalActive() && toolName === "ask_user_question") {
+      if (this.autoPlanReview.awaitingResponse) {
         return {
           block: true,
           reason: "Autoplan progress review must not ask the user new questions.",
         };
       }
+
+      const autoPlanSubtaskPhase = this.autoPlanSubtaskWorkflow.getStateSnapshot().phase;
+      if (autoPlanSubtaskPhase === "planning" || autoPlanSubtaskPhase === "approval") {
+        return {
+          block: true,
+          reason: "Autoplan subtask planning must not ask the user new questions.",
+        };
+      }
+
+      if (autoPlanSubtaskPhase === "executing") {
+        return {
+          block: true,
+          reason: "Autoplan subtask execution must not ask the user new questions.",
+        };
+      }
+    }
+
+    if (this.autoPlanReview.awaitingResponse) {
       if (isPlanWriteCapableTool(event.toolName)) {
         return {
           block: true,
@@ -638,15 +657,6 @@ export class PiPlanWorkflow extends GuidedWorkflow {
 
     const autoPlanSubtaskPhase = this.autoPlanSubtaskWorkflow.getStateSnapshot().phase;
     if (autoPlanSubtaskPhase !== "idle") {
-      if (
-        (autoPlanSubtaskPhase === "planning" || autoPlanSubtaskPhase === "approval") &&
-        (event.toolName ?? "").trim().toLowerCase() === "ask_user_question"
-      ) {
-        return {
-          block: true,
-          reason: "Autoplan subtask planning must not ask the user new questions.",
-        };
-      }
       return this.autoPlanSubtaskWorkflow.handleToolCall(event, ctx);
     }
 
@@ -1289,6 +1299,10 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   private resetExecutionState(): void {
     this.executionMode = false;
     this.executionConstraintNote = "";
+  }
+
+  private isAutoPlanPostApprovalActive(): boolean {
+    return this.autoPlanMode === "executing";
   }
 
   private async maybeStartPendingAutoPlan(
