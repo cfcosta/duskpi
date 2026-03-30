@@ -20,6 +20,7 @@ import {
   type PlanApprovalPreviewStep,
 } from "./plan-action-ui";
 import {
+  extractDoneSteps,
   extractPlanSteps,
   extractTodoItems,
   isSafeReadOnlyCommand,
@@ -199,6 +200,13 @@ interface AutoPlanReviewState {
   parseRecoveryAttempted: boolean;
 }
 
+interface AutoPlanSubtaskExecutionResumeState {
+  goal?: string;
+  planText?: string;
+  note?: string;
+  items: GuidedWorkflowExecutionItem[];
+}
+
 class AutoPlanSubtaskWorkflow extends GuidedWorkflow {
   private parseRecoveryAttempted = false;
 
@@ -246,6 +254,41 @@ class AutoPlanSubtaskWorkflow extends GuidedWorkflow {
   async handleSessionShutdown(event: SessionShutdownEvent, ctx: ExtensionContext): Promise<void> {
     this.parseRecoveryAttempted = false;
     await super.handleSessionShutdown(event, ctx);
+  }
+
+  getExecutionResumeState(): AutoPlanSubtaskExecutionResumeState {
+    return {
+      goal: this.getStateSnapshot().goal,
+      planText: this.getLatestPlanText(),
+      note: this.getExecutionSnapshot().note,
+      items: this.getExecutionSnapshot().items,
+    };
+  }
+
+  restoreRecoveredExecutionState(state: AutoPlanSubtaskExecutionResumeState): void {
+    const internals = this as unknown as {
+      state: {
+        phase: "idle" | "planning" | "approval" | "executing";
+        goal?: string;
+        pendingRequestId?: string;
+        awaitingResponse: boolean;
+      };
+      latestPlanText?: string;
+      latestCritiqueText?: string;
+      executionItems?: GuidedWorkflowExecutionItem[];
+      executionNote?: string;
+    };
+
+    internals.state = {
+      phase: "executing",
+      goal: state.goal,
+      pendingRequestId: undefined,
+      awaitingResponse: false,
+    };
+    internals.latestPlanText = state.planText;
+    internals.latestCritiqueText = undefined;
+    internals.executionItems = state.items.map((item) => ({ ...item }));
+    internals.executionNote = state.note;
   }
 
   private hasPendingPlanningRequest(): boolean {
@@ -672,10 +715,13 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     const autoPlanSubtaskState = this.autoPlanSubtaskWorkflow.getStateSnapshot();
     if (autoPlanSubtaskState.phase !== "idle") {
       const beforePhase = autoPlanSubtaskState.phase;
+      const resumeState =
+        beforePhase === "executing" ? this.autoPlanSubtaskWorkflow.getExecutionResumeState() : undefined;
+      const turnText = getAssistantTextFromMessage(event.message);
       await this.autoPlanSubtaskWorkflow.handleTurnEnd(event, ctx);
       const afterPhase = this.autoPlanSubtaskWorkflow.getStateSnapshot().phase;
       if (beforePhase === "executing" && afterPhase === "idle") {
-        await this.handleCompletedAutoPlanSubtask(ctx);
+        await this.handleCompletedAutoPlanSubtask(ctx, { resumeState, turnText });
       }
       return;
     }
@@ -1290,8 +1336,18 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       .join("\n");
   }
 
-  private async handleCompletedAutoPlanSubtask(ctx: ExtensionContext): Promise<void> {
+  private async handleCompletedAutoPlanSubtask(
+    ctx: ExtensionContext,
+    options: { resumeState?: AutoPlanSubtaskExecutionResumeState; turnText?: string } = {},
+  ): Promise<void> {
     if (typeof this.autoPlanOuterStep !== "number") {
+      return;
+    }
+
+    if (
+      options.resumeState &&
+      this.tryResumeRecoveredAutoPlanSubtask(options.resumeState, options.turnText ?? "", ctx)
+    ) {
       return;
     }
 
@@ -1303,6 +1359,50 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     );
     this.setStatus(ctx);
     await this.startAutoPlanReview(ctx);
+  }
+
+  private tryResumeRecoveredAutoPlanSubtask(
+    resumeState: AutoPlanSubtaskExecutionResumeState,
+    turnText: string,
+    ctx: ExtensionContext,
+  ): boolean {
+    const planText = resumeState.planText?.trim();
+    if (!planText) {
+      return false;
+    }
+
+    const recoveredItems = recoverImplicitlyIndentedSubtaskItems(planText, resumeState.items);
+    if (recoveredItems.length <= resumeState.items.length) {
+      return false;
+    }
+
+    const completedSteps = new Set(
+      resumeState.items.filter((item) => item.completed).map((item) => item.step),
+    );
+    for (const step of extractDoneSteps(turnText)) {
+      completedSteps.add(step);
+    }
+    markTodoItemsCompleted(recoveredItems, [...completedSteps]);
+
+    const currentStep = recoveredItems.find((item) => !item.completed);
+    if (!currentStep) {
+      return false;
+    }
+
+    this.autoPlanSubtaskWorkflow.restoreRecoveredExecutionState({
+      ...resumeState,
+      planText,
+      items: recoveredItems.map((item) => ({ ...item })),
+    });
+
+    const prompt = this.buildExecutionPrompt(currentStep, planText, resumeState.note);
+    if (!prompt) {
+      return false;
+    }
+
+    this.pi.sendUserMessage(prompt, { deliverAs: "followUp" });
+    this.setStatus(ctx);
+    return true;
   }
 
   private async startAutoPlanReview(ctx: ExtensionContext): Promise<void> {
@@ -2042,6 +2142,78 @@ function selectVisibleTodoItems(
     hiddenBefore: start,
     items: todoItems.slice(start, start + visibleTaskLines),
   };
+}
+
+function recoverImplicitlyIndentedSubtaskItems(
+  planText: string,
+  existingItems: GuidedWorkflowExecutionItem[],
+): TodoItem[] {
+  const existingSteps = new Set(existingItems.map((item) => item.step));
+  const recoveredItems = existingItems.map((item) => ({
+    step: item.step,
+    text: item.text,
+    completed: item.completed,
+  }));
+  const lines = planText.split(/\r?\n/);
+  const planHeaderIndex = lines.findIndex((line) => /^(?:\d+[.)]\s*)?Plan:\s*$/i.test(line.trim()));
+  if (planHeaderIndex === -1) {
+    return recoveredItems;
+  }
+
+  let firstStepIndent: number | undefined;
+  let lastSeenStep = 0;
+  let previousLineBlank = false;
+
+  for (const line of lines.slice(planHeaderIndex + 1)) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) {
+      previousLineBlank = true;
+      continue;
+    }
+
+    if (/^\d+[.)]\s+Ready to execute when approved\.?$/i.test(trimmed)) {
+      break;
+    }
+
+    const numberedMatch = line.match(/^(\s*)(\d+)[.)]\s+(.*)$/);
+    if (!numberedMatch) {
+      previousLineBlank = false;
+      continue;
+    }
+
+    const indent = numberedMatch[1]?.length ?? 0;
+    const step = Number(numberedMatch[2]);
+    const text = (numberedMatch[3] ?? "").replace(/\*+/g, "").trim();
+
+    if (firstStepIndent === undefined) {
+      firstStepIndent = indent;
+      lastSeenStep = step;
+      previousLineBlank = false;
+      continue;
+    }
+
+    const looksLikeMetadata = /^(target files\/components|validation method|risks? and rollback notes?|step objective)\b/i.test(
+      text,
+    );
+    const isExecutableStep = text.length > 0 && !looksLikeMetadata;
+    const isRecoveredStep =
+      step > lastSeenStep && (indent === firstStepIndent || previousLineBlank) && isExecutableStep;
+
+    if (isRecoveredStep && !existingSteps.has(step)) {
+      recoveredItems.push({ step, text, completed: false });
+      existingSteps.add(step);
+      lastSeenStep = step;
+      previousLineBlank = false;
+      continue;
+    }
+
+    if (indent === firstStepIndent && step > lastSeenStep) {
+      lastSeenStep = step;
+    }
+    previousLineBlank = false;
+  }
+
+  return recoveredItems.sort((left, right) => left.step - right.step || left.text.localeCompare(right.text));
 }
 
 function buildParseRecoveryPrompt(draftText: string): string {
