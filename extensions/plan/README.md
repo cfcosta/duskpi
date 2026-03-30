@@ -10,7 +10,7 @@ This directory is the repo-local copy bundled under `extensions/plan`. It is not
 - read-only `/plan` mode for investigation and plan drafting
 - `/autoplan` for long-term goals: approve one top-level plan, then recursively re-plan and execute each approved subtask
 - an internal hidden critique and revision pass before approval
-- one automatic draft-reformat retry when Pi returns a non-parseable plan without an explicit `Plan:` section
+- one automatic draft-reformat retry when Pi returns a plan without a valid tagged `pi-plan-json` contract block
 - an approval menu with approve, continue, regenerate, and exit actions
 - non-UI approval fallback commands while approval is pending: `/plan approve`, `/plan continue <note>`, `/plan regenerate`, `/plan exit`
 - approval previews that show compact step summaries plus file and validation hints when available
@@ -84,7 +84,7 @@ This enables plan mode if needed and immediately starts the planning request.
 
 ### 3) Review, refine, or approve
 
-After a plan is generated, Pi first runs an internal hidden critique pass. The critique and revision prompts stay out of the visible chat, while status notifications still appear normally. If Pi responds with a draft that still does not contain a parseable `Plan:` section, the extension automatically asks for one restatement using the required contract before surfacing a visible failure. Once the plan passes critique, you get an approval menu with:
+After a plan is generated, Pi first runs an internal hidden critique pass. The critique and revision prompts stay out of the visible chat, while status notifications still appear normally. If Pi responds with a draft that still does not contain a valid tagged `pi-plan-json` block for the required contract, the extension automatically asks for one restatement using the required contract before surfacing a visible failure. Once the plan passes critique, you get an approval menu with:
 
 - a compact review summary built from the first extracted plan steps
 - per-step file/component and validation hints when the plan includes them
@@ -165,8 +165,13 @@ In plan mode, the system prompt now follows a Claude Code-style planning flow an
 4. Open questions and assumptions
 5. Plan (step objective, target files or components, validation)
 6. End with: `Ready to execute when approved.`
+7. After the markdown plan, include a fenced tagged JSON block using ````pi-plan-json````.
+   - Plan payloads must be shaped like:
+     - `{ "version": 1, "kind": "plan", "steps": [...] }`
+   - Each step must include:
+     - `step`, `objective`, `targets`, `validation`, `risks`
 
-Before approval is shown, Pi critiques the draft plan for atomicity, ordering, specificity, validation quality, executability, and metadata noise. Weak plans are automatically sent back for refinement through hidden extension messages. If Pi returns a draft without a parseable `Plan:` section, the extension now sends one automatic restatement request that preserves the same intent but explicitly asks for the required contract and numbered `Plan:` steps. If the second draft is still unparseable, approval is not opened and plan mode stays read-only with a visible failure notification.
+Before approval is shown, Pi critiques the draft plan for atomicity, ordering, specificity, validation quality, executability, and metadata noise. Weak plans are automatically sent back for refinement through hidden extension messages. If Pi returns a draft without a valid tagged `pi-plan-json` block, the extension now sends one automatic restatement request that preserves the same intent but explicitly asks for the required markdown + tagged JSON contract. If the second draft is still invalid, approval is not opened and plan mode stays read-only with a visible failure notification.
 
 When a plan includes nested step metadata like target files/components, validation method, or risks and rollback notes, the extension now preserves that structure for approval previews and execution prompts while keeping `/todos` and the widget intentionally one-line and compact during approved execution.
 

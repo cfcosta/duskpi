@@ -995,6 +995,7 @@ test("one-shot /plan task enables plan mode and starts a correlated planning req
   ]);
   expect(harness.sentUserMessages).toHaveLength(1);
   expect(harness.sentUserMessages[0]).toContain("Investigate flaky prompt extraction");
+  expect(harness.sentUserMessages[0]).toContain("```pi-plan-json");
   expect(extractRequestId(harness.sentUserMessages[0] ?? "")).toBeTruthy();
 });
 
@@ -1013,6 +1014,7 @@ test("/autoplan starts with the normal top-level planning flow", async () => {
   ]);
   expect(harness.sentUserMessages).toHaveLength(1);
   expect(harness.sentUserMessages[0]).toContain("Rewrite this in Rust");
+  expect(harness.sentUserMessages[0]).toContain("```pi-plan-json");
   expect(extractRequestId(harness.sentUserMessages[0] ?? "")).toBeTruthy();
 });
 
@@ -1183,6 +1185,7 @@ test("/autoplan falls back to the existing backlog when progress review is unpar
   });
 
   const retryReviewPrompt = String(harness.sentMessages.at(-1)?.content ?? "");
+  expect(retryReviewPrompt).toContain("```pi-plan-json");
   await harness.emit("agent_end", {
     messages: [
       {
@@ -1461,6 +1464,7 @@ test("/autoplan retries non-compliant inner subtask plans once and then stops on
   expect(harness.sentUserMessages[2]).toContain(
     "Infer the best repo-consistent choice and continue.",
   );
+  expect(harness.sentUserMessages[2]).toContain("```pi-plan-json");
   expect(harness.uiStub.notifications).toContainEqual({
     message:
       "Autoplan subtask planning asked for user input or approval. Asking Pi to restate the subtask plan and infer the missing decisions.",
@@ -1570,6 +1574,7 @@ test("/autoplan retries non-compliant hidden reviews once and then stops on a re
     "The previous autoplan progress review violated the post-approval autoplan policy.",
   );
   expect(retryReviewPrompt).toContain("Infer the best repo-consistent choice and continue.");
+  expect(retryReviewPrompt).toContain("```pi-plan-json");
   expect(harness.uiStub.notifications).toContainEqual({
     message: "Autoplan review asked for user input or approval. Asking for a stricter restatement.",
     level: "warning",
@@ -1957,6 +1962,10 @@ test("planning prompt asks Pi to proactively surface change decisions with quest
   expect(harness.sentUserMessages[0]).toContain(
     "Use ask_user_question to bundle the key uncertainties into 1-4 focused multiple-choice questions",
   );
+  expect(harness.sentUserMessages[0]).toContain("```pi-plan-json");
+  expect(harness.sentUserMessages[0]).toContain(
+    'The response is invalid if the tagged JSON block is missing, malformed, or schema-invalid.',
+  );
 });
 
 test("before_agent_start prompt tells plan mode to ask more than one clarifying question when needed", async () => {
@@ -1978,6 +1987,119 @@ test("before_agent_start prompt tells plan mode to ask more than one clarifying 
   );
   expect((result as { systemPrompt: string }).systemPrompt).toContain(
     "Prefer asking over guessing when a change could reasonably go multiple ways.",
+  );
+  expect((result as { systemPrompt: string }).systemPrompt).toContain("```pi-plan-json");
+  expect((result as { systemPrompt: string }).systemPrompt).toContain(
+    'The response is invalid if the tagged JSON block is missing, malformed, or schema-invalid.',
+  );
+});
+
+test("before_agent_start uses the tagged JSON contract for autoplan subtask planning", async () => {
+  const harness = createPlanExtensionHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+  });
+
+  await harness.runCommand("autoplan", "Rewrite this in Rust");
+
+  const topLevelPrompt = harness.sentUserMessages[0] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: topLevelPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  const [result] = await harness.emitWithResult("before_agent_start", {
+    systemPrompt: "base system prompt",
+  });
+
+  expect((result as { systemPrompt: string }).systemPrompt).toContain(
+    "[AUTOPLAN SUBTASK PLANNING - READ ONLY]",
+  );
+  expect((result as { systemPrompt: string }).systemPrompt).toContain("```pi-plan-json");
+  expect((result as { systemPrompt: string }).systemPrompt).toContain(
+    'The response is invalid if the tagged JSON block is missing, malformed, or schema-invalid.',
+  );
+});
+
+test("before_agent_start uses the tagged JSON contract for autoplan reviews", async () => {
+  const harness = createPlanExtensionHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+  });
+
+  await harness.runCommand("autoplan", "Rewrite this in Rust");
+
+  const topLevelPrompt = harness.sentUserMessages[0] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: topLevelPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  const subtaskPrompt = harness.sentUserMessages[1] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: subtaskPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  await harness.emit("turn_end", {
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "Finished the first subtask step [DONE:1]" }],
+    },
+  });
+  await harness.emit("turn_end", {
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "Finished the second subtask step [DONE:2]" }],
+    },
+  });
+
+  const [result] = await harness.emitWithResult("before_agent_start", {
+    systemPrompt: "base system prompt",
+  });
+
+  expect((result as { systemPrompt: string }).systemPrompt).toContain(
+    "[AUTOPLAN PROGRESS REVIEW - READ ONLY]",
+  );
+  expect((result as { systemPrompt: string }).systemPrompt).toContain("```pi-plan-json");
+  expect((result as { systemPrompt: string }).systemPrompt).toContain(
+    "For review continue responses, the JSON must be: { \"version\": 1, \"kind\": \"review\", \"status\": \"continue\", \"steps\": [...] }.",
   );
 });
 
@@ -2055,6 +2177,10 @@ test("unparseable planning drafts trigger one automatic retry with a new request
   expect(retryRequestId).not.toBe(firstRequestId);
   expect(retryPrompt).toContain(
     "Include an explicit Plan: section with numbered executable steps.",
+  );
+  expect(retryPrompt).toContain("```pi-plan-json");
+  expect(retryPrompt).toContain(
+    "The previous response did not include a valid tagged JSON planning contract.",
   );
   expect(harness.uiStub.notifications).toContainEqual({
     message:
@@ -2527,6 +2653,7 @@ test("REFINE critique responses route through a hidden revision follow-up", asyn
   expect(String(harness.sentMessages[1]?.content)).toContain(
     "Revise the latest plan using the critique below.",
   );
+  expect(String(harness.sentMessages[1]?.content)).toContain("```pi-plan-json");
   expect(extractRequestId(String(harness.sentMessages[1]?.content ?? ""))).toBeTruthy();
   expect(harness.uiStub.notifications).toContainEqual({
     message: "The critique requested plan refinement. Regenerating the plan.",

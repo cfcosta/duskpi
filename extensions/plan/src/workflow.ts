@@ -19,6 +19,7 @@ import {
   type PlanApprovalDetails,
   type PlanApprovalPreviewStep,
 } from "./plan-action-ui";
+import { PLAN_OUTPUT_JSON_BLOCK_TAG } from "./output-contract";
 import {
   detectAutoPlanOutputComplianceIssues,
   extractDoneSteps,
@@ -70,6 +71,21 @@ function buildPlanModeBashBlockedReason(command: string): string {
   return `Plan mode blocked a potentially mutating bash command: ${command}`;
 }
 
+const PLAN_TAGGED_JSON_CONTRACT_SUMMARY = [
+  "After the human-readable markdown plan, include a fenced tagged JSON block.",
+  `Use the fence header \`\`\`${PLAN_OUTPUT_JSON_BLOCK_TAG}\` and valid JSON inside it.`,
+  "For planning responses, the JSON must be: { \"version\": 1, \"kind\": \"plan\", \"steps\": [...] }.",
+  "Each step object must include: step, objective, targets, validation, and risks.",
+  "The response is invalid if the tagged JSON block is missing, malformed, or schema-invalid.",
+].join("\n");
+
+const REVIEW_TAGGED_JSON_CONTRACT_SUMMARY = [
+  `If work remains, after the human-readable markdown review include a fenced \`\`\`${PLAN_OUTPUT_JSON_BLOCK_TAG}\` JSON block.`,
+  "For review continue responses, the JSON must be: { \"version\": 1, \"kind\": \"review\", \"status\": \"continue\", \"steps\": [...] }.",
+  "For review complete responses, reply with exactly Status: COMPLETE and do not include extra output.",
+  "The response is invalid if the tagged JSON block is missing, malformed, or schema-invalid when work remains.",
+].join("\n");
+
 const PLAN_MODE_SYSTEM_PROMPT = `
 [PLAN MODE ACTIVE - READ ONLY]
 You are in planning mode.
@@ -112,6 +128,7 @@ Response contract (use this structure):
    2. target files/components
    3. validation method
 6) End with: "Ready to execute when approved."
+7) ${PLAN_TAGGED_JSON_CONTRACT_SUMMARY}
 `.trim();
 
 const YOLO_MODE_SYSTEM_PROMPT = `
@@ -171,6 +188,7 @@ Hard rules:
 - Do not request approval.
 - Make the best reasonable decisions from the repo, the approved parent goal, and existing patterns.
 - Return a concrete executable plan with an explicit Plan: section and numbered steps.
+- ${PLAN_TAGGED_JSON_CONTRACT_SUMMARY}
 `.trim();
 
 const AUTOPLAN_REVIEW_SYSTEM_PROMPT = `
@@ -183,6 +201,7 @@ Hard rules:
 - Do not request approval.
 - Decide whether the long-term goal is complete or what high-level tasks remain.
 - If work remains, return an explicit Plan: section with numbered remaining tasks.
+- ${REVIEW_TAGGED_JSON_CONTRACT_SUMMARY}
 `.trim();
 
 export const PLAN_COMMAND_DESCRIPTION =
@@ -351,7 +370,10 @@ class AutoPlanSubtaskWorkflow extends GuidedWorkflow {
         "warning",
       );
       await super.handleSessionShutdown({ reason: "autoplan-subtask-policy-retry" }, ctx);
-      return super.handleCommand(buildAutoPlanSubtaskComplianceRecoveryPrompt(draftText, issues), ctx);
+      return super.handleCommand(
+        buildAutoPlanSubtaskComplianceRecoveryPrompt(draftText, issues),
+        ctx,
+      );
     }
 
     this.complianceRecoveryAttempted = false;
@@ -399,6 +421,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
           "Prefer asking over guessing when behavior, UX, API, schema, validation, rollout, compatibility, performance, or migration choices are still open.",
           "Use ask_user_question to bundle the key uncertainties into 1-4 focused multiple-choice questions with 2-4 concrete options each; the user can still type a custom answer.",
           "Then return a concrete implementation plan that follows the required plan-mode response contract.",
+          PLAN_TAGGED_JSON_CONTRACT_SUMMARY,
           "",
           `Task: ${goal ?? "Create a concrete implementation plan."}`,
         ].join("\n");
@@ -412,6 +435,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
             "Revise the latest plan using the critique below.",
             "Keep plan mode read-only and return the full plan again using the required plan output contract.",
             "Make each step atomic, executable, validation-backed, and suitable for one jujutsu commit.",
+            PLAN_TAGGED_JSON_CONTRACT_SUMMARY,
             "",
             "Original plan:",
             planText,
@@ -477,6 +501,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
           "Do not request approval.",
           "Make the best reasonable decisions from the approved parent goal, the repo, and existing patterns.",
           "Return a concrete implementation plan that follows the required plan-mode response contract.",
+          PLAN_TAGGED_JSON_CONTRACT_SUMMARY,
           "",
           `Task: ${goal ?? "Create a concrete implementation plan."}`,
         ].join("\n");
@@ -490,6 +515,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
             "Revise the latest plan using the critique below.",
             "Keep planning read-only, do not ask the user questions, and return the full plan again using the required plan output contract.",
             "Make each step atomic, executable, validation-backed, and suitable for one jujutsu commit.",
+            PLAN_TAGGED_JSON_CONTRACT_SUMMARY,
             "",
             "Original plan:",
             planText,
@@ -773,7 +799,9 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     if (autoPlanSubtaskState.phase !== "idle") {
       const beforePhase = autoPlanSubtaskState.phase;
       const resumeState =
-        beforePhase === "executing" ? this.autoPlanSubtaskWorkflow.getExecutionResumeState() : undefined;
+        beforePhase === "executing"
+          ? this.autoPlanSubtaskWorkflow.getExecutionResumeState()
+          : undefined;
       const turnText = getAssistantTextFromMessage(event.message);
 
       if (beforePhase === "executing" && turnText) {
@@ -1421,7 +1449,9 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   }
 
   private buildAutoPlanSubtaskGoal(currentStep: GuidedWorkflowExecutionItem): string {
-    const remaining = this.getExecutionSnapshot().items.filter((item) => !item.completed && !item.skipped);
+    const remaining = this.getExecutionSnapshot().items.filter(
+      (item) => !item.completed && !item.skipped,
+    );
     const backlog = remaining.map((item) => `${item.step}. ${item.text}`).join("\n");
 
     return [
@@ -1481,7 +1511,9 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     const completedSteps = new Set(
       resumeState.items.filter((item) => item.completed).map((item) => item.step),
     );
-    const skippedSteps = new Set(resumeState.items.filter((item) => item.skipped).map((item) => item.step));
+    const skippedSteps = new Set(
+      resumeState.items.filter((item) => item.skipped).map((item) => item.step),
+    );
     for (const step of extractDoneSteps(turnText)) {
       completedSteps.add(step);
     }
@@ -1568,6 +1600,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       "Do not ask the user questions.",
       "Do not request approval.",
       "Return either exactly 'Status: COMPLETE' if the long-term goal is finished, or return a remaining high-level Plan: section with numbered executable tasks.",
+      REVIEW_TAGGED_JSON_CONTRACT_SUMMARY,
       "If work remains, end with: Continue autoplan.",
     ]
       .filter((line): line is string => typeof line === "string" && line.length > 0)
@@ -1957,7 +1990,8 @@ export class PiPlanWorkflow extends GuidedWorkflow {
 
     const stepDetails = describeExecutionStep(planText, currentStep);
     const autoPlanInnerExecutionActive =
-      this.autoPlanMode === "executing" && this.autoPlanSubtaskWorkflow.getStateSnapshot().phase === "executing";
+      this.autoPlanMode === "executing" &&
+      this.autoPlanSubtaskWorkflow.getStateSnapshot().phase === "executing";
 
     return [
       EXECUTION_TRIGGER_PROMPT,
@@ -2004,7 +2038,9 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       notify(
         this.pi,
         ctx,
-        skippedAny ? "All tracked plan steps are resolved (completed or skipped)." : "All tracked plan steps are complete.",
+        skippedAny
+          ? "All tracked plan steps are resolved (completed or skipped)."
+          : "All tracked plan steps are complete.",
         "info",
       );
     }
@@ -2416,9 +2452,10 @@ function recoverImplicitlyIndentedSubtaskItems(
       continue;
     }
 
-    const looksLikeMetadata = /^(target files\/components|validation method|risks? and rollback notes?|step objective)\b/i.test(
-      text,
-    );
+    const looksLikeMetadata =
+      /^(target files\/components|validation method|risks? and rollback notes?|step objective)\b/i.test(
+        text,
+      );
     const isExecutableStep = text.length > 0 && !looksLikeMetadata;
     const isRecoveredStep =
       step > lastSeenStep && (indent === firstStepIndent || previousLineBlank) && isExecutableStep;
@@ -2437,15 +2474,18 @@ function recoverImplicitlyIndentedSubtaskItems(
     previousLineBlank = false;
   }
 
-  return recoveredItems.sort((left, right) => left.step - right.step || left.text.localeCompare(right.text));
+  return recoveredItems.sort(
+    (left, right) => left.step - right.step || left.text.localeCompare(right.text),
+  );
 }
 
 function buildParseRecoveryPrompt(draftText: string): string {
   return [
-    "The previous response did not include a parseable plan.",
+    "The previous response did not include a valid tagged JSON planning contract.",
     "Restate the same proposed implementation plan using the required plan output contract.",
     "Keep the same scope and intent.",
     "Include an explicit Plan: section with numbered executable steps.",
+    PLAN_TAGGED_JSON_CONTRACT_SUMMARY,
     "End with: Ready to execute when approved.",
     "",
     "Previous draft:",
@@ -2515,9 +2555,9 @@ function validateAutoPlanReviewResponse(
 
 function buildAutoPlanReviewParseRecoveryPrompt(reviewText: string): string {
   return [
-    "The previous progress review did not clearly say whether the long-term goal is complete or provide a parseable remaining Plan: section.",
+    "The previous progress review did not include a valid tagged JSON review contract for remaining work.",
     "Restate the review.",
-    "If the goal is complete, reply with exactly: Status: COMPLETE",
+    REVIEW_TAGGED_JSON_CONTRACT_SUMMARY,
     "Otherwise include an explicit Plan: section with numbered remaining tasks and end with: Continue autoplan.",
     "",
     "Previous review:",
@@ -2553,6 +2593,7 @@ function buildAutoPlanSubtaskComplianceRecoveryPrompt(
     "Do not request approval.",
     "Infer the best repo-consistent choice and continue.",
     "Return the required plan output contract with an explicit Plan: section and numbered executable steps.",
+    PLAN_TAGGED_JSON_CONTRACT_SUMMARY,
     "End with: Ready to execute when approved.",
     "",
     "Previous response:",
@@ -2574,7 +2615,7 @@ function buildAutoPlanReviewComplianceRecoveryPrompt(
     "Do not ask the user questions.",
     "Do not request approval.",
     "Infer the best repo-consistent choice and continue.",
-    "If the goal is complete, reply with exactly: Status: COMPLETE",
+    REVIEW_TAGGED_JSON_CONTRACT_SUMMARY,
     "Otherwise include an explicit Plan: section with numbered remaining tasks and end with: Continue autoplan.",
     "",
     "Previous review:",

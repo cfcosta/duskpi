@@ -22,7 +22,7 @@
 
 - `/plan` keeps planning read-only until approval.
 - Every draft plan gets a hidden critique pass before the approval UI appears.
-- If a draft still does not contain a parseable `Plan:` section, the extension automatically asks Pi once to restate the same draft using the required contract and an explicit `Plan:` section. A second failure stays read-only and surfaces a visible error instead of opening approval.
+- If a draft still does not contain a valid tagged `pi-plan-json` block for the required markdown + JSON contract, the extension automatically asks Pi once to restate the same draft using the required contract and an explicit `Plan:` section. A second failure stays read-only and surfaces a visible error instead of opening approval.
 - The approval UI now shows the first few compact step labels plus file/component and validation hints when the plan includes them.
 - If approval is pending without an interactive UI, `/plan approve`, `/plan continue <note>`, `/plan regenerate`, and `/plan exit` act as command-line approval fallbacks.
 - `/autoplan` reuses the top-level `/plan` approval flow once. Top-level autoplan planning before that first approval may still ask clarification questions, including continue/regenerate revisions.
