@@ -25,6 +25,7 @@ import {
   type StructuredPlanOutput,
 } from "./output-contract";
 import {
+  cleanStepText,
   detectAutoPlanOutputComplianceIssues,
   extractDoneSteps,
   extractPlanSteps,
@@ -35,7 +36,6 @@ import {
   markTodoItemsSkipped,
   normalizeArg,
   parseCritiqueVerdict,
-  toTodoItems,
   type AutoPlanOutputComplianceIssue,
   type PlanStep,
   type TodoItem,
@@ -483,7 +483,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       },
       execution: {
         extractItems({ planText }) {
-          return extractTodoItems(planText).map((item) => ({ ...item }));
+          return self.buildTopLevelExecutionItems(planText).map((item) => ({ ...item }));
         },
         buildExecutionPrompt({ currentStep, note, planText }) {
           return self.buildExecutionPrompt(currentStep, planText, note);
@@ -1176,10 +1176,14 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     this.latestCritiqueSummary = args.critiqueText
       ? (extractCritiqueSummary(args.critiqueText) ?? "ready")
       : this.latestCritiqueSummary;
-    this.approvalReview = buildApprovalReviewState(args.planText, {
-      critiqueSummary: this.latestCritiqueSummary || undefined,
-      wasRevised: this.planWasRevised,
-    });
+    this.approvalReview = buildApprovalReviewState(
+      args.planText,
+      {
+        critiqueSummary: this.latestCritiqueSummary || undefined,
+        wasRevised: this.planWasRevised,
+      },
+      this.latestStructuredPlan,
+    );
     this.setStatus(ctx);
     notify(this.pi, ctx, "Plan critique passed. Review and approve when ready.", "info");
 
@@ -1190,10 +1194,14 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     const selection = await selectPlanNextActionWithInlineNote(
       ctx.ui as never,
       this.approvalReview ??
-        buildApprovalReviewState(args.planText, {
-          critiqueSummary: this.latestCritiqueSummary || undefined,
-          wasRevised: this.planWasRevised,
-        }),
+        buildApprovalReviewState(
+          args.planText,
+          {
+            critiqueSummary: this.latestCritiqueSummary || undefined,
+            wasRevised: this.planWasRevised,
+          },
+          this.latestStructuredPlan,
+        ),
     );
 
     if (selection.action === "continue") {
@@ -1242,7 +1250,8 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       this.autoPlanMode = "executing";
       this.autoPlanApprovedPlanText = this.getLatestPlanText()?.trim() ?? "";
     }
-    this.resetPlanningDraft();
+    this.resetApprovalReview();
+    this.resetParseRecoveryState();
     this.exitPlanMode(ctx, "Plan approved. Entering YOLO mode for execution.");
   }
 
@@ -1261,7 +1270,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       return false;
     }
 
-    const extracted = extractTodoItems(planText);
+    const extracted = toTodoItemsFromStructuredPlan(structuredPlan.value);
     if (extracted.length === 0) {
       return false;
     }
@@ -1270,10 +1279,14 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     this.latestPlanDraft = planText;
     this.latestStructuredPlan = structuredPlan.value;
     this.todoItems = extracted;
-    this.approvalReview = buildApprovalReviewState(planText, {
-      critiqueSummary: this.latestCritiqueSummary || undefined,
-      wasRevised: this.planWasRevised,
-    });
+    this.approvalReview = buildApprovalReviewState(
+      planText,
+      {
+        critiqueSummary: this.latestCritiqueSummary || undefined,
+        wasRevised: this.planWasRevised,
+      },
+      structuredPlan.value,
+    );
     this.setStatus(ctx);
     return true;
   }
@@ -1342,7 +1355,8 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     planText: string | undefined,
     executionItems: GuidedWorkflowExecutionItem[],
   ): TodoItem[] {
-    const structuredTodoItems = planText ? toTodoItems(extractPlanSteps(planText)) : [];
+    const structuredPlan = resolveStructuredPlan(planText, this.latestStructuredPlan);
+    const structuredTodoItems = structuredPlan ? toTodoItemsFromStructuredPlan(structuredPlan) : [];
     if (structuredTodoItems.length === 0) {
       return executionItems.map((item) => ({
         step: item.step,
@@ -1357,6 +1371,11 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     markTodoItemsCompleted(structuredTodoItems, completedSteps);
     markTodoItemsSkipped(structuredTodoItems, skippedSteps);
     return structuredTodoItems;
+  }
+
+  private buildTopLevelExecutionItems(planText: string): TodoItem[] {
+    const structuredPlan = resolveStructuredPlan(planText, this.latestStructuredPlan);
+    return structuredPlan ? toTodoItemsFromStructuredPlan(structuredPlan) : extractTodoItems(planText);
   }
 
   private syncLocalLifecycleStateFromGuided(): void {
@@ -1839,6 +1858,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     const internals = this.getOuterGuidedInternals();
     internals.latestPlanText = planText;
     this.latestPlanDraft = planText;
+    this.latestStructuredPlan = null;
   }
 
   private getOuterGuidedInternals(): {
@@ -1913,7 +1933,11 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       return "[APPROVED PLAN EXECUTION]\nFinish implementation and verification.";
     }
 
-    const currentDetails = describeExecutionStep(this.getLatestPlanText(), currentStep);
+    const currentDetails = describeExecutionStep(
+      currentStep,
+      resolveStructuredPlan(this.getLatestPlanText(), this.latestStructuredPlan),
+      this.getLatestPlanText(),
+    );
     const backlog = remaining.map((item) => `${item.step}. ${item.text}`).join("\n");
     return [
       "[APPROVED PLAN EXECUTION]",
@@ -2000,7 +2024,11 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       return "";
     }
 
-    const stepDetails = describeExecutionStep(planText, currentStep);
+    const stepDetails = describeExecutionStep(
+      currentStep,
+      resolveStructuredPlan(planText, this.latestStructuredPlan),
+      planText,
+    );
     const autoPlanInnerExecutionActive =
       this.autoPlanMode === "executing" &&
       this.autoPlanSubtaskWorkflow.getStateSnapshot().phase === "executing";
@@ -2293,6 +2321,41 @@ function extractCritiqueSummary(text: string): string | undefined {
   return undefined;
 }
 
+function toPlanStep(step: StructuredPlanOutput["steps"][number]): PlanStep {
+  return {
+    step: step.step,
+    objective: step.objective,
+    label: cleanStepText(step.objective),
+    targets: [...step.targets],
+    validation: [...step.validation],
+    risks: [...step.risks],
+  };
+}
+
+function toTodoItemsFromStructuredPlan(structuredPlan: StructuredPlanOutput): TodoItem[] {
+  return structuredPlan.steps.map((step) => ({
+    step: step.step,
+    text: cleanStepText(step.objective),
+    completed: false,
+  }));
+}
+
+function resolveStructuredPlan(
+  planText: string | undefined,
+  structuredPlan?: StructuredPlanOutput | null,
+): StructuredPlanOutput | undefined {
+  if (structuredPlan) {
+    return structuredPlan;
+  }
+
+  if (!planText) {
+    return undefined;
+  }
+
+  const parsed = parseTaggedPlanContract(planText);
+  return parsed.ok ? parsed.value : undefined;
+}
+
 function buildReviewBadges(planText: string, steps: PlanStep[]): string[] {
   const badges: string[] = [];
   const normalized = planText.toLowerCase();
@@ -2337,8 +2400,9 @@ function buildApprovalPreviewStep(step: PlanStep): PlanApprovalPreviewStep {
 export function buildApprovalReviewState(
   planText: string,
   options: { critiqueSummary?: string; wasRevised?: boolean } = {},
+  structuredPlan?: StructuredPlanOutput | null,
 ): ApprovalReviewState {
-  const steps = extractPlanSteps(planText);
+  const steps = structuredPlan?.steps.map(toPlanStep) ?? extractPlanSteps(planText);
 
   return {
     stepCount: steps.length,
@@ -2361,23 +2425,37 @@ function summarizeExecutionValues(values: string[]): string | undefined {
 }
 
 function describeExecutionStep(
-  planText: string | undefined,
   currentStep: Pick<GuidedWorkflowExecutionItem, "step" | "text">,
+  structuredPlan?: StructuredPlanOutput,
+  planText?: string,
 ): {
   objective: string;
   targets?: string;
   validation?: string;
   risks?: string;
 } {
-  const structuredStep = planText
+  const structuredStep = structuredPlan?.steps.find((step) => step.step === currentStep.step);
+  const fallbackStep = !structuredStep && planText
     ? extractPlanSteps(planText).find((step) => step.step === currentStep.step)
     : undefined;
 
   return {
-    objective: structuredStep?.objective ?? currentStep.text,
-    targets: structuredStep ? summarizeExecutionValues(structuredStep.targets) : undefined,
-    validation: structuredStep ? summarizeExecutionValues(structuredStep.validation) : undefined,
-    risks: structuredStep ? summarizeExecutionValues(structuredStep.risks) : undefined,
+    objective: structuredStep?.objective ?? fallbackStep?.objective ?? currentStep.text,
+    targets: structuredStep
+      ? summarizeExecutionValues(structuredStep.targets)
+      : fallbackStep
+        ? summarizeExecutionValues(fallbackStep.targets)
+        : undefined,
+    validation: structuredStep
+      ? summarizeExecutionValues(structuredStep.validation)
+      : fallbackStep
+        ? summarizeExecutionValues(fallbackStep.validation)
+        : undefined,
+    risks: structuredStep
+      ? summarizeExecutionValues(structuredStep.risks)
+      : fallbackStep
+        ? summarizeExecutionValues(fallbackStep.risks)
+        : undefined,
   };
 }
 
@@ -2646,7 +2724,11 @@ function buildAutoPlanExecutionComplianceRecoveryPrompt(args: {
   issues: AutoPlanOutputComplianceIssue[];
 }): string {
   const issueSummary = formatAutoPlanComplianceIssues(args.issues);
-  const stepDetails = describeExecutionStep(args.planText, args.currentStep);
+  const stepDetails = describeExecutionStep(
+    args.currentStep,
+    resolveStructuredPlan(args.planText),
+    args.planText,
+  );
 
   return [
     "The previous inner execution response violated the post-approval autoplan policy.",

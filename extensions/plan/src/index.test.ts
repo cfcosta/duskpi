@@ -344,6 +344,40 @@ function buildRichPlanText(): string {
   );
 }
 
+function buildConflictingRichPlanText(): string {
+  return appendTaggedPlanContract(
+    [
+      "1) Task understanding",
+      "2) Codebase findings",
+      "3) Approach options / trade-offs",
+      "4) Open questions / assumptions",
+      "5) Plan:",
+      "1. Markdown says the wrong step name",
+      "   - target files/components: wrong/path.ts",
+      "   - validation method: wrong validation",
+      "2. Markdown says the wrong second step",
+      "   - target files/components: wrong/second.ts",
+      "   - validation method: wrong second validation",
+      "6) Ready to execute when approved.",
+    ],
+    [
+      {
+        step: 1,
+        objective: "Add a regression test for prompt leakage",
+        targets: ["src/index.test.ts", "src/workflow.ts"],
+        validation: ["bun test ./src/index.test.ts", "bun run typecheck"],
+        risks: ["revert the structured execution prompt if agent guidance regresses"],
+      },
+      {
+        step: 2,
+        objective: "Update the approval action UI to show a compact summary",
+        targets: ["src/plan-action-ui.ts"],
+        validation: ["bun test ./src/index.test.ts"],
+      },
+    ],
+  );
+}
+
 function buildLongPlanText(stepCount = 8): string {
   const markdownLines = [
     "1) Task understanding",
@@ -936,65 +970,44 @@ test("extractPlanSteps handles indented plan steps with metadata", async () => {
   ]);
 });
 
-test("buildApprovalReviewState summarizes structured plan previews for the approval UI", async () => {
+test("buildApprovalReviewState prefers stored structured steps for the approval UI", async () => {
+  const { parseTaggedPlanContract } = await import("./output-contract");
   const { buildApprovalReviewState } = await import("./workflow");
+
+  const conflictingPlanText = buildConflictingRichPlanText();
+  const parsed = parseTaggedPlanContract(conflictingPlanText);
+  expect(parsed.ok).toBe(true);
+  if (!parsed.ok) {
+    return;
+  }
 
   expect(
     buildApprovalReviewState(
-      [
-        "1) Task understanding",
-        "2) Codebase findings",
-        "3) Approach options / trade-offs",
-        "4) Open questions / assumptions",
-        "5) Plan:",
-        "1. Add a regression test for prompt leakage",
-        "   - target files/components: src/index.test.ts",
-        "   - validation method: bun test ./src/index.test.ts",
-        "2. Update the approval action UI to show a compact summary",
-        "   - target files/components:",
-        "     - src/plan-action-ui.ts",
-        "     - src/workflow.ts",
-        "     - review summary preview",
-        "   - validation method:",
-        "     - bun test ./src/index.test.ts",
-        "     - bun run typecheck",
-        "   - risks and rollback notes: revert the preview layout if it gets noisy",
-        "3. Update the todo widget labels to stay compact",
-        "   - validation method: bun test ./src/index.test.ts",
-        "4. Document the richer approval summary",
-        "   - target files/components: README.md",
-        "   - validation method: review the docs copy",
-        "6) Ready to execute when approved.",
-      ].join("\n"),
+      conflictingPlanText,
       {
         critiqueSummary: "ready",
         wasRevised: true,
       },
+      parsed.value,
     ),
   ).toEqual({
-    stepCount: 4,
+    stepCount: 2,
     previewSteps: [
       {
         step: 1,
         label: "A regression test for prompt leakage",
-        targetsSummary: "src/index.test.ts",
-        validationSummary: "bun test ./src/index.test.ts",
+        targetsSummary: "src/index.test.ts, src/workflow.ts",
+        validationSummary: "bun test ./src/index.test.ts, bun run typecheck",
       },
       {
         step: 2,
         label: "Approval action UI to show a compact summary",
-        targetsSummary: "src/plan-action-ui.ts, src/workflow.ts (+1 more)",
-        validationSummary: "bun test ./src/index.test.ts, bun run typecheck",
-      },
-      {
-        step: 3,
-        label: "Todo widget labels to stay compact",
-        targetsSummary: undefined,
+        targetsSummary: "src/plan-action-ui.ts",
         validationSummary: "bun test ./src/index.test.ts",
       },
     ],
     critiqueSummary: "ready",
-    badges: ["compact steps", "validation noted", "rollback noted", "assumptions listed"],
+    badges: ["compact steps", "validation noted", "assumptions listed"],
     wasRevised: true,
   });
 });
@@ -3151,7 +3164,7 @@ test("SKIPPED markers advance execution and render distinctly in progress UI", a
   });
 });
 
-test("execution prompts rehydrate structured step details and DONE markers advance", async () => {
+test("execution prompts use stored structured step details and DONE markers advance", async () => {
   const harness = createPlanExtensionHarness({
     hasUI: true,
     customSelection: { cancelled: false, action: "approve" },
@@ -3162,7 +3175,7 @@ test("execution prompts rehydrate structured step details and DONE markers advan
     messages: [
       {
         role: "assistant",
-        content: [{ type: "text", text: buildRichPlanText() }],
+        content: [{ type: "text", text: buildConflictingRichPlanText() }],
       },
     ],
   });
@@ -3184,6 +3197,8 @@ test("execution prompts rehydrate structured step details and DONE markers advan
   expect(harness.sentUserMessages[0]).toContain(
     "Risks and rollback notes: revert the structured execution prompt if agent guidance regresses",
   );
+  expect(harness.sentUserMessages[0]).not.toContain("Markdown says the wrong step name");
+  expect(harness.sentUserMessages[0]).not.toContain("wrong/path.ts");
 
   await harness.emit("turn_end", {
     message: {
@@ -3198,6 +3213,8 @@ test("execution prompts rehydrate structured step details and DONE markers advan
   );
   expect(harness.sentUserMessages[1]).toContain("Target files/components: src/plan-action-ui.ts");
   expect(harness.sentUserMessages[1]).toContain("Validation method: bun test ./src/index.test.ts");
+  expect(harness.sentUserMessages[1]).not.toContain("Markdown says the wrong second step");
+  expect(harness.sentUserMessages[1]).not.toContain("wrong/second.ts");
   expect(harness.uiStub.statuses.get("plan")).toBe("📋 1/2");
   expect(harness.uiStub.widgets.get("plan-todos")).toEqual([
     "☑ A regression test for prompt leakage",
@@ -3212,7 +3229,7 @@ test("execution prompts rehydrate structured step details and DONE markers advan
   });
 });
 
-test("todos output and widget stay compact for metadata-rich plans", async () => {
+test("todos output and widget stay compact while using stored structured plan data", async () => {
   const harness = createPlanExtensionHarness({
     hasUI: true,
     customSelection: { cancelled: false, action: "approve" },
@@ -3223,7 +3240,7 @@ test("todos output and widget stay compact for metadata-rich plans", async () =>
     messages: [
       {
         role: "assistant",
-        content: [{ type: "text", text: buildRichPlanText() }],
+        content: [{ type: "text", text: buildConflictingRichPlanText() }],
       },
     ],
   });
@@ -3239,6 +3256,7 @@ test("todos output and widget stay compact for metadata-rich plans", async () =>
   ]);
   expect(initialWidgetLines.join("\n")).not.toContain("src/index.test.ts");
   expect(initialWidgetLines.join("\n")).not.toContain("bun run typecheck");
+  expect(initialWidgetLines.join("\n")).not.toContain("Markdown says the wrong step name");
 
   await harness.runCommand("todos");
   expect(harness.uiStub.notifications.at(-1)).toEqual({
@@ -3248,6 +3266,7 @@ test("todos output and widget stay compact for metadata-rich plans", async () =>
   });
   expect(harness.uiStub.notifications.at(-1)?.message).not.toContain("src/index.test.ts");
   expect(harness.uiStub.notifications.at(-1)?.message).not.toContain("Validation method");
+  expect(harness.uiStub.notifications.at(-1)?.message).not.toContain("Markdown says the wrong step name");
 
   await harness.emit("turn_end", {
     message: {
@@ -3263,6 +3282,7 @@ test("todos output and widget stay compact for metadata-rich plans", async () =>
   ]);
   expect(updatedWidgetLines.join("\n")).not.toContain("src/index.test.ts");
   expect(updatedWidgetLines.join("\n")).not.toContain("bun run typecheck");
+  expect(updatedWidgetLines.join("\n")).not.toContain("Markdown says the wrong second step");
 
   await harness.runCommand("todos");
   expect(harness.uiStub.notifications.at(-1)).toEqual({
@@ -3272,6 +3292,7 @@ test("todos output and widget stay compact for metadata-rich plans", async () =>
   });
   expect(harness.uiStub.notifications.at(-1)?.message).not.toContain("src/index.test.ts");
   expect(harness.uiStub.notifications.at(-1)?.message).not.toContain("Validation method");
+  expect(harness.uiStub.notifications.at(-1)?.message).not.toContain("Markdown says the wrong second step");
 });
 
 test("todo widget hides older items once the current step would scroll off-screen", async () => {
