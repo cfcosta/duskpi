@@ -30,16 +30,13 @@ import {
   cleanStepText,
   detectAutoPlanOutputComplianceIssues,
   extractDoneSteps,
-  extractPlanSteps,
   extractSkippedSteps,
-  extractTodoItems,
   isSafeReadOnlyCommand,
   markTodoItemsCompleted,
   markTodoItemsSkipped,
   normalizeArg,
   parseCritiqueVerdict,
   type AutoPlanOutputComplianceIssue,
-  type PlanStep,
   type TodoItem,
 } from "./utils";
 
@@ -283,12 +280,7 @@ class AutoPlanSubtaskWorkflow extends GuidedWorkflow {
         }
 
         const structuredPlan = parseTaggedPlanContract(lastAssistantText);
-        if (!structuredPlan.ok) {
-          return this.handleUnparseablePlanningDraft(lastAssistantText, ctx);
-        }
-
-        const extracted = extractTodoItems(lastAssistantText);
-        if (extracted.length === 0) {
+        if (!structuredPlan.ok || structuredPlan.value.steps.length === 0) {
           return this.handleUnparseablePlanningDraft(lastAssistantText, ctx);
         }
         this.parseRecoveryAttempted = false;
@@ -563,7 +555,8 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       },
       execution: {
         extractItems({ planText }) {
-          return extractTodoItems(planText).map((item) => ({ ...item }));
+          const structuredPlan = parseTaggedPlanContract(planText);
+          return structuredPlan.ok ? toTodoItemsFromStructuredPlan(structuredPlan.value) : [];
         },
         buildExecutionPrompt({ currentStep, note, planText }) {
           return self.buildExecutionPrompt(currentStep, planText, note);
@@ -1393,7 +1386,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
 
   private buildTopLevelExecutionItems(planText: string): TodoItem[] {
     const structuredPlan = resolveStructuredPlan(planText, this.latestStructuredPlan);
-    return structuredPlan ? toTodoItemsFromStructuredPlan(structuredPlan) : extractTodoItems(planText);
+    return structuredPlan ? toTodoItemsFromStructuredPlan(structuredPlan) : [];
   }
 
   private syncLocalLifecycleStateFromGuided(): void {
@@ -1969,7 +1962,6 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     const currentDetails = describeExecutionStep(
       currentStep,
       resolveStructuredPlan(this.getLatestPlanText(), this.latestStructuredPlan),
-      this.getLatestPlanText(),
     );
     const backlog = remaining.map((item) => `${item.step}. ${item.text}`).join("\n");
     return [
@@ -2060,7 +2052,6 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     const stepDetails = describeExecutionStep(
       currentStep,
       resolveStructuredPlan(planText, this.latestStructuredPlan),
-      planText,
     );
     const autoPlanInnerExecutionActive =
       this.autoPlanMode === "executing" &&
@@ -2354,7 +2345,7 @@ function extractCritiqueSummary(text: string): string | undefined {
   return undefined;
 }
 
-function toPlanStep(step: StructuredPlanOutput["steps"][number]): PlanStep {
+function toPlanStep(step: StructuredPlanOutput["steps"][number]): StructuredStepView {
   return {
     step: step.step,
     objective: step.objective,
@@ -2401,7 +2392,16 @@ function resolveStructuredPlan(
   return parsed.ok ? parsed.value : undefined;
 }
 
-function buildReviewBadges(planText: string, steps: PlanStep[]): string[] {
+interface StructuredStepView {
+  step: number;
+  objective: string;
+  label: string;
+  targets: string[];
+  validation: string[];
+  risks: string[];
+}
+
+function buildReviewBadges(planText: string, steps: StructuredStepView[]): string[] {
   const badges: string[] = [];
   const normalized = planText.toLowerCase();
 
@@ -2433,7 +2433,7 @@ function summarizePreviewValues(values: string[], limit = 2): string | undefined
   return remaining > 0 ? `${summary} (+${remaining} more)` : summary;
 }
 
-function buildApprovalPreviewStep(step: PlanStep): PlanApprovalPreviewStep {
+function buildApprovalPreviewStep(step: StructuredStepView): PlanApprovalPreviewStep {
   return {
     step: step.step,
     label: step.label,
@@ -2447,7 +2447,7 @@ export function buildApprovalReviewState(
   options: { critiqueSummary?: string; wasRevised?: boolean } = {},
   structuredPlan?: StructuredPlanOutput | null,
 ): ApprovalReviewState {
-  const steps = structuredPlan?.steps.map(toPlanStep) ?? extractPlanSteps(planText);
+  const steps = resolveStructuredPlan(planText, structuredPlan)?.steps.map(toPlanStep) ?? [];
 
   return {
     stepCount: steps.length,
@@ -2472,7 +2472,6 @@ function summarizeExecutionValues(values: string[]): string | undefined {
 function describeExecutionStep(
   currentStep: Pick<GuidedWorkflowExecutionItem, "step" | "text">,
   structuredPlan?: StructuredPlanOutput,
-  planText?: string,
 ): {
   objective: string;
   targets?: string;
@@ -2480,27 +2479,12 @@ function describeExecutionStep(
   risks?: string;
 } {
   const structuredStep = structuredPlan?.steps.find((step) => step.step === currentStep.step);
-  const fallbackStep = !structuredStep && planText
-    ? extractPlanSteps(planText).find((step) => step.step === currentStep.step)
-    : undefined;
 
   return {
-    objective: structuredStep?.objective ?? fallbackStep?.objective ?? currentStep.text,
-    targets: structuredStep
-      ? summarizeExecutionValues(structuredStep.targets)
-      : fallbackStep
-        ? summarizeExecutionValues(fallbackStep.targets)
-        : undefined,
-    validation: structuredStep
-      ? summarizeExecutionValues(structuredStep.validation)
-      : fallbackStep
-        ? summarizeExecutionValues(fallbackStep.validation)
-        : undefined,
-    risks: structuredStep
-      ? summarizeExecutionValues(structuredStep.risks)
-      : fallbackStep
-        ? summarizeExecutionValues(fallbackStep.risks)
-        : undefined,
+    objective: structuredStep?.objective ?? currentStep.text,
+    targets: structuredStep ? summarizeExecutionValues(structuredStep.targets) : undefined,
+    validation: structuredStep ? summarizeExecutionValues(structuredStep.validation) : undefined,
+    risks: structuredStep ? summarizeExecutionValues(structuredStep.risks) : undefined,
   };
 }
 
@@ -2543,73 +2527,16 @@ function recoverImplicitlyIndentedSubtaskItems(
   planText: string,
   existingItems: GuidedWorkflowExecutionItem[],
 ): TodoItem[] {
-  const existingSteps = new Set(existingItems.map((item) => item.step));
-  const recoveredItems = existingItems.map((item) => ({
-    step: item.step,
-    text: item.text,
-    completed: item.completed,
-  }));
-  const lines = planText.split(/\r?\n/);
-  const planHeaderIndex = lines.findIndex((line) => /^(?:\d+[.)]\s*)?Plan:\s*$/i.test(line.trim()));
-  if (planHeaderIndex === -1) {
-    return recoveredItems;
+  const structuredPlan = parseTaggedPlanContract(planText);
+  if (!structuredPlan.ok) {
+    return existingItems.map((item) => ({
+      step: item.step,
+      text: item.text,
+      completed: item.completed,
+    }));
   }
 
-  let firstStepIndent: number | undefined;
-  let lastSeenStep = 0;
-  let previousLineBlank = false;
-
-  for (const line of lines.slice(planHeaderIndex + 1)) {
-    const trimmed = line.trim();
-    if (trimmed.length === 0) {
-      previousLineBlank = true;
-      continue;
-    }
-
-    if (/^\d+[.)]\s+Ready to execute when approved\.?$/i.test(trimmed)) {
-      break;
-    }
-
-    const numberedMatch = line.match(/^(\s*)(\d+)[.)]\s+(.*)$/);
-    if (!numberedMatch) {
-      previousLineBlank = false;
-      continue;
-    }
-
-    const indent = numberedMatch[1]?.length ?? 0;
-    const step = Number(numberedMatch[2]);
-    const text = (numberedMatch[3] ?? "").replace(/\*+/g, "").trim();
-
-    if (firstStepIndent === undefined) {
-      firstStepIndent = indent;
-      lastSeenStep = step;
-      previousLineBlank = false;
-      continue;
-    }
-
-    const looksLikeMetadata =
-      /^(target files\/components|validation method|risks? and rollback notes?|step objective)\b/i.test(
-        text,
-      );
-    const isExecutableStep = text.length > 0 && !looksLikeMetadata;
-    const isRecoveredStep =
-      step > lastSeenStep && (indent === firstStepIndent || previousLineBlank) && isExecutableStep;
-
-    if (isRecoveredStep && !existingSteps.has(step)) {
-      recoveredItems.push({ step, text, completed: false });
-      existingSteps.add(step);
-      lastSeenStep = step;
-      previousLineBlank = false;
-      continue;
-    }
-
-    if (indent === firstStepIndent && step > lastSeenStep) {
-      lastSeenStep = step;
-    }
-    previousLineBlank = false;
-  }
-
-  return recoveredItems.sort(
+  return toTodoItemsFromStructuredPlan(structuredPlan.value).sort(
     (left, right) => left.step - right.step || left.text.localeCompare(right.text),
   );
 }
@@ -2772,7 +2699,6 @@ function buildAutoPlanExecutionComplianceRecoveryPrompt(args: {
   const stepDetails = describeExecutionStep(
     args.currentStep,
     resolveStructuredPlan(args.planText),
-    args.planText,
   );
 
   return [
