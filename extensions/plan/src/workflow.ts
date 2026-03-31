@@ -280,6 +280,11 @@ class AutoPlanSubtaskWorkflow extends GuidedWorkflow {
           return this.handlePolicyViolation(lastAssistantText, complianceIssues, ctx);
         }
 
+        const structuredPlan = parseTaggedPlanContract(lastAssistantText);
+        if (!structuredPlan.ok) {
+          return this.handleUnparseablePlanningDraft(lastAssistantText, ctx);
+        }
+
         const extracted = extractTodoItems(lastAssistantText);
         if (extracted.length === 0) {
           return this.handleUnparseablePlanningDraft(lastAssistantText, ctx);
@@ -347,7 +352,7 @@ class AutoPlanSubtaskWorkflow extends GuidedWorkflow {
       notify(
         this.pi,
         ctx,
-        "Autoplan couldn't extract subtask steps. Asking Pi to restate the subtask plan with an explicit Plan: section.",
+        "Autoplan couldn't validate the tagged JSON subtask plan contract. Asking Pi to restate the subtask plan with the required markdown + JSON format.",
         "warning",
       );
       await super.handleSessionShutdown({ reason: "autoplan-subtask-parse-retry" }, ctx);
@@ -355,7 +360,12 @@ class AutoPlanSubtaskWorkflow extends GuidedWorkflow {
     }
 
     this.parseRecoveryAttempted = false;
-    notify(this.pi, ctx, "Autoplan couldn't extract subtask steps after one retry.", "error");
+    notify(
+      this.pi,
+      ctx,
+      "Autoplan couldn't validate the tagged JSON subtask plan contract after one retry.",
+      "error",
+    );
     await super.handleSessionShutdown({ reason: "autoplan-subtask-parse-failed" }, ctx);
     return { kind: "recoverable_error", reason: "autoplan_subtask_unparseable" };
   }
@@ -856,6 +866,12 @@ export class PiPlanWorkflow extends GuidedWorkflow {
         await this.stopAutoPlan(
           ctx,
           "Autoplan subtask planning kept asking for user input or approval after one retry. Stopping autoplan.",
+          "error",
+        );
+      } else if (result.reason === "autoplan_subtask_unparseable") {
+        await this.stopAutoPlan(
+          ctx,
+          "Autoplan subtask planning kept returning invalid tagged JSON after one retry. Stopping autoplan.",
           "error",
         );
       }

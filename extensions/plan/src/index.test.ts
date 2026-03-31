@@ -444,17 +444,29 @@ function buildUnparseablePlanText(): string {
 }
 
 function buildPartiallyIndentedSubtaskPlanText(): string {
-  return [
-    "1) Task understanding",
-    "2) Codebase findings",
-    "3) Approach options / trade-offs",
-    "4) Open questions / assumptions",
-    "5) Plan:",
-    "1. Add a regression test for prompt leakage",
-    "",
-    "   2. Update the approval action UI to show a compact summary",
-    "6) Ready to execute when approved.",
-  ].join("\n");
+  return appendTaggedPlanContract(
+    [
+      "1) Task understanding",
+      "2) Codebase findings",
+      "3) Approach options / trade-offs",
+      "4) Open questions / assumptions",
+      "5) Plan:",
+      "1. Add a regression test for prompt leakage",
+      "",
+      "   2. Update the approval action UI to show a compact summary",
+      "6) Ready to execute when approved.",
+    ],
+    [
+      {
+        step: 1,
+        objective: "Add a regression test for prompt leakage",
+      },
+      {
+        step: 2,
+        objective: "Update the approval action UI to show a compact summary",
+      },
+    ],
+  );
 }
 
 function buildNonCompliantAutoPlanSubtaskText(): string {
@@ -1509,6 +1521,179 @@ test("/autoplan auto-plans each approved subtask without asking new questions", 
   expect(harness.sentUserMessages[4]).toContain(
     "Current approved high-level task 2: Finalize the rust module wiring",
   );
+});
+
+test("/autoplan subtask planning accepts a valid tagged JSON plan and advances to inner execution", async () => {
+  const harness = createPlanExtensionHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+  });
+
+  await harness.runCommand("autoplan", "Rewrite this in Rust");
+
+  const topLevelPrompt = harness.sentUserMessages[0] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: topLevelPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  const subtaskPrompt = harness.sentUserMessages[1] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: subtaskPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  expect(harness.sentUserMessages).toHaveLength(3);
+  expect(harness.sentUserMessages[2]).toContain(
+    "Complete only step 1: Add a regression test for prompt leakage",
+  );
+});
+
+test("/autoplan retries subtask planning once when the tagged JSON block is missing", async () => {
+  const harness = createPlanExtensionHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+  });
+
+  await harness.runCommand("autoplan", "Rewrite this in Rust");
+
+  const topLevelPrompt = harness.sentUserMessages[0] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: topLevelPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  const subtaskPrompt = harness.sentUserMessages[1] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: subtaskPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildMarkdownOnlyPlanText() }],
+      },
+    ],
+  });
+
+  expect(harness.sentUserMessages).toHaveLength(3);
+  expect(harness.sentUserMessages[2]).toContain(
+    "The previous response did not include a valid tagged JSON planning contract.",
+  );
+  expect(harness.sentUserMessages[2]).toContain("```pi-plan-json");
+  expect(harness.uiStub.notifications).toContainEqual({
+    message:
+      "Autoplan couldn't validate the tagged JSON subtask plan contract. Asking Pi to restate the subtask plan with the required markdown + JSON format.",
+    level: "warning",
+  });
+});
+
+test("/autoplan stops after repeated invalid tagged JSON subtask planning output", async () => {
+  const harness = createPlanExtensionHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+  });
+
+  await harness.runCommand("autoplan", "Rewrite this in Rust");
+
+  const topLevelPrompt = harness.sentUserMessages[0] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: topLevelPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  const subtaskPrompt = harness.sentUserMessages[1] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: subtaskPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildMalformedTaggedPlanText() }],
+      },
+    ],
+  });
+
+  const retrySubtaskPrompt = harness.sentUserMessages[2] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: retrySubtaskPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildMalformedTaggedPlanText() }],
+      },
+    ],
+  });
+
+  expect(harness.uiStub.notifications).toContainEqual({
+    message: "Autoplan couldn't validate the tagged JSON subtask plan contract after one retry.",
+    level: "error",
+  });
+  expect(harness.uiStub.notifications).toContainEqual({
+    message:
+      "Autoplan subtask planning kept returning invalid tagged JSON after one retry. Stopping autoplan.",
+    level: "error",
+  });
+
+  await harness.runCommand("autoplan", "status");
+  expect(harness.uiStub.notifications).toContainEqual({
+    message: "Autoplan: idle",
+    level: "info",
+  });
 });
 
 test("/autoplan retries non-compliant inner subtask plans once and then stops on a repeated violation", async () => {
