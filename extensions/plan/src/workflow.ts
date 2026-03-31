@@ -22,7 +22,9 @@ import {
 import {
   PLAN_OUTPUT_JSON_BLOCK_TAG,
   parseTaggedPlanContract,
+  parseTaggedReviewContract,
   type StructuredPlanOutput,
+  type StructuredReviewOutput,
 } from "./output-contract";
 import {
   cleanStepText,
@@ -1683,7 +1685,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     if (reviewOutcome === "retry") {
       return this.retryAutoPlanReview(
         ctx,
-        "Autoplan couldn't extract a remaining task list. Asking for a stricter restatement.",
+        "Autoplan couldn't validate the tagged JSON review contract. Asking for a stricter restatement.",
         buildAutoPlanReviewParseRecoveryPrompt(lastAssistantText),
         { parseRecovery: true },
       );
@@ -1705,22 +1707,23 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     reviewText: string,
     ctx: ExtensionContext,
   ): AutoPlanReviewOutcome {
-    const remainingItems = extractTodoItems(reviewText);
     const hasTrackedBacklog = Boolean(this.getCurrentOuterExecutionItem());
-    if (remainingItems.length === 0) {
-      if (isAutoPlanCompleteResponse(reviewText)) {
-        if (hasTrackedBacklog) {
-          notify(
-            this.pi,
-            ctx,
-            "Autoplan review reported completion, but tracked backlog still remains. Continuing with the existing tracked tasks.",
-            "warning",
-          );
-          return "continue";
-        }
-        return "complete";
-      }
 
+    if (isAutoPlanCompleteResponse(reviewText)) {
+      if (hasTrackedBacklog) {
+        notify(
+          this.pi,
+          ctx,
+          "Autoplan review reported completion, but tracked backlog still remains. Continuing with the existing tracked tasks.",
+          "warning",
+        );
+        return "continue";
+      }
+      return "complete";
+    }
+
+    const structuredReview = parseTaggedReviewContract(reviewText);
+    if (!structuredReview.ok) {
       if (!this.autoPlanReview.parseRecoveryAttempted) {
         return "retry";
       }
@@ -1734,6 +1737,20 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       return hasTrackedBacklog ? "continue" : "complete";
     }
 
+    if (structuredReview.value.status === "complete") {
+      if (hasTrackedBacklog) {
+        notify(
+          this.pi,
+          ctx,
+          "Autoplan review reported completion, but tracked backlog still remains. Continuing with the existing tracked tasks.",
+          "warning",
+        );
+        return "continue";
+      }
+      return "complete";
+    }
+
+    const remainingItems = toTodoItemsFromStructuredReview(structuredReview.value);
     this.replaceOuterExecutionBacklog(remainingItems);
     return this.getCurrentOuterExecutionItem() ? "continue" : "complete";
   }
@@ -2350,6 +2367,18 @@ function toPlanStep(step: StructuredPlanOutput["steps"][number]): PlanStep {
 
 function toTodoItemsFromStructuredPlan(structuredPlan: StructuredPlanOutput): TodoItem[] {
   return structuredPlan.steps.map((step) => ({
+    step: step.step,
+    text: cleanStepText(step.objective),
+    completed: false,
+  }));
+}
+
+function toTodoItemsFromStructuredReview(structuredReview: StructuredReviewOutput): TodoItem[] {
+  if (structuredReview.status !== "continue") {
+    return [];
+  }
+
+  return structuredReview.steps.map((step) => ({
     step: step.step,
     text: cleanStepText(step.objective),
     completed: false,

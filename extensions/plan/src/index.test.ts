@@ -400,7 +400,48 @@ function buildLongPlanText(stepCount = 8): string {
   );
 }
 
+function buildTaggedReviewContinueText(
+  steps: Array<{
+    step: number;
+    objective: string;
+    targets?: string[];
+    validation?: string[];
+    risks?: string[];
+  }>,
+  markdownLines?: string[],
+): string {
+  return [
+    ...(markdownLines ?? [
+      "1) Progress summary",
+      "2) Remaining gaps",
+      "3) Plan:",
+      ...steps.map((step) => `${step.step}. ${step.objective}`),
+      `${steps.length + 2}) Continue autoplan.`,
+    ]),
+    "",
+    buildTaggedJsonBlock({
+      version: 1,
+      kind: "review",
+      status: "continue",
+      steps: steps.map((step) => ({
+        step: step.step,
+        objective: step.objective,
+        targets: step.targets ?? [],
+        validation: step.validation ?? [],
+        risks: step.risks ?? [],
+      })),
+    }),
+  ].join("\n");
+}
+
 function buildAutoPlanReviewText(): string {
+  return buildTaggedReviewContinueText([
+    { step: 1, objective: "Finalize the rust module wiring" },
+    { step: 2, objective: "Remove the legacy implementation path" },
+  ]);
+}
+
+function buildAutoPlanReviewTextWithoutTaggedBlock(): string {
   return [
     "1) Progress summary",
     "2) Remaining gaps",
@@ -409,6 +450,12 @@ function buildAutoPlanReviewText(): string {
     "2. Remove the legacy implementation path",
     "4) Continue autoplan.",
   ].join("\n");
+}
+
+function buildMalformedTaggedReviewText(): string {
+  return [buildAutoPlanReviewTextWithoutTaggedBlock(), "", "```pi-plan-json", '{"version": 1,', "```"].join(
+    "\n",
+  );
 }
 
 function buildAutoPlanCompleteText(): string {
@@ -1219,7 +1266,7 @@ test("top-level /autoplan continue and regenerate keep ask_user_question availab
   ).resolves.toBeUndefined();
 });
 
-test("/autoplan falls back to the existing backlog when progress review is unparseable", async () => {
+test("/autoplan falls back to the existing backlog when progress review keeps returning an invalid tagged JSON contract", async () => {
   const harness = createPlanExtensionHarness({
     hasUI: true,
     customSelection: { cancelled: false, action: "approve" },
@@ -1285,7 +1332,7 @@ test("/autoplan falls back to the existing backlog when progress review is unpar
       },
       {
         role: "assistant",
-        content: [{ type: "text", text: buildUnparseablePlanText() }],
+        content: [{ type: "text", text: buildAutoPlanReviewTextWithoutTaggedBlock() }],
       },
     ],
   });
@@ -1300,7 +1347,7 @@ test("/autoplan falls back to the existing backlog when progress review is unpar
       },
       {
         role: "assistant",
-        content: [{ type: "text", text: buildUnparseablePlanText() }],
+        content: [{ type: "text", text: buildMalformedTaggedReviewText() }],
       },
     ],
   });
@@ -1309,7 +1356,7 @@ test("/autoplan falls back to the existing backlog when progress review is unpar
     "Current approved high-level task 2: Approval action UI to show a compact summary",
   );
   expect(harness.uiStub.notifications).toContainEqual({
-    message: "Autoplan couldn't extract a remaining task list. Asking for a stricter restatement.",
+    message: "Autoplan couldn't validate the tagged JSON review contract. Asking for a stricter restatement.",
     level: "warning",
   });
   expect(harness.uiStub.notifications).toContainEqual({
