@@ -19,7 +19,11 @@ import {
   type PlanApprovalDetails,
   type PlanApprovalPreviewStep,
 } from "./plan-action-ui";
-import { PLAN_OUTPUT_JSON_BLOCK_TAG } from "./output-contract";
+import {
+  PLAN_OUTPUT_JSON_BLOCK_TAG,
+  parseTaggedPlanContract,
+  type StructuredPlanOutput,
+} from "./output-contract";
 import {
   detectAutoPlanOutputComplianceIssues,
   extractDoneSteps,
@@ -387,6 +391,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   private restoreTools: string[] | null = null;
   private todoItems: TodoItem[] = [];
   private latestPlanDraft = "";
+  private latestStructuredPlan: StructuredPlanOutput | null = null;
   private approvalReview: ApprovalReviewState | null = null;
   private latestCritiqueSummary = "";
   private planWasRevised = false;
@@ -1138,7 +1143,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       notify(
         this.pi,
         ctx,
-        "Couldn't extract plan steps. Asking Pi to restate the same draft with an explicit Plan: section.",
+        "Couldn't validate the tagged JSON plan contract. Asking Pi to restate the same draft with the required markdown + JSON format.",
         "warning",
       );
       return this.startPlanningRequest(this.buildParseRecoveryPrompt(draftText), ctx);
@@ -1149,7 +1154,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     notify(
       this.pi,
       ctx,
-      "Couldn't extract plan steps after one automatic retry. Still in read-only plan mode.",
+      "Couldn't validate the tagged JSON plan contract after one automatic retry. Still in read-only plan mode.",
       "error",
     );
     return { kind: "ok" };
@@ -1251,6 +1256,11 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   }
 
   private capturePlanDraft(planText: string, ctx: ExtensionContext): boolean {
+    const structuredPlan = parseTaggedPlanContract(planText);
+    if (!structuredPlan.ok) {
+      return false;
+    }
+
     const extracted = extractTodoItems(planText);
     if (extracted.length === 0) {
       return false;
@@ -1258,6 +1268,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
 
     this.resetParseRecoveryState();
     this.latestPlanDraft = planText;
+    this.latestStructuredPlan = structuredPlan.value;
     this.todoItems = extracted;
     this.approvalReview = buildApprovalReviewState(planText, {
       critiqueSummary: this.latestCritiqueSummary || undefined,
@@ -1380,6 +1391,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
 
   private resetPlanningDraft(): void {
     this.latestPlanDraft = "";
+    this.latestStructuredPlan = null;
     this.resetApprovalReview();
     this.resetParseRecoveryState();
   }

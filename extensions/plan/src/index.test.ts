@@ -253,43 +253,99 @@ function createDirectWorkflowHarness(options: HarnessOptions = {}) {
   };
 }
 
-function buildPlanText(): string {
+function appendTaggedPlanContract(
+  markdownLines: string[],
+  steps: Array<{
+    step: number;
+    objective: string;
+    targets?: string[];
+    validation?: string[];
+    risks?: string[];
+  }>,
+): string {
   return [
-    "1) Task understanding",
-    "2) Codebase findings",
-    "3) Approach options / trade-offs",
-    "4) Open questions / assumptions",
-    "5) Plan:",
-    "1. Add a regression test for prompt leakage",
-    "2. Update the approval action UI to show a compact summary",
-    "6) Ready to execute when approved.",
+    ...markdownLines,
+    "",
+    buildTaggedJsonBlock({
+      version: 1,
+      kind: "plan",
+      steps: steps.map((step) => ({
+        step: step.step,
+        objective: step.objective,
+        targets: step.targets ?? [],
+        validation: step.validation ?? [],
+        risks: step.risks ?? [],
+      })),
+    }),
   ].join("\n");
+}
+
+function buildPlanText(): string {
+  return appendTaggedPlanContract(
+    [
+      "1) Task understanding",
+      "2) Codebase findings",
+      "3) Approach options / trade-offs",
+      "4) Open questions / assumptions",
+      "5) Plan:",
+      "1. Add a regression test for prompt leakage",
+      "2. Update the approval action UI to show a compact summary",
+      "6) Ready to execute when approved.",
+    ],
+    [
+      {
+        step: 1,
+        objective: "Add a regression test for prompt leakage",
+      },
+      {
+        step: 2,
+        objective: "Update the approval action UI to show a compact summary",
+      },
+    ],
+  );
 }
 
 function buildRichPlanText(): string {
-  return [
-    "1) Task understanding",
-    "2) Codebase findings",
-    "3) Approach options / trade-offs",
-    "4) Open questions / assumptions",
-    "5) Plan:",
-    "1. Add a regression test for prompt leakage",
-    "   - target files/components:",
-    "     - src/index.test.ts",
-    "     - src/workflow.ts",
-    "   - validation method:",
-    "     - bun test ./src/index.test.ts",
-    "     - bun run typecheck",
-    "   - risks and rollback notes: revert the structured execution prompt if agent guidance regresses",
-    "2. Update the approval action UI to show a compact summary",
-    "   - target files/components: src/plan-action-ui.ts",
-    "   - validation method: bun test ./src/index.test.ts",
-    "6) Ready to execute when approved.",
-  ].join("\n");
+  return appendTaggedPlanContract(
+    [
+      "1) Task understanding",
+      "2) Codebase findings",
+      "3) Approach options / trade-offs",
+      "4) Open questions / assumptions",
+      "5) Plan:",
+      "1. Add a regression test for prompt leakage",
+      "   - target files/components:",
+      "     - src/index.test.ts",
+      "     - src/workflow.ts",
+      "   - validation method:",
+      "     - bun test ./src/index.test.ts",
+      "     - bun run typecheck",
+      "   - risks and rollback notes: revert the structured execution prompt if agent guidance regresses",
+      "2. Update the approval action UI to show a compact summary",
+      "   - target files/components: src/plan-action-ui.ts",
+      "   - validation method: bun test ./src/index.test.ts",
+      "6) Ready to execute when approved.",
+    ],
+    [
+      {
+        step: 1,
+        objective: "Add a regression test for prompt leakage",
+        targets: ["src/index.test.ts", "src/workflow.ts"],
+        validation: ["bun test ./src/index.test.ts", "bun run typecheck"],
+        risks: ["revert the structured execution prompt if agent guidance regresses"],
+      },
+      {
+        step: 2,
+        objective: "Update the approval action UI to show a compact summary",
+        targets: ["src/plan-action-ui.ts"],
+        validation: ["bun test ./src/index.test.ts"],
+      },
+    ],
+  );
 }
 
 function buildLongPlanText(stepCount = 8): string {
-  return [
+  const markdownLines = [
     "1) Task understanding",
     "2) Codebase findings",
     "3) Approach options / trade-offs",
@@ -299,7 +355,15 @@ function buildLongPlanText(stepCount = 8): string {
       return `${index + 1}. Task ${index + 1} for the scrolling todo widget`;
     }),
     "6) Ready to execute when approved.",
-  ].join("\n");
+  ];
+
+  return appendTaggedPlanContract(
+    markdownLines,
+    Array.from({ length: stepCount }, (_value, index) => ({
+      step: index + 1,
+      objective: `Task ${index + 1} for the scrolling todo widget`,
+    })),
+  );
 }
 
 function buildAutoPlanReviewText(): string {
@@ -315,6 +379,23 @@ function buildAutoPlanReviewText(): string {
 
 function buildAutoPlanCompleteText(): string {
   return "Status: COMPLETE";
+}
+
+function buildMarkdownOnlyPlanText(): string {
+  return [
+    "1) Task understanding",
+    "2) Codebase findings",
+    "3) Approach options / trade-offs",
+    "4) Open questions / assumptions",
+    "5) Plan:",
+    "1. Add a regression test for prompt leakage",
+    "2. Update the approval action UI to show a compact summary",
+    "6) Ready to execute when approved.",
+  ].join("\n");
+}
+
+function buildMalformedTaggedPlanText(): string {
+  return [buildMarkdownOnlyPlanText(), "", "```pi-plan-json", '{"version": 1,', "```"].join("\n");
 }
 
 function buildUnparseablePlanText(): string {
@@ -2103,6 +2184,105 @@ test("before_agent_start uses the tagged JSON contract for autoplan reviews", as
   );
 });
 
+test("top-level /plan opens approval only when the tagged JSON plan contract is valid", async () => {
+  const harness = createPlanExtensionHarness({ hasUI: true });
+
+  await harness.runCommand("plan", "Investigate flaky prompt extraction");
+
+  const planningPrompt = harness.sentUserMessages[0] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: planningPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  expect(harness.uiStub.customCalls).toHaveLength(1);
+});
+
+test("top-level /plan with valid markdown but no tagged JSON block triggers a strict restatement", async () => {
+  const harness = createPlanExtensionHarness({ hasUI: true });
+
+  await harness.runCommand("plan", "Investigate flaky prompt extraction");
+
+  const planningPrompt = harness.sentUserMessages[0] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: planningPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildMarkdownOnlyPlanText() }],
+      },
+    ],
+  });
+
+  expect(harness.sentUserMessages).toHaveLength(2);
+  expect(harness.sentUserMessages[1]).toContain("```pi-plan-json");
+  expect(harness.sentMessages).toHaveLength(0);
+  expect(harness.uiStub.customCalls).toHaveLength(0);
+  expect(harness.uiStub.notifications).toContainEqual({
+    message:
+      "Couldn't validate the tagged JSON plan contract. Asking Pi to restate the same draft with the required markdown + JSON format.",
+    level: "warning",
+  });
+});
+
+test("top-level /plan with malformed tagged JSON fails visibly after one retry without opening approval", async () => {
+  const harness = createPlanExtensionHarness({ hasUI: true });
+
+  await harness.runCommand("plan", "Investigate flaky prompt extraction");
+
+  const firstPrompt = harness.sentUserMessages[0] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: firstPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildMalformedTaggedPlanText() }],
+      },
+    ],
+  });
+
+  const retryPrompt = harness.sentUserMessages[1] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: retryPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildMalformedTaggedPlanText() }],
+      },
+    ],
+  });
+
+  expect(harness.sentUserMessages).toHaveLength(2);
+  expect(harness.sentMessages).toHaveLength(0);
+  expect(harness.uiStub.customCalls).toHaveLength(0);
+  expect(harness.uiStub.notifications).toContainEqual({
+    message:
+      "Couldn't validate the tagged JSON plan contract after one automatic retry. Still in read-only plan mode.",
+    level: "error",
+  });
+});
+
 test("cancelling a planning response keeps plan mode ready for steering instead of auto-retrying", async () => {
   const harness = createPlanExtensionHarness({ hasUI: true });
 
@@ -2184,7 +2364,7 @@ test("unparseable planning drafts trigger one automatic retry with a new request
   );
   expect(harness.uiStub.notifications).toContainEqual({
     message:
-      "Couldn't extract plan steps. Asking Pi to restate the same draft with an explicit Plan: section.",
+      "Couldn't validate the tagged JSON plan contract. Asking Pi to restate the same draft with the required markdown + JSON format.",
     level: "warning",
   });
 });
@@ -2238,7 +2418,8 @@ test("a second unparseable planning draft stays read-only and fails visibly with
     "ask_user_question",
   ]);
   expect(harness.uiStub.notifications).toContainEqual({
-    message: "Couldn't extract plan steps after one automatic retry. Still in read-only plan mode.",
+    message:
+      "Couldn't validate the tagged JSON plan contract after one automatic retry. Still in read-only plan mode.",
     level: "error",
   });
 });
@@ -2711,20 +2892,36 @@ test("indented plan output still reaches the approval UI after critique", async 
         content: [
           {
             type: "text",
-            text: [
-              "1) Task understanding",
-              "2) Codebase findings",
-              "3) Approach options / trade-offs",
-              "4) Open questions / assumptions",
-              "5) Plan:",
-              "   1. Add a regression test for prompt leakage",
-              "      - target files/components: src/index.test.ts",
-              "      - validation method: bun test",
-              "   2. Update the approval action UI to show a compact summary",
-              "      - target files/components: src/plan-action-ui.ts",
-              "      - validation method: bun test",
-              "6) Ready to execute when approved.",
-            ].join("\n"),
+            text: appendTaggedPlanContract(
+              [
+                "1) Task understanding",
+                "2) Codebase findings",
+                "3) Approach options / trade-offs",
+                "4) Open questions / assumptions",
+                "5) Plan:",
+                "   1. Add a regression test for prompt leakage",
+                "      - target files/components: src/index.test.ts",
+                "      - validation method: bun test",
+                "   2. Update the approval action UI to show a compact summary",
+                "      - target files/components: src/plan-action-ui.ts",
+                "      - validation method: bun test",
+                "6) Ready to execute when approved.",
+              ],
+              [
+                {
+                  step: 1,
+                  objective: "Add a regression test for prompt leakage",
+                  targets: ["src/index.test.ts"],
+                  validation: ["bun test"],
+                },
+                {
+                  step: 2,
+                  objective: "Update the approval action UI to show a compact summary",
+                  targets: ["src/plan-action-ui.ts"],
+                  validation: ["bun test"],
+                },
+              ],
+            ),
           },
         ],
       },
