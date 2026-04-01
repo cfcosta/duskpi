@@ -165,7 +165,7 @@ In plan mode, the system prompt now follows a Claude Code-style planning flow an
 4. Open questions and assumptions
 5. Plan (step objective, target files or components, validation)
 6. End with: `Ready to execute when approved.`
-7. After the markdown plan, include a fenced tagged JSON block using ````pi-plan-json````.
+7. After the markdown plan, include a fenced tagged JSON block using `pi-plan-json`.
    - Plan payloads must be shaped like:
      - `{ "version": 1, "kind": "plan", "steps": [...] }`
    - Each step must include:

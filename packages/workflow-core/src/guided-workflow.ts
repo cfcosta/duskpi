@@ -459,10 +459,7 @@ export class GuidedWorkflow implements GuidedWorkflowController {
     this.api.sendUserMessage(promptWithRequestId);
   }
 
-  private dispatchExecutionPrompt(
-    prompt: string,
-    delivery: GuidedWorkflowPromptDelivery,
-  ): void {
+  private dispatchExecutionPrompt(prompt: string, delivery: GuidedWorkflowPromptDelivery): void {
     if (delivery === "hidden") {
       this.api.sendMessage(
         {

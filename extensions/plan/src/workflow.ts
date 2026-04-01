@@ -77,14 +77,14 @@ function buildPlanModeBashBlockedReason(command: string): string {
 const PLAN_TAGGED_JSON_CONTRACT_SUMMARY = [
   "After the human-readable markdown plan, include a fenced tagged JSON block.",
   `Use the fence header \`\`\`${PLAN_OUTPUT_JSON_BLOCK_TAG}\` and valid JSON inside it.`,
-  "For planning responses, the JSON must be: { \"version\": 1, \"kind\": \"plan\", \"steps\": [...] }.",
+  'For planning responses, the JSON must be: { "version": 1, "kind": "plan", "steps": [...] }.',
   "Each step object must include: step, objective, targets, validation, and risks.",
   "The response is invalid if the tagged JSON block is missing, malformed, or schema-invalid.",
 ].join("\n");
 
 const REVIEW_TAGGED_JSON_CONTRACT_SUMMARY = [
   `If work remains, after the human-readable markdown review include a fenced \`\`\`${PLAN_OUTPUT_JSON_BLOCK_TAG}\` JSON block.`,
-  "For review continue responses, the JSON must be: { \"version\": 1, \"kind\": \"review\", \"status\": \"continue\", \"steps\": [...] }.",
+  'For review continue responses, the JSON must be: { "version": 1, "kind": "review", "status": "continue", "steps": [...] }.',
   "For review complete responses, reply with exactly Status: COMPLETE and do not include extra output.",
   "The response is invalid if the tagged JSON block is missing, malformed, or schema-invalid when work remains.",
 ].join("\n");
@@ -2696,10 +2696,7 @@ function buildAutoPlanExecutionComplianceRecoveryPrompt(args: {
   issues: AutoPlanOutputComplianceIssue[];
 }): string {
   const issueSummary = formatAutoPlanComplianceIssues(args.issues);
-  const stepDetails = describeExecutionStep(
-    args.currentStep,
-    resolveStructuredPlan(args.planText),
-  );
+  const stepDetails = describeExecutionStep(args.currentStep, resolveStructuredPlan(args.planText));
 
   return [
     "The previous inner execution response violated the post-approval autoplan policy.",

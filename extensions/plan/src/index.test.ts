@@ -453,9 +453,13 @@ function buildAutoPlanReviewTextWithoutTaggedBlock(): string {
 }
 
 function buildMalformedTaggedReviewText(): string {
-  return [buildAutoPlanReviewTextWithoutTaggedBlock(), "", "```pi-plan-json", '{"version": 1,', "```"].join(
-    "\n",
-  );
+  return [
+    buildAutoPlanReviewTextWithoutTaggedBlock(),
+    "",
+    "```pi-plan-json",
+    '{"version": 1,',
+    "```",
+  ].join("\n");
 }
 
 function buildAutoPlanCompleteText(): string {
@@ -889,7 +893,9 @@ test("parseTaggedPlanningContract rejects responses without the tagged JSON bloc
 test("parseTaggedPlanningContract rejects malformed tagged JSON blocks", async () => {
   const { parseTaggedPlanningContract } = await import("./output-contract");
 
-  const result = parseTaggedPlanningContract(["```pi-plan-json", '{"version": 1,', "```"].join("\n"));
+  const result = parseTaggedPlanningContract(
+    ["```pi-plan-json", '{"version": 1,', "```"].join("\n"),
+  );
 
   expect(result.ok).toBe(false);
   if (result.ok) {
@@ -1226,7 +1232,8 @@ test("/autoplan falls back to the existing backlog when progress review keeps re
     "Current approved high-level task 2: Approval action UI to show a compact summary",
   );
   expect(harness.uiStub.notifications).toContainEqual({
-    message: "Autoplan couldn't validate the tagged JSON review contract. Asking for a stricter restatement.",
+    message:
+      "Autoplan couldn't validate the tagged JSON review contract. Asking for a stricter restatement.",
     level: "warning",
   });
   expect(harness.uiStub.notifications).toContainEqual({
@@ -2160,7 +2167,7 @@ test("planning prompt asks Pi to proactively surface change decisions with quest
   );
   expect(harness.sentUserMessages[0]).toContain("```pi-plan-json");
   expect(harness.sentUserMessages[0]).toContain(
-    'The response is invalid if the tagged JSON block is missing, malformed, or schema-invalid.',
+    "The response is invalid if the tagged JSON block is missing, malformed, or schema-invalid.",
   );
 });
 
@@ -2186,7 +2193,7 @@ test("before_agent_start prompt tells plan mode to ask more than one clarifying 
   );
   expect((result as { systemPrompt: string }).systemPrompt).toContain("```pi-plan-json");
   expect((result as { systemPrompt: string }).systemPrompt).toContain(
-    'The response is invalid if the tagged JSON block is missing, malformed, or schema-invalid.',
+    "The response is invalid if the tagged JSON block is missing, malformed, or schema-invalid.",
   );
 });
 
@@ -2225,7 +2232,7 @@ test("before_agent_start uses the tagged JSON contract for autoplan subtask plan
   );
   expect((result as { systemPrompt: string }).systemPrompt).toContain("```pi-plan-json");
   expect((result as { systemPrompt: string }).systemPrompt).toContain(
-    'The response is invalid if the tagged JSON block is missing, malformed, or schema-invalid.',
+    "The response is invalid if the tagged JSON block is missing, malformed, or schema-invalid.",
   );
 });
 
@@ -2295,7 +2302,7 @@ test("before_agent_start uses the tagged JSON contract for autoplan reviews", as
   );
   expect((result as { systemPrompt: string }).systemPrompt).toContain("```pi-plan-json");
   expect((result as { systemPrompt: string }).systemPrompt).toContain(
-    "For review continue responses, the JSON must be: { \"version\": 1, \"kind\": \"review\", \"status\": \"continue\", \"steps\": [...] }.",
+    'For review continue responses, the JSON must be: { "version": 1, "kind": "review", "status": "continue", "steps": [...] }.',
   );
 });
 
@@ -3368,7 +3375,9 @@ test("todos output and widget stay compact while using stored structured plan da
   });
   expect(harness.uiStub.notifications.at(-1)?.message).not.toContain("src/index.test.ts");
   expect(harness.uiStub.notifications.at(-1)?.message).not.toContain("Validation method");
-  expect(harness.uiStub.notifications.at(-1)?.message).not.toContain("Markdown says the wrong step name");
+  expect(harness.uiStub.notifications.at(-1)?.message).not.toContain(
+    "Markdown says the wrong step name",
+  );
 
   await harness.emit("turn_end", {
     message: {
@@ -3394,7 +3403,9 @@ test("todos output and widget stay compact while using stored structured plan da
   });
   expect(harness.uiStub.notifications.at(-1)?.message).not.toContain("src/index.test.ts");
   expect(harness.uiStub.notifications.at(-1)?.message).not.toContain("Validation method");
-  expect(harness.uiStub.notifications.at(-1)?.message).not.toContain("Markdown says the wrong second step");
+  expect(harness.uiStub.notifications.at(-1)?.message).not.toContain(
+    "Markdown says the wrong second step",
+  );
 });
 
 test("todo widget hides older items once the current step would scroll off-screen", async () => {
