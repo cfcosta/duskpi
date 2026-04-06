@@ -182,12 +182,21 @@ In plan mode, the system prompt now follows a Claude Code-style planning flow an
 5. Plan (step objective, target files or components, validation)
 6. End with: `Ready to execute when approved.`
 7. After the markdown plan, include a fenced tagged JSON block using `pi-plan-json`.
+   - Keep the opening ` ```pi-plan-json ` fence and closing ` ``` ` fence unindented on their own lines.
+   - Enum fields must use the exact contract values listed below; do not replace them with prose descriptions.
 
 ### Runtime v2 tagged JSON payloads
 
 The runtime contract is now version 2.
 
 #### Plan payload
+
+Allowed enum values:
+
+- `taskGeometry`: `shared_artifact` | `open_ended_reasoning` | `bounded_delegation`
+- `coordinationPattern`: `linear` | `branch_and_merge` | `isolated_subtasks` | `checkpointed_execution`
+- `steps[].kind`: `inspect` | `implement` | `integrate` | `validate`
+- `checkpoints[].kind`: `checkpoint` | `integration`
 
 ```json
 {

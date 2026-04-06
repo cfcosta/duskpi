@@ -1,21 +1,39 @@
 export const PLAN_OUTPUT_JSON_BLOCK_TAG = "pi-plan-json";
 export const RUNTIME_PLAN_CONTRACT_VERSION = 2;
 
-export type StructuredTaskGeometry =
-  | "shared_artifact"
-  | "open_ended_reasoning"
-  | "bounded_delegation";
+export const STRUCTURED_TASK_GEOMETRY_VALUES = [
+  "shared_artifact",
+  "open_ended_reasoning",
+  "bounded_delegation",
+] as const;
+export type StructuredTaskGeometry = (typeof STRUCTURED_TASK_GEOMETRY_VALUES)[number];
 
-export type StructuredCoordinationPattern =
-  | "linear"
-  | "branch_and_merge"
-  | "isolated_subtasks"
-  | "checkpointed_execution";
+export const STRUCTURED_COORDINATION_PATTERN_VALUES = [
+  "linear",
+  "branch_and_merge",
+  "isolated_subtasks",
+  "checkpointed_execution",
+] as const;
+export type StructuredCoordinationPattern = (typeof STRUCTURED_COORDINATION_PATTERN_VALUES)[number];
 
-export type StructuredPlanStepKind = "inspect" | "implement" | "integrate" | "validate";
-export type StructuredCheckpointKind = "checkpoint" | "integration";
-export type StructuredExecutionResultStatus = "done" | "skipped";
-export type StructuredExecutionResultScope = "plan" | "autoplan";
+export const STRUCTURED_PLAN_STEP_KIND_VALUES = [
+  "inspect",
+  "implement",
+  "integrate",
+  "validate",
+] as const;
+export type StructuredPlanStepKind = (typeof STRUCTURED_PLAN_STEP_KIND_VALUES)[number];
+
+export const STRUCTURED_CHECKPOINT_KIND_VALUES = ["checkpoint", "integration"] as const;
+export type StructuredCheckpointKind = (typeof STRUCTURED_CHECKPOINT_KIND_VALUES)[number];
+
+export const STRUCTURED_EXECUTION_RESULT_STATUS_VALUES = ["done", "skipped"] as const;
+export type StructuredExecutionResultStatus =
+  (typeof STRUCTURED_EXECUTION_RESULT_STATUS_VALUES)[number];
+
+export const STRUCTURED_EXECUTION_RESULT_SCOPE_VALUES = ["plan", "autoplan"] as const;
+export type StructuredExecutionResultScope =
+  (typeof STRUCTURED_EXECUTION_RESULT_SCOPE_VALUES)[number];
 
 export interface StructuredCheckpoint {
   id: string;
@@ -106,33 +124,30 @@ export type PlanningContractParseResult<T extends StructuredTaggedContract> =
 
 type ValidationResult<T> = { ok: true; value: T } | PlanningContractParseError;
 
-const TASK_GEOMETRIES = new Set<StructuredTaskGeometry>([
-  "shared_artifact",
-  "open_ended_reasoning",
-  "bounded_delegation",
-]);
-const COORDINATION_PATTERNS = new Set<StructuredCoordinationPattern>([
-  "linear",
-  "branch_and_merge",
-  "isolated_subtasks",
-  "checkpointed_execution",
-]);
-const STEP_KINDS = new Set<StructuredPlanStepKind>([
-  "inspect",
-  "implement",
-  "integrate",
-  "validate",
-]);
-const CHECKPOINT_KINDS = new Set<StructuredCheckpointKind>(["checkpoint", "integration"]);
-const EXECUTION_RESULT_STATUSES = new Set<StructuredExecutionResultStatus>(["done", "skipped"]);
-const EXECUTION_RESULT_SCOPES = new Set<StructuredExecutionResultScope>(["plan", "autoplan"]);
+const TASK_GEOMETRIES = new Set<StructuredTaskGeometry>(STRUCTURED_TASK_GEOMETRY_VALUES);
+const COORDINATION_PATTERNS = new Set<StructuredCoordinationPattern>(
+  STRUCTURED_COORDINATION_PATTERN_VALUES,
+);
+const STEP_KINDS = new Set<StructuredPlanStepKind>(STRUCTURED_PLAN_STEP_KIND_VALUES);
+const CHECKPOINT_KINDS = new Set<StructuredCheckpointKind>(STRUCTURED_CHECKPOINT_KIND_VALUES);
+const EXECUTION_RESULT_STATUSES = new Set<StructuredExecutionResultStatus>(
+  STRUCTURED_EXECUTION_RESULT_STATUS_VALUES,
+);
+const EXECUTION_RESULT_SCOPES = new Set<StructuredExecutionResultScope>(
+  STRUCTURED_EXECUTION_RESULT_SCOPE_VALUES,
+);
 
 export function extractTaggedJsonBlock(
   text: string,
   tag: string = PLAN_OUTPUT_JSON_BLOCK_TAG,
 ): string | undefined {
   const escapedTag = escapeRegExp(tag);
-  const pattern = new RegExp("```" + `(?:${escapedTag})\\s*\\n([\\s\\S]*?)\\n` + "```", "i");
+  const pattern = new RegExp(
+    "(?:^|\\r?\\n)[ \\t]*```(?:" +
+      escapedTag +
+      ")[ \\t]*\\r?\\n([\\s\\S]*?)\\r?\\n[ \\t]*```(?=[ \\t]*(?:\\r?\\n|$))",
+    "i",
+  );
   const match = text.match(pattern);
   const block = match?.[1]?.trim();
   return block && block.length > 0 ? block : undefined;
@@ -280,7 +295,7 @@ function validatePlanContract(
   const taskGeometry = validateEnumValue(
     value.taskGeometry,
     TASK_GEOMETRIES,
-    "Plan payload must include a valid taskGeometry.",
+    `Plan payload must include a valid taskGeometry (${formatAllowedValues(STRUCTURED_TASK_GEOMETRY_VALUES)}).`,
   );
   if (!taskGeometry.ok) {
     return taskGeometry;
@@ -289,7 +304,7 @@ function validatePlanContract(
   const coordinationPattern = validateEnumValue(
     value.coordinationPattern,
     COORDINATION_PATTERNS,
-    "Plan payload must include a valid coordinationPattern.",
+    `Plan payload must include a valid coordinationPattern (${formatAllowedValues(STRUCTURED_COORDINATION_PATTERN_VALUES)}).`,
   );
   if (!coordinationPattern.ok) {
     return coordinationPattern;
@@ -366,7 +381,7 @@ function validateReviewContract(
   const taskGeometry = validateEnumValue(
     value.taskGeometry,
     TASK_GEOMETRIES,
-    "Review continue payload must include a valid taskGeometry.",
+    `Review continue payload must include a valid taskGeometry (${formatAllowedValues(STRUCTURED_TASK_GEOMETRY_VALUES)}).`,
   );
   if (!taskGeometry.ok) {
     return taskGeometry;
@@ -375,7 +390,7 @@ function validateReviewContract(
   const coordinationPattern = validateEnumValue(
     value.coordinationPattern,
     COORDINATION_PATTERNS,
-    "Review continue payload must include a valid coordinationPattern.",
+    `Review continue payload must include a valid coordinationPattern (${formatAllowedValues(STRUCTURED_COORDINATION_PATTERN_VALUES)}).`,
   );
   if (!coordinationPattern.ok) {
     return coordinationPattern;
@@ -423,7 +438,7 @@ function validateExecutionResultContract(
   const scope = validateEnumValue(
     value.scope,
     EXECUTION_RESULT_SCOPES,
-    "Execution result payload must include a valid scope.",
+    `Execution result payload must include a valid scope (${formatAllowedValues(STRUCTURED_EXECUTION_RESULT_SCOPE_VALUES)}).`,
   );
   if (!scope.ok) {
     return scope;
@@ -440,7 +455,7 @@ function validateExecutionResultContract(
   const status = validateEnumValue(
     value.status,
     EXECUTION_RESULT_STATUSES,
-    "Execution result payload must include status 'done' or 'skipped'.",
+    `Execution result payload must include a valid status (${formatAllowedValues(STRUCTURED_EXECUTION_RESULT_STATUS_VALUES)}).`,
   );
   if (!status.ok) {
     return status;
@@ -547,7 +562,7 @@ function validateStep(value: unknown, index: number): ValidationResult<Structure
   const kind = validateEnumValue(
     value.kind,
     STEP_KINDS,
-    `Step ${index + 1} must include a valid kind.`,
+    `Step ${index + 1} must include a valid kind (${formatAllowedValues(STRUCTURED_PLAN_STEP_KIND_VALUES)}).`,
   );
   if (!kind.ok) {
     return kind;
@@ -660,7 +675,7 @@ function validateCheckpoint(
   const kind = validateEnumValue(
     value.kind,
     CHECKPOINT_KINDS,
-    `Checkpoint ${index + 1} must include a valid kind.`,
+    `Checkpoint ${index + 1} must include a valid kind (${formatAllowedValues(STRUCTURED_CHECKPOINT_KIND_VALUES)}).`,
   );
   if (!kind.ok) {
     return kind;
@@ -800,6 +815,10 @@ function validateEnumValue<T extends string>(
     ok: true,
     value: value as T,
   };
+}
+
+function formatAllowedValues(values: readonly string[]): string {
+  return values.map((value) => `"${value}"`).join(", ");
 }
 
 function dedupeStrings(values: string[]): string[] {

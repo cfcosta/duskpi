@@ -195,6 +195,40 @@ test("parseTaggedOutputContract rejects unsupported kinds", () => {
   });
 });
 
+test("parseTaggedPlanContract accepts tagged JSON blocks with indented fences", () => {
+  const payload = buildPlanPayload();
+  const indentedJson = JSON.stringify(payload, null, 2)
+    .split("\n")
+    .map((line) => `    ${line}`)
+    .join("\n");
+  const text = [
+    "Ready to execute when approved.",
+    "",
+    `  \`\`\`${PLAN_OUTPUT_JSON_BLOCK_TAG}`,
+    indentedJson,
+    "  ```",
+  ].join("\n");
+
+  const result = parseTaggedPlanContract(text);
+
+  expect(result).toEqual({
+    ok: true,
+    rawJson: indentedJson.trim(),
+    value: payload,
+  });
+});
+
+test("parseTaggedPlanContract reports allowed enum values for invalid plan kinds", () => {
+  const payload = buildPlanPayload();
+  payload.steps[0].kind = "backend-foundation" as never;
+
+  expect(parseTaggedPlanContract(buildTaggedJsonBlock(payload))).toEqual({
+    ok: false,
+    code: "invalid_schema",
+    message: 'Step 1 must include a valid kind ("inspect", "implement", "integrate", "validate").',
+  });
+});
+
 test("parseTaggedPlanContract rejects invalid-schema fields in v2 payloads", () => {
   const payload = buildPlanPayload();
   payload.steps[0].checkpointIds = ["missing-checkpoint"];

@@ -1811,11 +1811,15 @@ test("/autoplan falls back to the existing backlog when progress review keeps re
   expect(harness.sentUserMessages.at(-1)).toContain(
     "Current approved high-level task 2: Approval action UI to show a compact summary",
   );
-  expect(harness.uiStub.notifications).toContainEqual({
-    message:
-      "Autoplan couldn't validate the tagged JSON review contract. Asking for a stricter restatement.",
-    level: "warning",
-  });
+  expect(
+    harness.uiStub.notifications.some(
+      ({ message, level }) =>
+        level === "warning" &&
+        message.startsWith(
+          "Autoplan couldn't validate the tagged JSON review contract. Asking for a stricter restatement.",
+        ),
+    ),
+  ).toBe(true);
   expect(harness.uiStub.notifications).toContainEqual({
     message:
       "Autoplan couldn't update the remaining backlog cleanly, so it will continue with the existing tracked tasks.",
@@ -2675,11 +2679,16 @@ test("/autoplan retries subtask planning once when the tagged JSON block is miss
     "The previous response did not include a valid tagged JSON planning contract.",
   );
   expect(harness.sentUserMessages[2]).toContain("```pi-plan-json");
-  expect(harness.uiStub.notifications).toContainEqual({
-    message:
-      "Autoplan couldn't validate the tagged JSON subtask plan contract. Asking Pi to restate the subtask plan with the required markdown + JSON format.",
-    level: "warning",
-  });
+  expect(
+    harness.uiStub.notifications.some(
+      ({ message, level }) =>
+        level === "warning" &&
+        message.startsWith("Autoplan couldn't validate the tagged JSON subtask plan contract (") &&
+        message.includes(
+          "Asking Pi to restate the subtask plan with the required markdown + JSON format.",
+        ),
+    ),
+  ).toBe(true);
 });
 
 test("/autoplan stops after repeated invalid tagged JSON subtask planning output", async () => {
@@ -2736,10 +2745,15 @@ test("/autoplan stops after repeated invalid tagged JSON subtask planning output
     ],
   });
 
-  expect(harness.uiStub.notifications).toContainEqual({
-    message: "Autoplan couldn't validate the tagged JSON subtask plan contract after one retry.",
-    level: "error",
-  });
+  expect(
+    harness.uiStub.notifications.some(
+      ({ message, level }) =>
+        level === "error" &&
+        message.startsWith(
+          "Autoplan couldn't validate the tagged JSON subtask plan contract after one retry (",
+        ),
+    ),
+  ).toBe(true);
   expect(harness.uiStub.notifications).toContainEqual({
     message:
       "Autoplan subtask planning kept returning invalid tagged JSON after one retry. Stopping autoplan.",
@@ -3549,11 +3563,17 @@ test("top-level /plan with valid markdown but no tagged JSON block triggers a st
   expect(harness.sentUserMessages[1]).toContain("```pi-plan-json");
   expect(harness.sentMessages).toHaveLength(0);
   expect(harness.uiStub.customCalls).toHaveLength(0);
-  expect(harness.uiStub.notifications).toContainEqual({
-    message:
-      "Couldn't validate the tagged JSON plan contract. Asking Pi to restate the same draft with the required markdown + JSON format.",
-    level: "warning",
-  });
+  expect(
+    harness.uiStub.notifications.some(
+      ({ message, level }) =>
+        level === "warning" &&
+        message.startsWith("Couldn't validate the tagged JSON plan contract (") &&
+        message.includes(
+          "Asking Pi to restate the same draft with the required markdown + JSON format.",
+        ) &&
+        message.includes("Missing tagged JSON block `pi-plan-json`"),
+    ),
+  ).toBe(true);
 });
 
 test("top-level /plan with malformed tagged JSON fails visibly after one retry without opening approval", async () => {
@@ -3592,11 +3612,16 @@ test("top-level /plan with malformed tagged JSON fails visibly after one retry w
   expect(harness.sentUserMessages).toHaveLength(2);
   expect(harness.sentMessages).toHaveLength(0);
   expect(harness.uiStub.customCalls).toHaveLength(0);
-  expect(harness.uiStub.notifications).toContainEqual({
-    message:
-      "Couldn't validate the tagged JSON plan contract after one automatic retry. Still in read-only plan mode.",
-    level: "error",
-  });
+  expect(
+    harness.uiStub.notifications.some(
+      ({ message, level }) =>
+        level === "error" &&
+        message.startsWith(
+          "Couldn't validate the tagged JSON plan contract after one automatic retry (",
+        ) &&
+        message.endsWith("Still in read-only plan mode."),
+    ),
+  ).toBe(true);
 });
 
 test("cancelling a planning response keeps plan mode ready for steering instead of auto-retrying", async () => {
@@ -3678,11 +3703,16 @@ test("unparseable planning drafts trigger one automatic retry with a new request
   expect(retryPrompt).toContain(
     "The previous response did not include a valid tagged JSON planning contract.",
   );
-  expect(harness.uiStub.notifications).toContainEqual({
-    message:
-      "Couldn't validate the tagged JSON plan contract. Asking Pi to restate the same draft with the required markdown + JSON format.",
-    level: "warning",
-  });
+  expect(
+    harness.uiStub.notifications.some(
+      ({ message, level }) =>
+        level === "warning" &&
+        message.startsWith("Couldn't validate the tagged JSON plan contract (") &&
+        message.includes(
+          "Asking Pi to restate the same draft with the required markdown + JSON format.",
+        ),
+    ),
+  ).toBe(true);
 });
 
 test("a second unparseable planning draft stays read-only and fails visibly without opening approval", async () => {
@@ -3733,11 +3763,16 @@ test("a second unparseable planning draft stays read-only and fails visibly with
     "ls",
     "ask_user_question",
   ]);
-  expect(harness.uiStub.notifications).toContainEqual({
-    message:
-      "Couldn't validate the tagged JSON plan contract after one automatic retry. Still in read-only plan mode.",
-    level: "error",
-  });
+  expect(
+    harness.uiStub.notifications.some(
+      ({ message, level }) =>
+        level === "error" &&
+        message.startsWith(
+          "Couldn't validate the tagged JSON plan contract after one automatic retry (",
+        ) &&
+        message.endsWith("Still in read-only plan mode."),
+    ),
+  ).toBe(true);
 });
 
 test("non-ui /plan approve restores normal tools and sends the execution prompt", async () => {

@@ -31,8 +31,14 @@ import {
 import {
   PLAN_OUTPUT_JSON_BLOCK_TAG,
   RUNTIME_PLAN_CONTRACT_VERSION,
+  STRUCTURED_CHECKPOINT_KIND_VALUES,
+  STRUCTURED_COORDINATION_PATTERN_VALUES,
+  STRUCTURED_PLAN_STEP_KIND_VALUES,
+  STRUCTURED_TASK_GEOMETRY_VALUES,
   parseTaggedPlanContract,
   parseTaggedReviewContract,
+  type PlanningContractParseError,
+  type PlanningContractParseResult,
   type StructuredPlanOutput,
   type StructuredReviewContinueOutput,
   type StructuredReviewOutput,
@@ -126,19 +132,29 @@ function buildPlanModeBashBlockedReason(command: string): string {
 
 const PLAN_TAGGED_JSON_CONTRACT_SUMMARY = [
   "After the human-readable markdown plan, include a fenced tagged JSON block.",
-  `Use the fence header \`\`\`${PLAN_OUTPUT_JSON_BLOCK_TAG}\` and valid JSON inside it.`,
+  `Use an unindented fence header exactly like: \`\`\`${PLAN_OUTPUT_JSON_BLOCK_TAG}\` on its own line, then raw JSON, then an unindented closing \`\`\`.`,
   `For planning responses, the JSON must be a runtime v${RUNTIME_PLAN_CONTRACT_VERSION} plan payload.`,
   `Use: { "version": ${RUNTIME_PLAN_CONTRACT_VERSION}, "kind": "plan", "taskGeometry": "...", "coordinationPattern": "...", "assumptions": [...], "escalationTriggers": [...], "checkpoints": [...], "steps": [...] }.`,
+  `taskGeometry must be one of: ${STRUCTURED_TASK_GEOMETRY_VALUES.map((value) => `"${value}"`).join(", ")}.`,
+  `coordinationPattern must be one of: ${STRUCTURED_COORDINATION_PATTERN_VALUES.map((value) => `"${value}"`).join(", ")}.`,
+  `Each step.kind must be one of: ${STRUCTURED_PLAN_STEP_KIND_VALUES.map((value) => `"${value}"`).join(", ")}.`,
+  `Each checkpoint.kind must be one of: ${STRUCTURED_CHECKPOINT_KIND_VALUES.map((value) => `"${value}"`).join(", ")}.`,
   "Each step object must include: step, kind, objective, targets, validation, risks, dependsOn, and checkpointIds.",
   "Each checkpoint object must include: id, title, kind, step, and why.",
+  "Do not replace enum fields with prose descriptions. Put the detailed explanation in markdown, not inside enum values.",
   "The response is invalid if the tagged JSON block is missing, malformed, or schema-invalid.",
 ].join("\n");
 
 const REVIEW_TAGGED_JSON_CONTRACT_SUMMARY = [
-  `After the human-readable markdown review, include a fenced \`\`\`${PLAN_OUTPUT_JSON_BLOCK_TAG}\` JSON block.`,
+  `After the human-readable markdown review, include an unindented fenced \`\`\`${PLAN_OUTPUT_JSON_BLOCK_TAG}\` JSON block.`,
   `For review continue responses, the JSON must be a runtime v${RUNTIME_PLAN_CONTRACT_VERSION} review payload with summary, taskGeometry, coordinationPattern, assumptions, checkpoints, and steps.`,
   `Use: { "version": ${RUNTIME_PLAN_CONTRACT_VERSION}, "kind": "review", "status": "continue", "summary": "...", "taskGeometry": "...", "coordinationPattern": "...", "assumptions": [...], "checkpoints": [...], "steps": [...] }.`,
+  `taskGeometry must be one of: ${STRUCTURED_TASK_GEOMETRY_VALUES.map((value) => `"${value}"`).join(", ")}.`,
+  `coordinationPattern must be one of: ${STRUCTURED_COORDINATION_PATTERN_VALUES.map((value) => `"${value}"`).join(", ")}.`,
+  `Each step.kind must be one of: ${STRUCTURED_PLAN_STEP_KIND_VALUES.map((value) => `"${value}"`).join(", ")}.`,
+  `Each checkpoint.kind must be one of: ${STRUCTURED_CHECKPOINT_KIND_VALUES.map((value) => `"${value}"`).join(", ")}.`,
   `For review complete responses, use: { "version": ${RUNTIME_PLAN_CONTRACT_VERSION}, "kind": "review", "status": "complete", "summary": "..." }.`,
+  "Do not replace enum fields with prose descriptions. Put the detailed explanation in markdown, not inside enum values.",
   "The response is invalid if the tagged JSON block is missing, malformed, or schema-invalid.",
 ].join("\n");
 
@@ -353,8 +369,8 @@ class AutoPlanSubtaskWorkflow extends GuidedWorkflow {
         }
 
         const structuredPlan = parseTaggedPlanContract(lastAssistantText);
-        if (!structuredPlan.ok || structuredPlan.value.steps.length === 0) {
-          return this.handleUnparseablePlanningDraft(lastAssistantText, ctx);
+        if (!structuredPlan.ok) {
+          return this.handleUnparseablePlanningDraft(lastAssistantText, structuredPlan, ctx);
         }
         this.parseRecoveryAttempted = false;
         this.complianceRecoveryAttempted = false;
@@ -485,25 +501,28 @@ class AutoPlanSubtaskWorkflow extends GuidedWorkflow {
 
   private async handleUnparseablePlanningDraft(
     draftText: string,
+    parseError: PlanningContractParseError,
     ctx: ExtensionContext,
   ): Promise<GuidedWorkflowResult> {
+    const failureDetail = formatPlanningContractParseFailure(parseError);
+
     if (!this.parseRecoveryAttempted) {
       this.parseRecoveryAttempted = true;
       notify(
         this.pi,
         ctx,
-        "Autoplan couldn't validate the tagged JSON subtask plan contract. Asking Pi to restate the subtask plan with the required markdown + JSON format.",
+        `Autoplan couldn't validate the tagged JSON subtask plan contract (${failureDetail}). Asking Pi to restate the subtask plan with the required markdown + JSON format.`,
         "warning",
       );
       await super.handleSessionShutdown({ reason: "autoplan-subtask-parse-retry" }, ctx);
-      return super.handleCommand(buildParseRecoveryPrompt(draftText), ctx);
+      return super.handleCommand(buildParseRecoveryPrompt(draftText, parseError), ctx);
     }
 
     this.parseRecoveryAttempted = false;
     notify(
       this.pi,
       ctx,
-      "Autoplan couldn't validate the tagged JSON subtask plan contract after one retry.",
+      `Autoplan couldn't validate the tagged JSON subtask plan contract after one retry (${failureDetail}).`,
       "error",
     );
     await super.handleSessionShutdown({ reason: "autoplan-subtask-parse-failed" }, ctx);
@@ -1077,8 +1096,8 @@ export class PiPlanWorkflow extends GuidedWorkflow {
 
         const captured = this.capturePlanDraft(lastAssistantText, ctx);
         await this.resetPlanningRequestState(ctx);
-        if (!captured) {
-          return this.handleUnparseablePlanningDraft(lastAssistantText, ctx);
+        if (!captured.ok) {
+          return this.handleUnparseablePlanningDraft(lastAssistantText, captured, ctx);
         }
 
         notify(this.pi, ctx, "Reviewing the plan with a critique pass before approval.", "info");
@@ -1091,7 +1110,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
         }
 
         const captured = this.capturePlanDraft(lastAssistantText, ctx);
-        if (captured) {
+        if (captured.ok) {
           notify(this.pi, ctx, "Reviewing the plan with a critique pass before approval.", "info");
         }
 
@@ -1136,8 +1155,8 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     }
 
     const captured = this.capturePlanDraft(lastAssistantText, ctx);
-    if (!captured) {
-      return this.handleUnparseablePlanningDraft(lastAssistantText, ctx);
+    if (!captured.ok) {
+      return this.handleUnparseablePlanningDraft(lastAssistantText, captured, ctx);
     }
 
     notify(this.pi, ctx, "Reviewing the plan with a critique pass before approval.", "info");
@@ -1333,17 +1352,20 @@ export class PiPlanWorkflow extends GuidedWorkflow {
 
   private async handleUnparseablePlanningDraft(
     draftText: string,
+    parseError: PlanningContractParseError,
     ctx: ExtensionContext,
   ): Promise<GuidedWorkflowResult> {
+    const failureDetail = formatPlanningContractParseFailure(parseError);
+
     if (!this.parseRecoveryAttempted) {
       this.parseRecoveryAttempted = true;
       notify(
         this.pi,
         ctx,
-        "Couldn't validate the tagged JSON plan contract. Asking Pi to restate the same draft with the required markdown + JSON format.",
+        `Couldn't validate the tagged JSON plan contract (${failureDetail}). Asking Pi to restate the same draft with the required markdown + JSON format.`,
         "warning",
       );
-      return this.startPlanningRequest(this.buildParseRecoveryPrompt(draftText), ctx);
+      return this.startPlanningRequest(this.buildParseRecoveryPrompt(draftText, parseError), ctx);
     }
 
     this.resetParseRecoveryState();
@@ -1351,14 +1373,17 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     notify(
       this.pi,
       ctx,
-      "Couldn't validate the tagged JSON plan contract after one automatic retry. Still in read-only plan mode.",
+      `Couldn't validate the tagged JSON plan contract after one automatic retry (${failureDetail}). Still in read-only plan mode.`,
       "error",
     );
     return { kind: "ok" };
   }
 
-  private buildParseRecoveryPrompt(draftText: string): string {
-    return buildParseRecoveryPrompt(draftText);
+  private buildParseRecoveryPrompt(
+    draftText: string,
+    parseError?: PlanningContractParseError,
+  ): string {
+    return buildParseRecoveryPrompt(draftText, parseError);
   }
 
   private async selectApprovalAction(
@@ -1466,15 +1491,22 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     });
   }
 
-  private capturePlanDraft(planText: string, ctx: ExtensionContext): boolean {
+  private capturePlanDraft(
+    planText: string,
+    ctx: ExtensionContext,
+  ): PlanningContractParseResult<StructuredPlanOutput> {
     const structuredPlan = parseTaggedPlanContract(planText);
     if (!structuredPlan.ok) {
-      return false;
+      return structuredPlan;
     }
 
     const extracted = toTodoItemsFromStructuredPlan(structuredPlan.value);
     if (extracted.length === 0) {
-      return false;
+      return {
+        ok: false,
+        code: "invalid_schema",
+        message: "Plan payload must contain at least one executable step.",
+      };
     }
 
     this.resetParseRecoveryState();
@@ -1492,7 +1524,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       this.latestPlanMetadata,
     );
     this.setStatus(ctx);
-    return true;
+    return structuredPlan;
   }
 
   private validatePendingPlanningResponse(messages: unknown[]): GuidedWorkflowResult | undefined {
@@ -3292,9 +3324,15 @@ function recoverImplicitlyIndentedSubtaskItems(
   );
 }
 
-function buildParseRecoveryPrompt(draftText: string): string {
+function buildParseRecoveryPrompt(
+  draftText: string,
+  parseError?: PlanningContractParseError,
+): string {
   return [
     "The previous response did not include a valid tagged JSON planning contract.",
+    parseError
+      ? `Validation failure: ${formatPlanningContractParseFailure(parseError)}.`
+      : undefined,
     "Restate the same proposed implementation plan using the required plan output contract.",
     "Keep the same scope and intent.",
     "Include an explicit Plan: section with numbered executable steps.",
@@ -3303,7 +3341,13 @@ function buildParseRecoveryPrompt(draftText: string): string {
     "",
     "Previous draft:",
     draftText,
-  ].join("\n");
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
+}
+
+function formatPlanningContractParseFailure(parseError: PlanningContractParseError): string {
+  return parseError.message.replace(/\s+/g, " ").trim().replace(/[.]+$/, "");
 }
 
 function buildWorkflowRequestIdMarker(requestId: string): string {
