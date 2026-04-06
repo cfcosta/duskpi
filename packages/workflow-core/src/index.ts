@@ -86,3 +86,12 @@ export type {
   ManagedWorkspace,
   WorkspaceExec,
 } from "./workspace-manager";
+export { WorkerRunner } from "./worker-runner";
+export type {
+  WorkerResultParseError,
+  WorkerResultParseResult,
+  WorkerResultParseSuccess,
+  WorkerRunInput,
+  WorkerRunnerExec,
+  WorkerRunnerOptions,
+} from "./worker-runner";
