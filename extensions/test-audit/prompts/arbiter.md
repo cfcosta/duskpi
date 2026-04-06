@@ -34,3 +34,37 @@ Final summary:
 - Total real gaps (by category)
 - Total dismissed
 - Verified gaps in priority order
+
+## Mandatory structured approval contract
+
+If you confirm one or more real gaps, your final answer must also include a fenced tagged JSON block using `test-audit-plan-json`.
+
+Use this exact payload shape inside the tagged block:
+
+```test-audit-plan-json
+{
+  "version": 1,
+  "kind": "approved_test_audit_plan",
+  "summary": "one-paragraph summary of the approved test-improvement program",
+  "executionUnits": [
+    {
+      "id": "stable-kebab-case-id",
+      "title": "short execution unit title",
+      "objective": "what this test-audit unit changes and why",
+      "targets": ["path/to/file.test.ts"],
+      "validations": ["command or test to run"],
+      "dependsOn": ["upstream-unit-id"]
+    }
+  ]
+}
+```
+
+Rules for the tagged block:
+
+- Emit the tagged block only when at least one gap is confirmed as real.
+- Each execution unit should normally represent one independently executable test-improvement task.
+- Every execution unit must include `id`, `title`, `objective`, `targets`, `validations`, and `dependsOn`.
+- Use `dependsOn` only when one test-improvement task must land before another.
+- Preserve the original gap categories and remediation semantics in the prose report and the structured plan.
+- Keep the tagged block aligned with the prose verdicts and priority order.
+- If a refinement request is present, return a fully revised structured plan rather than patching one unit in isolation.

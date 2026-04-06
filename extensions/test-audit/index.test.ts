@@ -3,9 +3,12 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import testAudit from "./index";
+import { TEST_AUDIT_PLAN_JSON_BLOCK_TAG, parseTaggedTestAuditPlan } from "./contract";
 import { TestAuditWorkflow } from "./workflow";
-import { loadPrompts } from "./prompting";
+import { TEST_AUDIT_WORKER_RESULT_JSON_BLOCK_TAG, parseTaggedWorkerResult } from "./worker-result";
+import { buildPrompt, loadPrompts } from "./prompting";
 
 type NotifyLevel = "info" | "warning" | "error";
 
@@ -292,6 +295,133 @@ test("loadPrompts returns structured error when files are missing", () => {
     assert.equal(result.error.code, "PROMPT_READ_FAILED");
     assert.match(result.error.message, /failed to load prompt bundle/);
   }
+});
+
+test("buildPrompt includes refinement contract for arbiter mode", () => {
+  const prompt = buildPrompt({
+    phase: "arbiter",
+    prompts: {
+      finder: "FINDER",
+      skeptic: "SKEPTIC",
+      arbiter: "ARBITER",
+      fixer: "FIXER",
+    },
+    reports: {
+      finder: "finder-report",
+      skeptic: "skeptic-report",
+      arbiter: "arbiter-report",
+    },
+    refinement: "prioritize high-risk gaps",
+  });
+
+  assert.match(prompt, /## Existing Approved Test-Audit Plan \(Structured Contract\)/);
+  assert.match(prompt, /arbiter-report/);
+  assert.match(prompt, /## Refinement Request/);
+  assert.match(prompt, /prioritize high-risk gaps/);
+  assert.match(prompt, new RegExp(TEST_AUDIT_PLAN_JSON_BLOCK_TAG, "i"));
+  assert.match(prompt, /fully revised test-audit plan in the structured contract format/i);
+});
+
+test("buildPrompt passes the approved test-audit plan to fixer mode as a structured contract", () => {
+  const prompt = buildPrompt({
+    phase: "fixer",
+    prompts: {
+      finder: "FINDER",
+      skeptic: "SKEPTIC",
+      arbiter: "ARBITER",
+      fixer: "FIXER",
+    },
+    reports: {
+      arbiter: "approved-plan-report",
+    },
+  });
+
+  assert.match(prompt, /## Approved Test-Audit Plan \(Structured Contract\)/);
+  assert.match(prompt, /approved-plan-report/);
+});
+
+test("parseTaggedTestAuditPlan parses the approved test-audit structured contract", () => {
+  const result = parseTaggedTestAuditPlan(
+    [
+      `\`\`\`${TEST_AUDIT_PLAN_JSON_BLOCK_TAG}`,
+      JSON.stringify(
+        {
+          version: 1,
+          kind: "approved_test_audit_plan",
+          summary: "Rewrite defective parser tests and add a regression for the error path.",
+          executionUnits: [
+            {
+              id: "rewrite-tautological-parser-test",
+              title: "Rewrite tautological parser test",
+              objective: "Replace the false-confidence parser test with one that fails on a realistic fault.",
+              targets: ["src/parser.test.ts"],
+              validations: ["bun test extensions/test-audit/index.test.ts"],
+              dependsOn: [],
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "\`\`\`",
+    ].join("\n"),
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok) {
+    return;
+  }
+
+  assert.equal(result.value.executionUnits[0]?.id, "rewrite-tautological-parser-test");
+});
+
+test("parseTaggedWorkerResult parses the test-audit worker-result structured contract", () => {
+  const result = parseTaggedWorkerResult(
+    [
+      `\`\`\`${TEST_AUDIT_WORKER_RESULT_JSON_BLOCK_TAG}`,
+      JSON.stringify(
+        {
+          version: 1,
+          kind: "test_audit_worker_result",
+          unitId: "rewrite-tautological-parser-test",
+          status: "completed",
+          summary: "Rewrote the parser test so it fails on a realistic parser fault.",
+          changedFiles: ["src/parser.test.ts"],
+          validations: [
+            {
+              command: "bun test extensions/test-audit/index.test.ts",
+              outcome: "passed",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "\`\`\`",
+    ].join("\n"),
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok) {
+    return;
+  }
+
+  assert.equal(result.value.unitId, "rewrite-tautological-parser-test");
+});
+
+test("real prompt bundle wires arbiter and fixer to the test-audit structured contracts", () => {
+  const result = loadPrompts(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "prompts"));
+
+  assert.equal(result.ok, true);
+  if (!result.ok) {
+    return;
+  }
+
+  assert.match(result.prompts.arbiter, /test-audit-plan-json/i);
+  assert.match(result.prompts.arbiter, /approved_test_audit_plan/i);
+  assert.match(result.prompts.fixer, /test-audit-plan-json/i);
+  assert.match(result.prompts.fixer, /test-audit-worker-result-json/i);
+  assert.match(result.prompts.fixer, /test_audit_worker_result/i);
 });
 
 test("testAudit command wiring uses real prompt files end-to-end", async () => {
