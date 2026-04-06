@@ -37,7 +37,9 @@ export interface FullscreenPlanDashboardOptions {
 }
 
 function summarizeValues(values: string[] | undefined, limit = 2): string | undefined {
-  const normalized = (values ?? []).map((value) => value.trim()).filter((value) => value.length > 0);
+  const normalized = (values ?? [])
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
   if (normalized.length === 0) {
     return undefined;
   }
@@ -52,7 +54,10 @@ function summarizeNumbers(values: number[] | undefined, limit = 3): string | und
     return undefined;
   }
 
-  return summarizeValues(values.map((value) => String(value)), limit);
+  return summarizeValues(
+    values.map((value) => String(value)),
+    limit,
+  );
 }
 
 function getCompletedSteps(steps: PlanDashboardStepView[]): number {
@@ -83,10 +88,7 @@ function renderHeaderLine(
   const prefix = theme.fg("borderMuted", "───") + theme.fg("accent", ` ${title} `);
   const hintLength = hint?.length ?? 0;
   const fillLen = Math.max(0, width - 3 - title.length - 2 - hintLength);
-  return truncateToWidth(
-    prefix + theme.fg("borderMuted", "─".repeat(fillLen)) + suffix,
-    width,
-  );
+  return truncateToWidth(prefix + theme.fg("borderMuted", "─".repeat(fillLen)) + suffix, width);
 }
 
 function buildCompactLines(
@@ -100,10 +102,17 @@ function buildCompactLines(
   const state = snapshot.stateLabel ? ` ${snapshot.stateLabel}` : "";
   const progress = totalSteps > 0 ? ` ${completedSteps}/${totalSteps}` : " 0 steps";
   const lines = [
-    truncateToWidth(theme.fg("accent", "📋") + theme.fg("text", ` ${snapshot.title}`) + theme.fg("muted", `${state} •${progress}`), width),
+    truncateToWidth(
+      theme.fg("accent", "📋") +
+        theme.fg("text", ` ${snapshot.title}`) +
+        theme.fg("muted", `${state} •${progress}`),
+      width,
+    ),
   ];
 
-  const strategy = [snapshot.taskGeometry, snapshot.coordinationPattern].filter(Boolean).join(" • ");
+  const strategy = [snapshot.taskGeometry, snapshot.coordinationPattern]
+    .filter(Boolean)
+    .join(" • ");
   if (strategy) {
     lines.push(truncateToWidth(theme.fg("dim", strategy), width));
   }
@@ -135,7 +144,9 @@ function buildExpandedLines(
   const lines: string[] = [];
   const totalSteps = snapshot.steps.length;
   const completedSteps = getCompletedSteps(snapshot.steps);
-  const strategy = [snapshot.taskGeometry, snapshot.coordinationPattern].filter(Boolean).join(" • ");
+  const strategy = [snapshot.taskGeometry, snapshot.coordinationPattern]
+    .filter(Boolean)
+    .join(" • ");
   const checkpointsSummary = summarizeValues(snapshot.checkpoints, 3);
   const dependenciesSummary = summarizeValues(snapshot.dependencies, 3);
   const assumptionsSummary = summarizeValues(snapshot.assumptions, 3);

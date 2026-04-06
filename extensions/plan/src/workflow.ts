@@ -577,73 +577,77 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     });
 
     self = this;
-    this.autoPlanSubtaskWorkflow = new AutoPlanSubtaskWorkflow(pi, {
-      id: `${STATUS_KEY}-autoplan-subtask`,
-      parseGoalArg: parsePlanGoalArg,
-      buildPlanningPrompt: ({ goal }) => {
-        return [
-          "Plan this approved subtask in read-only mode before making any changes.",
-          "Do not ask the user questions.",
-          "Do not request approval.",
-          "Make the best reasonable decisions from the approved parent goal, the repo, and existing patterns.",
-          "Return a concrete implementation plan that follows the required plan-mode response contract.",
-          PLAN_TAGGED_JSON_CONTRACT_SUMMARY,
-          "",
-          `Task: ${goal ?? "Create a concrete implementation plan."}`,
-        ].join("\n");
-      },
-      critique: {
-        buildCritiquePrompt: ({ planText }) => {
-          return `${PLAN_CRITIQUE_PROMPT}\n\nPlan to critique:\n\n${planText}`;
-        },
-        buildRevisionPrompt: ({ planText, critiqueText }) => {
+    this.autoPlanSubtaskWorkflow = new AutoPlanSubtaskWorkflow(
+      pi,
+      {
+        id: `${STATUS_KEY}-autoplan-subtask`,
+        parseGoalArg: parsePlanGoalArg,
+        buildPlanningPrompt: ({ goal }) => {
           return [
-            "Revise the latest plan using the critique below.",
-            "Keep planning read-only, do not ask the user questions, and return the full plan again using the required plan output contract.",
-            "Make each step atomic, executable, validation-backed, and suitable for one jujutsu commit.",
+            "Plan this approved subtask in read-only mode before making any changes.",
+            "Do not ask the user questions.",
+            "Do not request approval.",
+            "Make the best reasonable decisions from the approved parent goal, the repo, and existing patterns.",
+            "Return a concrete implementation plan that follows the required plan-mode response contract.",
             PLAN_TAGGED_JSON_CONTRACT_SUMMARY,
             "",
-            "Original plan:",
-            planText,
-            "",
-            "Critique:",
-            critiqueText,
+            `Task: ${goal ?? "Create a concrete implementation plan."}`,
           ].join("\n");
         },
-        parseCritiqueVerdict,
-        customMessageType: "autoplan-subtask-internal",
+        critique: {
+          buildCritiquePrompt: ({ planText }) => {
+            return `${PLAN_CRITIQUE_PROMPT}\n\nPlan to critique:\n\n${planText}`;
+          },
+          buildRevisionPrompt: ({ planText, critiqueText }) => {
+            return [
+              "Revise the latest plan using the critique below.",
+              "Keep planning read-only, do not ask the user questions, and return the full plan again using the required plan output contract.",
+              "Make each step atomic, executable, validation-backed, and suitable for one jujutsu commit.",
+              PLAN_TAGGED_JSON_CONTRACT_SUMMARY,
+              "",
+              "Original plan:",
+              planText,
+              "",
+              "Critique:",
+              critiqueText,
+            ].join("\n");
+          },
+          parseCritiqueVerdict,
+          customMessageType: "autoplan-subtask-internal",
+        },
+        planningPolicy: {
+          isWriteCapableTool(toolName) {
+            return isPlanWriteCapableTool(toolName, self?.getToolInfo(toolName));
+          },
+          isSafeReadOnlyCommand(command) {
+            return isSafeReadOnlyCommand(command);
+          },
+          writeBlockedReason: PLAN_MODE_WRITE_BLOCKED_REASON,
+          bashBlockedReason(command) {
+            return buildPlanModeBashBlockedReason(command);
+          },
+        },
+        approval: {
+          selectAction() {
+            return { action: "approve" };
+          },
+        },
+        execution: {
+          extractItems({ planText }) {
+            const structuredPlan = parseTaggedPlanContract(planText);
+            return structuredPlan.ok ? toTodoItemsFromStructuredPlan(structuredPlan.value) : [];
+          },
+          buildExecutionPrompt({ currentStep, note, planText }) {
+            return self.buildExecutionPrompt(currentStep, planText, note);
+          },
+        },
+        text: {
+          alreadyRunning: "Autoplan is already processing a subtask.",
+          sendFailed: "Autoplan stopped: failed to send a subtask prompt.",
+        },
       },
-      planningPolicy: {
-        isWriteCapableTool(toolName) {
-          return isPlanWriteCapableTool(toolName, self?.getToolInfo(toolName));
-        },
-        isSafeReadOnlyCommand(command) {
-          return isSafeReadOnlyCommand(command);
-        },
-        writeBlockedReason: PLAN_MODE_WRITE_BLOCKED_REASON,
-        bashBlockedReason(command) {
-          return buildPlanModeBashBlockedReason(command);
-        },
-      },
-      approval: {
-        selectAction() {
-          return { action: "approve" };
-        },
-      },
-      execution: {
-        extractItems({ planText }) {
-          const structuredPlan = parseTaggedPlanContract(planText);
-          return structuredPlan.ok ? toTodoItemsFromStructuredPlan(structuredPlan.value) : [];
-        },
-        buildExecutionPrompt({ currentStep, note, planText }) {
-          return self.buildExecutionPrompt(currentStep, planText, note);
-        },
-      },
-      text: {
-        alreadyRunning: "Autoplan is already processing a subtask.",
-        sendFailed: "Autoplan stopped: failed to send a subtask prompt.",
-      },
-    }, () => self.isAutoPlanCheckpointMomentForCurrentOuterStep());
+      () => self.isAutoPlanCheckpointMomentForCurrentOuterStep(),
+    );
   }
 
   async handleTodosCommand(_args: unknown, ctx: ExtensionContext): Promise<void> {
@@ -776,7 +780,8 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       if (this.autoPlanReview.awaitingResponse && !this.isAutoPlanCheckpointMomentForReview()) {
         return {
           block: true,
-          reason: "Autoplan progress review must not ask the user new questions outside declared checkpoint or integration moments.",
+          reason:
+            "Autoplan progress review must not ask the user new questions outside declared checkpoint or integration moments.",
         };
       }
 
@@ -787,7 +792,8 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       ) {
         return {
           block: true,
-          reason: "Autoplan subtask planning must not ask the user new questions outside declared checkpoint or integration moments.",
+          reason:
+            "Autoplan subtask planning must not ask the user new questions outside declared checkpoint or integration moments.",
         };
       }
 
@@ -797,7 +803,8 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       ) {
         return {
           block: true,
-          reason: "Autoplan subtask execution must not ask the user new questions outside declared checkpoint or integration moments.",
+          reason:
+            "Autoplan subtask execution must not ask the user new questions outside declared checkpoint or integration moments.",
         };
       }
     }
@@ -906,10 +913,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
 
       if (beforePhase === "executing" && turnText) {
         const complianceIssues = detectAutoPlanOutputComplianceIssues(turnText);
-        if (
-          complianceIssues.length > 0 &&
-          !this.isAutoPlanCheckpointMomentForCurrentOuterStep()
-        ) {
+        if (complianceIssues.length > 0 && !this.isAutoPlanCheckpointMomentForCurrentOuterStep()) {
           await this.handleAutoPlanExecutionPolicyViolation(
             ctx,
             resumeState,
@@ -1519,7 +1523,9 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     this.executionMode = state.phase === "executing" && execution.items.length > 0;
     this.executionConstraintNote = execution.note ?? "";
     this.latestStructuredPlan = structuredPlan ?? null;
-    this.latestPlanMetadata = structuredPlan ? normalizeStructuredPlanMetadata(structuredPlan) : null;
+    this.latestPlanMetadata = structuredPlan
+      ? normalizeStructuredPlanMetadata(structuredPlan)
+      : null;
     this.todoItems = this.buildCompactTodoItems(latestPlanText, execution.items);
     this.latestPlanDraft = latestPlanText ?? "";
   }
@@ -1652,7 +1658,10 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       (item) => !item.completed && !item.skipped,
     );
     const backlog = remaining.map((item) => `${item.step}. ${item.text}`).join("\n");
-    const currentStepMetadata = findNormalizedPlanStep(this.latestPlanMetadata ?? undefined, currentStep.step);
+    const currentStepMetadata = findNormalizedPlanStep(
+      this.latestPlanMetadata ?? undefined,
+      currentStep.step,
+    );
     const currentStepCheckpoints = getStepCheckpointMetadata(
       this.latestPlanMetadata ?? undefined,
       currentStep.step,
@@ -1665,7 +1674,9 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       currentStepMetadata && currentStepMetadata.dependsOn.length > 0
         ? `This high-level task depends on approved steps: ${currentStepMetadata.dependsOn.join(", ")}`
         : undefined,
-      currentStepCheckpoints.length > 0 ? "Declared checkpoints for this high-level task:" : undefined,
+      currentStepCheckpoints.length > 0
+        ? "Declared checkpoints for this high-level task:"
+        : undefined,
       ...currentStepCheckpoints.map(
         (checkpoint) => `- ${formatCheckpointLabel(checkpoint)}: ${checkpoint.why}`,
       ),
@@ -2158,7 +2169,11 @@ export class PiPlanWorkflow extends GuidedWorkflow {
 
     const currentDetails = describeExecutionStep(
       currentStep,
-      resolvePlanMetadata(this.getLatestPlanText(), this.latestPlanMetadata, this.latestStructuredPlan),
+      resolvePlanMetadata(
+        this.getLatestPlanText(),
+        this.latestPlanMetadata,
+        this.latestStructuredPlan,
+      ),
     );
     const backlog = remaining.map((item) => `${item.step}. ${item.text}`).join("\n");
     return [
@@ -2169,8 +2184,12 @@ export class PiPlanWorkflow extends GuidedWorkflow {
         ? `Coordination pattern: ${currentDetails.coordinationPattern}`
         : undefined,
       currentDetails.dependsOn ? `Depends on steps: ${currentDetails.dependsOn}` : undefined,
-      currentDetails.checkpoints ? `Relevant checkpoints: ${currentDetails.checkpoints}` : undefined,
-      currentDetails.assumptions ? `Approved assumptions: ${currentDetails.assumptions}` : undefined,
+      currentDetails.checkpoints
+        ? `Relevant checkpoints: ${currentDetails.checkpoints}`
+        : undefined,
+      currentDetails.assumptions
+        ? `Approved assumptions: ${currentDetails.assumptions}`
+        : undefined,
       currentDetails.targets ? `Target files/components: ${currentDetails.targets}` : undefined,
       currentDetails.validation ? `Validation method: ${currentDetails.validation}` : undefined,
       currentDetails.risks ? `Risks and rollback notes: ${currentDetails.risks}` : undefined,
@@ -2333,7 +2352,9 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       return [...new Set(planTools)];
     }
 
-    const fallback = this.pi.getActiveTools().filter((tool) => !WRITE_LIKE_TOOLS.has(normalizeToolName(tool)));
+    const fallback = this.pi
+      .getActiveTools()
+      .filter((tool) => !WRITE_LIKE_TOOLS.has(normalizeToolName(tool)));
     return [...new Set(fallback)];
   }
 
@@ -2410,7 +2431,10 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       ).length;
       ctx.ui.setStatus(
         STATUS_KEY,
-        ctx.ui.theme.fg("accent", `📋 ${completedDashboardSteps}/${dashboardSnapshot.steps.length}`),
+        ctx.ui.theme.fg(
+          "accent",
+          `📋 ${completedDashboardSteps}/${dashboardSnapshot.steps.length}`,
+        ),
       );
       this.refreshPlanWidget(ctx);
       return;
@@ -2527,7 +2551,10 @@ export class PiPlanWorkflow extends GuidedWorkflow {
         : "Structured plan captured from valid pi-plan-json output.";
 
     return this.buildDashboardSnapshotFromMetadata(planMetadata, {
-      title: isTopLevelAutoPlan && this.autoPlanGoal.trim().length > 0 ? `autoplan: ${this.autoPlanGoal}` : "plan",
+      title:
+        isTopLevelAutoPlan && this.autoPlanGoal.trim().length > 0
+          ? `autoplan: ${this.autoPlanGoal}`
+          : "plan",
       scopeLabel: isTopLevelAutoPlan ? "/autoplan" : "/plan",
       stateLabel: state.phase,
       summary,
@@ -2566,10 +2593,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     return this.buildDashboardSnapshotFromMetadata(planMetadata, {
       title: this.autoPlanGoal.trim().length > 0 ? `autoplan: ${this.autoPlanGoal}` : "autoplan",
       scopeLabel: "/autoplan",
-      stateLabel:
-        subtaskState.phase === "executing"
-          ? "subtask"
-          : `subtask ${subtaskState.phase}`,
+      stateLabel: subtaskState.phase === "executing" ? "subtask" : `subtask ${subtaskState.phase}`,
       summary: currentOuterLabel ?? "Planning the current approved high-level task.",
       badges: ["inner autoplan"],
       statusByStep,
@@ -2581,9 +2605,10 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       return undefined;
     }
 
-    const reviewMetadata = this.latestAutoPlanReview?.status === "continue"
-      ? normalizeStructuredReviewMetadata(this.latestAutoPlanReview)
-      : this.latestPlanMetadata;
+    const reviewMetadata =
+      this.latestAutoPlanReview?.status === "continue"
+        ? normalizeStructuredReviewMetadata(this.latestAutoPlanReview)
+        : this.latestPlanMetadata;
     if (!reviewMetadata || reviewMetadata.steps.length === 0) {
       return undefined;
     }
@@ -2620,7 +2645,9 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     const dependencyEdges = planMetadata.steps.flatMap((step) =>
       step.dependsOn.map((dependency) => `${step.step} ← ${dependency}`),
     );
-    const checkpoints = planMetadata.checkpoints.map((checkpoint) => formatCheckpointLabel(checkpoint));
+    const checkpoints = planMetadata.checkpoints.map((checkpoint) =>
+      formatCheckpointLabel(checkpoint),
+    );
 
     return {
       title: options.title,
@@ -2645,7 +2672,9 @@ export class PiPlanWorkflow extends GuidedWorkflow {
         dependsOn: [...step.dependsOn],
         checkpoints: step.checkpointIds
           .map((checkpointId) => {
-            const checkpoint = planMetadata.checkpoints.find((candidate) => candidate.id === checkpointId);
+            const checkpoint = planMetadata.checkpoints.find(
+              (candidate) => candidate.id === checkpointId,
+            );
             return checkpoint ? formatCheckpointLabel(checkpoint) : checkpointId;
           })
           .filter((value) => value.length > 0),
@@ -2836,7 +2865,9 @@ function toPlanStep(
     dependsOn: [...step.dependsOn],
     checkpoints: step.checkpointIds
       .map((checkpointId) => {
-        const checkpoint = planMetadata.checkpoints.find((candidate) => candidate.id === checkpointId);
+        const checkpoint = planMetadata.checkpoints.find(
+          (candidate) => candidate.id === checkpointId,
+        );
         return checkpoint ? `${checkpoint.title} (${checkpoint.kind})` : checkpointId;
       })
       .filter((value) => value.length > 0),
@@ -2942,7 +2973,9 @@ function buildApprovalPreviewStep(step: StructuredStepView): PlanApprovalPreview
     targetsSummary: summarizePreviewValues(step.targets),
     validationSummary: summarizePreviewValues(step.validation),
     dependsOnSummary:
-      step.dependsOn.length > 0 ? step.dependsOn.map((value) => String(value)).join(", ") : undefined,
+      step.dependsOn.length > 0
+        ? step.dependsOn.map((value) => String(value)).join(", ")
+        : undefined,
     checkpointsSummary: summarizePreviewValues(step.checkpoints),
   };
 }
@@ -3044,7 +3077,9 @@ function describeExecutionStep(
   const checkpointTitles = metadataStep
     ? metadataStep.checkpointIds
         .map((checkpointId) => {
-          const checkpoint = planMetadata?.checkpoints.find((candidate) => candidate.id === checkpointId);
+          const checkpoint = planMetadata?.checkpoints.find(
+            (candidate) => candidate.id === checkpointId,
+          );
           return checkpoint ? `${checkpoint.title} (${checkpoint.kind})` : checkpointId;
         })
         .filter((value) => value.length > 0)

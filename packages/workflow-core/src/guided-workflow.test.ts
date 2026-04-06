@@ -1410,7 +1410,9 @@ test("GuidedWorkflow ignores unrelated execution output when syncing progress", 
     {
       message: {
         role: "assistant",
-        content: [{ type: "text", text: "Finished validation without structured execution results" }],
+        content: [
+          { type: "text", text: "Finished validation without structured execution results" },
+        ],
       },
     },
     ctx,

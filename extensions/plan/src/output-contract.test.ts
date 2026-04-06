@@ -12,11 +12,9 @@ import {
 } from "./output-contract";
 
 function buildTaggedJsonBlock(payload: unknown): string {
-  return [
-    `\`\`\`${PLAN_OUTPUT_JSON_BLOCK_TAG}`,
-    JSON.stringify(payload, null, 2),
-    "```",
-  ].join("\n");
+  return [`\`\`\`${PLAN_OUTPUT_JSON_BLOCK_TAG}`, JSON.stringify(payload, null, 2), "```"].join(
+    "\n",
+  );
 }
 
 function buildPlanPayload(): StructuredPlanOutput {
@@ -170,7 +168,9 @@ test("parseTaggedOutputContract rejects responses without the tagged JSON block"
 });
 
 test("parseTaggedOutputContract rejects malformed tagged JSON blocks", () => {
-  const result = parseTaggedOutputContract([`\`\`\`${PLAN_OUTPUT_JSON_BLOCK_TAG}`, '{"version": 2,', "```"].join("\n"));
+  const result = parseTaggedOutputContract(
+    [`\`\`\`${PLAN_OUTPUT_JSON_BLOCK_TAG}`, '{"version": 2,', "```"].join("\n"),
+  );
 
   expect(result.ok).toBe(false);
   if (result.ok) {

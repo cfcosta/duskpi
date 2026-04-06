@@ -155,9 +155,7 @@ test("registerGuidedWorkflowExtension wires guided workflow handlers", async () 
   assert.deepEqual(sentCustomMessages, [
     { customType: "guided-status", optionsDeliverAs: "followUp" },
   ]);
-  assert.deepEqual(registeredShortcuts, [
-    { shortcut: "ctrl+x", description: "Toggle dashboard" },
-  ]);
+  assert.deepEqual(registeredShortcuts, [{ shortcut: "ctrl+x", description: "Toggle dashboard" }]);
 
   let createWorkflowCalls = 0;
   const beforeResult: BeforeAgentStartResult = { systemPrompt: "base\n\nguided" };

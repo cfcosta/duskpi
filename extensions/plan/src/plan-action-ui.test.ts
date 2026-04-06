@@ -154,8 +154,12 @@ test("PlanActionComponent caches rendered output per width", () => {
   expect(wideFirst.join("\n")).toContain("Review summary • 3 steps");
   expect(wideFirst.join("\n")).toContain("Strategy: shared_artifact • checkpointed_execution");
   expect(wideFirst.join("\n")).toContain("Dependencies: 2 dependency edges across steps 2 and 3");
-  expect(wideFirst.join("\n")).toContain("Checkpoints: metadata capture checkpoint, approval integration checkpoint");
-  expect(wideFirst.join("\n")).toContain("Assumptions: The stored metadata stays canonical through approval and execution prompt generation.");
+  expect(wideFirst.join("\n")).toContain(
+    "Checkpoints: metadata capture checkpoint, approval integration checkpoint",
+  );
+  expect(wideFirst.join("\n")).toContain(
+    "Assumptions: The stored metadata stays canonical through approval and execution prompt generation.",
+  );
   expect(wideFirst.join("\n")).toContain("depends on: none");
   expect(wideFirst.join("\n")).toContain("checkpoints: metadata capture checkpoint");
   expect(narrow).not.toBe(wideFirst);

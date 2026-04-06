@@ -168,7 +168,7 @@ This is useful when you want:
 - a concrete step list
 - a review point before execution
 - tracked step-by-step execution after approval
-- a structured dashboard widget with `ctrl+x` expand/collapse and `ctrl+shift+x` fullscreen controls for validated plan/review output
+- a structured dashboard widget with `alt+x` expand/collapse and `alt+shift+x` fullscreen controls for validated plan/review output
 
 ### 3. Run autonomous optimization loops
 

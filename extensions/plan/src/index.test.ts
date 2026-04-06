@@ -50,11 +50,8 @@ mock.module("@mariozechner/pi-tui", () => ({
 }));
 
 const { default: planExtension } = await import("./index");
-const {
-  PiPlanWorkflow,
-  getApprovedAutoPlanTextForTesting,
-  getStoredPlanMetadataForTesting,
-} = await import("./workflow");
+const { PiPlanWorkflow, getApprovedAutoPlanTextForTesting, getStoredPlanMetadataForTesting } =
+  await import("./workflow");
 
 type CommandHandler = (args: string, ctx: ExtensionContext) => Promise<void> | void;
 type ShortcutHandler = (ctx: ExtensionContext) => Promise<void> | void;
@@ -93,7 +90,11 @@ function createUiStub(customSelection?: { cancelled: boolean; action?: string; n
       setStatus(key: string, value: string | undefined) {
         statuses.set(key, value);
       },
-      setWidget(key: string, value: string[] | ((...args: unknown[]) => unknown) | undefined, options?: unknown) {
+      setWidget(
+        key: string,
+        value: string[] | ((...args: unknown[]) => unknown) | undefined,
+        options?: unknown,
+      ) {
         widgetUpdates.push({ key, value, options });
         widgetOptions.set(key, options);
         if (Array.isArray(value) || value === undefined) {
@@ -1020,9 +1021,7 @@ test("parseTaggedPlanningContract parses a valid tagged JSON plan block", async 
   };
 
   const result = parseTaggedPlanningContract(
-    ["1) Task understanding", "2) Codebase findings", buildTaggedJsonBlock(payload)].join(
-      "\n\n",
-    ),
+    ["1) Task understanding", "2) Codebase findings", buildTaggedJsonBlock(payload)].join("\n\n"),
   );
 
   expect(result).toEqual({
@@ -1405,14 +1404,14 @@ test("plan extension registers the guided workflow listener surface plus todos",
     "turn_end",
   ]);
   expect(harness.tools.has("ask_user_question")).toBe(true);
-  expect([...harness.shortcuts.keys()].sort()).toEqual(["ctrl+shift+m", "ctrl+m"]);
-  expect(harness.shortcuts.get("ctrl+m")).toEqual(
+  expect([...harness.shortcuts.keys()].sort()).toEqual(["alt+shift+x", "alt+x"]);
+  expect(harness.shortcuts.get("alt+x")).toEqual(
     expect.objectContaining({
       description: "Expand or collapse the top-level /plan dashboard",
       handler: expect.any(Function),
     }),
   );
-  expect(harness.shortcuts.get("ctrl+shift+m")).toEqual(
+  expect(harness.shortcuts.get("alt+shift+x")).toEqual(
     expect.objectContaining({
       description: "Open the top-level /plan dashboard in fullscreen",
       handler: expect.any(Function),
@@ -1446,18 +1445,18 @@ test("direct workflow harness records shortcut registrations and can invoke them
   const harness = createDirectWorkflowHarness();
   const calls: string[] = [];
 
-  harness.api.registerShortcut("ctrl+m", {
+  harness.api.registerShortcut("alt+x", {
     description: "Toggle dashboard",
     handler(ctx: ExtensionContext) {
       calls.push(ctx.hasUI ? "ui" : "headless");
     },
   });
 
-  await harness.runShortcut("ctrl+m");
+  await harness.runShortcut("alt+x");
 
   expect([...harness.shortcuts.entries()]).toEqual([
     [
-      "ctrl+m",
+      "alt+x",
       {
         description: "Toggle dashboard",
         handler: expect.any(Function),
@@ -1547,7 +1546,9 @@ test("non-ui /autoplan approve starts the recursive subtask loop", async () => {
 
   expect(harness.sentUserMessages).toHaveLength(2);
   expect(harness.sentUserMessages[1]).toContain("Current approved high-level task 1");
-  expect(harness.sentUserMessages[1]).not.toContain("Declared checkpoints for this high-level task:");
+  expect(harness.sentUserMessages[1]).not.toContain(
+    "Declared checkpoints for this high-level task:",
+  );
   expect(harness.sentUserMessages[1]).not.toContain(
     "Preserve the declared checkpoint or integration boundaries while planning this subtask.",
   );
@@ -1735,13 +1736,23 @@ test("/autoplan falls back to the existing backlog when progress review keeps re
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: buildExecutionResultText({ step: 1, status: "done", scope: "autoplan" }) }],
+      content: [
+        {
+          type: "text",
+          text: buildExecutionResultText({ step: 1, status: "done", scope: "autoplan" }),
+        },
+      ],
     },
   });
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: buildExecutionResultText({ step: 2, status: "done", scope: "autoplan" }) }],
+      content: [
+        {
+          type: "text",
+          text: buildExecutionResultText({ step: 2, status: "done", scope: "autoplan" }),
+        },
+      ],
     },
   });
 
@@ -1836,13 +1847,23 @@ test("/autoplan ignores Status: COMPLETE while tracked backlog still exists", as
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: buildExecutionResultText({ step: 1, status: "done", scope: "autoplan" }) }],
+      content: [
+        {
+          type: "text",
+          text: buildExecutionResultText({ step: 1, status: "done", scope: "autoplan" }),
+        },
+      ],
     },
   });
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: buildExecutionResultText({ step: 2, status: "done", scope: "autoplan" }) }],
+      content: [
+        {
+          type: "text",
+          text: buildExecutionResultText({ step: 2, status: "done", scope: "autoplan" }),
+        },
+      ],
     },
   });
 
@@ -1947,7 +1968,12 @@ test("/autoplan auto-plans each approved subtask without asking new questions", 
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: buildExecutionResultText({ step: 1, status: "done", scope: "autoplan" }) }],
+      content: [
+        {
+          type: "text",
+          text: buildExecutionResultText({ step: 1, status: "done", scope: "autoplan" }),
+        },
+      ],
     },
   });
   expect(harness.sentUserMessages).toHaveLength(4);
@@ -1958,7 +1984,12 @@ test("/autoplan auto-plans each approved subtask without asking new questions", 
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: buildExecutionResultText({ step: 2, status: "done", scope: "autoplan" }) }],
+      content: [
+        {
+          type: "text",
+          text: buildExecutionResultText({ step: 2, status: "done", scope: "autoplan" }),
+        },
+      ],
     },
   });
 
@@ -2040,10 +2071,12 @@ test("inner autoplan subtask execution reuses the structured dashboard widget", 
   );
 
   expect(harness.uiStub.widgetFactories.get("plan-todos")).toEqual(expect.any(Function));
-  await harness.runShortcut("ctrl+m");
+  await harness.runShortcut("alt+x");
   const rendered = renderStoredWidgetFactory(harness.uiStub, "plan-todos", 140).join("\n");
   expect(rendered).toContain("Scope: /autoplan");
-  expect(rendered).toContain("Summary: Current approved high-level task 1: A regression test for prompt leakage");
+  expect(rendered).toContain(
+    "Summary: Current approved high-level task 1: A regression test for prompt leakage",
+  );
   expect(rendered).toContain("State: subtask • 0/2 complete");
   expect(rendered).toContain("☐ 1. A regression test for prompt leakage");
   expect(rendered).not.toContain("Markdown says the wrong step name");
@@ -2095,13 +2128,23 @@ test("autoplan review pending renders a dashboard and session resets clear it", 
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: buildExecutionResultText({ step: 1, status: "done", scope: "autoplan" }) }],
+      content: [
+        {
+          type: "text",
+          text: buildExecutionResultText({ step: 1, status: "done", scope: "autoplan" }),
+        },
+      ],
     },
   });
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: buildExecutionResultText({ step: 2, status: "done", scope: "autoplan" }) }],
+      content: [
+        {
+          type: "text",
+          text: buildExecutionResultText({ step: 2, status: "done", scope: "autoplan" }),
+        },
+      ],
     },
   });
 
@@ -2109,7 +2152,7 @@ test("autoplan review pending renders a dashboard and session resets clear it", 
     expect.objectContaining({ customType: "autoplan-review-internal", display: false }),
   );
   expect(harness.uiStub.widgetFactories.get("plan-todos")).toEqual(expect.any(Function));
-  await harness.runShortcut("ctrl+m");
+  await harness.runShortcut("alt+x");
   const rendered = renderStoredWidgetFactory(harness.uiStub, "plan-todos", 140).join("\n");
   expect(rendered).toContain("Scope: /autoplan");
   expect(rendered).toContain("Summary: Reviewing progress against the long-term goal.");
@@ -2122,7 +2165,7 @@ test("autoplan review pending renders a dashboard and session resets clear it", 
 test("dashboard smoke path reuses one widget surface across /plan, top-level /autoplan, inner autoplan, and reset cleanup", async () => {
   const planHarness = createPlanExtensionHarness({ hasUI: true });
   await enterApprovalState(planHarness);
-  await planHarness.runShortcut("ctrl+m");
+  await planHarness.runShortcut("alt+x");
   expect(renderStoredWidgetFactory(planHarness.uiStub, "plan-todos", 140).join("\n")).toContain(
     "Scope: /plan",
   );
@@ -2140,7 +2183,7 @@ test("dashboard smoke path reuses one widget surface across /plan, top-level /au
     topLevelAutoPlanHarness,
     "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
   );
-  await topLevelAutoPlanHarness.runShortcut("ctrl+m");
+  await topLevelAutoPlanHarness.runShortcut("alt+x");
   expect(
     renderStoredWidgetFactory(topLevelAutoPlanHarness.uiStub, "plan-todos", 140).join("\n"),
   ).toContain("Scope: /autoplan");
@@ -2172,10 +2215,12 @@ test("dashboard smoke path reuses one widget surface across /plan, top-level /au
     innerAutoPlanHarness,
     "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
   );
-  await innerAutoPlanHarness.runShortcut("ctrl+m");
-  const innerRendered = renderStoredWidgetFactory(innerAutoPlanHarness.uiStub, "plan-todos", 140).join(
-    "\n",
-  );
+  await innerAutoPlanHarness.runShortcut("alt+x");
+  const innerRendered = renderStoredWidgetFactory(
+    innerAutoPlanHarness.uiStub,
+    "plan-todos",
+    140,
+  ).join("\n");
   expect(innerRendered).toContain("Scope: /autoplan");
   expect(innerRendered).toContain("State: subtask");
 
@@ -2688,13 +2733,23 @@ test("/autoplan retries non-compliant hidden reviews once and then stops on a re
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: buildExecutionResultText({ step: 1, status: "done", scope: "autoplan" }) }],
+      content: [
+        {
+          type: "text",
+          text: buildExecutionResultText({ step: 1, status: "done", scope: "autoplan" }),
+        },
+      ],
     },
   });
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: buildExecutionResultText({ step: 2, status: "done", scope: "autoplan" }) }],
+      content: [
+        {
+          type: "text",
+          text: buildExecutionResultText({ step: 2, status: "done", scope: "autoplan" }),
+        },
+      ],
     },
   });
 
@@ -2913,13 +2968,23 @@ test("/autoplan preserves the approved top-level plan text across review updates
   await harness.handleTurnEnd({
     message: {
       role: "assistant",
-      content: [{ type: "text", text: buildExecutionResultText({ step: 1, status: "done", scope: "autoplan" }) }],
+      content: [
+        {
+          type: "text",
+          text: buildExecutionResultText({ step: 1, status: "done", scope: "autoplan" }),
+        },
+      ],
     },
   });
   await harness.handleTurnEnd({
     message: {
       role: "assistant",
-      content: [{ type: "text", text: buildExecutionResultText({ step: 2, status: "done", scope: "autoplan" }) }],
+      content: [
+        {
+          type: "text",
+          text: buildExecutionResultText({ step: 2, status: "done", scope: "autoplan" }),
+        },
+      ],
     },
   });
 
@@ -3027,7 +3092,12 @@ test("/autoplan continues to the next inner step after a skipped subtask step", 
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: buildExecutionResultText({ step: 1, status: "skipped", scope: "autoplan" }) }],
+      content: [
+        {
+          type: "text",
+          text: buildExecutionResultText({ step: 1, status: "skipped", scope: "autoplan" }),
+        },
+      ],
     },
   });
 
@@ -3089,7 +3159,12 @@ test("/autoplan keeps executing the current subtask when the second inner todo i
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: buildExecutionResultText({ step: 1, status: "done", scope: "autoplan" }) }],
+      content: [
+        {
+          type: "text",
+          text: buildExecutionResultText({ step: 1, status: "done", scope: "autoplan" }),
+        },
+      ],
     },
   });
 
@@ -3240,13 +3315,23 @@ test("before_agent_start uses the tagged JSON contract for autoplan reviews", as
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: buildExecutionResultText({ step: 1, status: "done", scope: "autoplan" }) }],
+      content: [
+        {
+          type: "text",
+          text: buildExecutionResultText({ step: 1, status: "done", scope: "autoplan" }),
+        },
+      ],
     },
   });
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: buildExecutionResultText({ step: 2, status: "done", scope: "autoplan" }) }],
+      content: [
+        {
+          type: "text",
+          text: buildExecutionResultText({ step: 2, status: "done", scope: "autoplan" }),
+        },
+      ],
     },
   });
 
@@ -4133,7 +4218,7 @@ test("top-level /plan approval renders a compact dashboard widget from structure
   expect(rendered).not.toContain("wrong/path.ts");
 });
 
-test("ctrl+m toggles the top-level /plan dashboard between compact and expanded modes", async () => {
+test("alt+x toggles the top-level /plan dashboard between compact and expanded modes", async () => {
   const harness = createPlanExtensionHarness({ hasUI: true });
 
   await enterApprovalState(harness);
@@ -4142,13 +4227,13 @@ test("ctrl+m toggles the top-level /plan dashboard between compact and expanded 
     "📋 plan approval • 0/2",
   );
 
-  await harness.runShortcut("ctrl+m");
+  await harness.runShortcut("alt+x");
   const expanded = renderStoredWidgetFactory(harness.uiStub, "plan-todos", 140).join("\n");
   expect(expanded).toContain("State: approval • 0/2 complete");
   expect(expanded).toContain("Scope: /plan");
   expect(expanded).toContain("☐ 1. A regression test for prompt leakage");
 
-  await harness.runShortcut("ctrl+m");
+  await harness.runShortcut("alt+x");
   const compact = renderStoredWidgetFactory(harness.uiStub, "plan-todos").join("\n");
   expect(compact).toContain("📋 plan approval • 0/2");
   expect(compact).not.toContain("State: approval • 0/2 complete");
@@ -4182,20 +4267,20 @@ test("top-level /autoplan approval reuses the structured dashboard widget and sh
   expect(compact).toContain("Structured top-level autoplan is ready for approval.");
   expect(compact).not.toContain("Markdown says the wrong step name");
 
-  await harness.runShortcut("ctrl+m");
+  await harness.runShortcut("alt+x");
   const expanded = renderStoredWidgetFactory(harness.uiStub, "plan-todos", 140).join("\n");
   expect(expanded).toContain("Scope: /autoplan");
   expect(expanded).toContain("Structured top-level autoplan is ready for approval.");
   expect(expanded).toContain("☐ 1. A regression test for prompt leakage");
 });
 
-test("ctrl+shift+m opens a fullscreen dashboard overlay and escape closes it", async () => {
+test("alt+shift+x opens a fullscreen dashboard overlay and escape closes it", async () => {
   const harness = createPlanExtensionHarness({ hasUI: true });
 
   await enterApprovalState(harness);
   const customCallsBefore = harness.uiStub.customCalls.length;
 
-  await harness.runShortcut("ctrl+shift+m");
+  await harness.runShortcut("alt+shift+x");
 
   expect(harness.uiStub.customCalls).toHaveLength(customCallsBefore + 1);
   const doneCalls: unknown[] = [];
@@ -4218,7 +4303,7 @@ test("session shutdown clears expanded dashboard state before the next top-level
   const harness = createPlanExtensionHarness({ hasUI: true });
 
   await enterApprovalState(harness);
-  await harness.runShortcut("ctrl+m");
+  await harness.runShortcut("alt+x");
   expect(renderStoredWidgetFactory(harness.uiStub, "plan-todos", 140).join("\n")).toContain(
     "State: approval • 0/2 complete",
   );
@@ -4447,9 +4532,7 @@ test("execution prompts use stored structured step details and approved coordina
   expect(harness.sentUserMessages[0]).toContain(
     "Target files/components: src/workflow.ts; src/utils.ts",
   );
-  expect(harness.sentUserMessages[0]).toContain(
-    "Validation method: bun test ./src/index.test.ts",
-  );
+  expect(harness.sentUserMessages[0]).toContain("Validation method: bun test ./src/index.test.ts");
   expect(harness.sentUserMessages[0]).toContain(
     "Risks and rollback notes: Metadata normalization can drift from the original structured plan fields.",
   );

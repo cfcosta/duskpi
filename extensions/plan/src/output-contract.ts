@@ -86,10 +86,7 @@ export interface StructuredExecutionResultOutput {
 export type StructuredPlanningContract = StructuredPlanOutput | StructuredReviewOutput;
 export type StructuredTaggedContract = StructuredPlanningContract | StructuredExecutionResultOutput;
 
-export type PlanningContractParseErrorCode =
-  | "missing_block"
-  | "malformed_json"
-  | "invalid_schema";
+export type PlanningContractParseErrorCode = "missing_block" | "malformed_json" | "invalid_schema";
 
 export interface PlanningContractParseSuccess<T extends StructuredTaggedContract> {
   ok: true;
@@ -277,7 +274,9 @@ function validateTaggedContract(value: unknown): ValidationResult<StructuredTagg
   }
 }
 
-function validatePlanContract(value: Record<string, unknown>): ValidationResult<StructuredPlanOutput> {
+function validatePlanContract(
+  value: Record<string, unknown>,
+): ValidationResult<StructuredPlanOutput> {
   const taskGeometry = validateEnumValue(
     value.taskGeometry,
     TASK_GEOMETRIES,
@@ -430,7 +429,10 @@ function validateExecutionResultContract(
     return scope;
   }
 
-  const step = validatePositiveInteger(value.step, "Execution result payload must include a positive integer step.");
+  const step = validatePositiveInteger(
+    value.step,
+    "Execution result payload must include a positive integer step.",
+  );
   if (!step.ok) {
     return step;
   }
@@ -504,10 +506,7 @@ function validateExecutionResultContract(
   };
 }
 
-function validateSteps(
-  value: unknown,
-  label: string,
-): ValidationResult<StructuredPlanStep[]> {
+function validateSteps(value: unknown, label: string): ValidationResult<StructuredPlanStep[]> {
   if (!Array.isArray(value) || value.length === 0) {
     return invalidSchema(`${label} steps must be a non-empty array.`);
   }
@@ -577,18 +576,12 @@ function validateStep(value: unknown, index: number): ValidationResult<Structure
     return risks;
   }
 
-  const dependsOn = validatePositiveIntegerArray(
-    value.dependsOn,
-    `Step ${index + 1} dependsOn`,
-  );
+  const dependsOn = validatePositiveIntegerArray(value.dependsOn, `Step ${index + 1} dependsOn`);
   if (!dependsOn.ok) {
     return dependsOn;
   }
 
-  const checkpointIds = validateStringArray(
-    value.checkpointIds,
-    `Step ${index + 1} checkpointIds`,
-  );
+  const checkpointIds = validateStringArray(value.checkpointIds, `Step ${index + 1} checkpointIds`);
   if (!checkpointIds.ok) {
     return checkpointIds;
   }
@@ -721,7 +714,9 @@ function validateStepRelationships(
 
     for (const checkpointId of step.checkpointIds) {
       if (!checkpointIds.has(checkpointId)) {
-        return invalidSchema(`Step ${step.step} checkpointIds must reference existing checkpoints.`);
+        return invalidSchema(
+          `Step ${step.step} checkpointIds must reference existing checkpoints.`,
+        );
       }
     }
   }

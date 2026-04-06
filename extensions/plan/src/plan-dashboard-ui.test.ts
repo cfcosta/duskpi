@@ -16,9 +16,8 @@ mock.module("@mariozechner/pi-tui", () => ({
   },
 }));
 
-const { FullscreenPlanDashboardComponent, renderPlanDashboardLines } = await import(
-  "./plan-dashboard-ui"
-);
+const { FullscreenPlanDashboardComponent, renderPlanDashboardLines } =
+  await import("./plan-dashboard-ui");
 
 function createTheme() {
   return {
@@ -101,7 +100,9 @@ test("renderPlanDashboardLines renders expanded dashboard metadata and step deta
   expect(rendered).toContain("State: approval • 2/3 complete");
   expect(rendered).toContain("Scope: /plan");
   expect(rendered).toContain("Strategy: shared_artifact • checkpointed_execution");
-  expect(rendered).toContain("Assumptions: Only valid tagged JSON should render., The dashboard replaces the old widget surface.");
+  expect(rendered).toContain(
+    "Assumptions: Only valid tagged JSON should render., The dashboard replaces the old widget surface.",
+  );
   expect(rendered).toContain("Checkpoints: Repo-local shortcut API exposed (checkpoint)");
   expect(rendered).toContain("Dependencies: 2 ← 1, 3 ← 2");
   expect(rendered).toContain("Badges: compact steps, validation noted");
@@ -121,7 +122,12 @@ test("renderPlanDashboardLines truncates narrow compact output", () => {
 });
 
 test("renderPlanDashboardLines omits the inline header for fullscreen mode", () => {
-  const lines = renderPlanDashboardLines(createSnapshot(), "fullscreen", 120, createTheme() as never);
+  const lines = renderPlanDashboardLines(
+    createSnapshot(),
+    "fullscreen",
+    120,
+    createTheme() as never,
+  );
 
   expect(lines[0]).toContain("State: approval • 2/3 complete");
   expect(lines.join("\n")).not.toContain("─── plan dashboard ");

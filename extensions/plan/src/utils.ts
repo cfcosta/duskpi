@@ -42,15 +42,7 @@ const DESTRUCTIVE_PATTERNS = [
   /\b(vim?|nano|emacs|code|subl)\b/i,
 ];
 
-const SHELL_CONTROL_PATTERNS = [
-  /(^|[^|])\|(?!\|)/,
-  /&&/,
-  /;/,
-  /\$\(/,
-  /`/,
-  /<\(/,
-  /\n/,
-];
+const SHELL_CONTROL_PATTERNS = [/(^|[^|])\|(?!\|)/, /&&/, /;/, /\$\(/, /`/, /<\(/, /\n/];
 
 const SAFE_PATTERNS = [
   /^\s*cat\b/,
@@ -226,7 +218,9 @@ export function normalizeStructuredPlanMetadata(
   };
 }
 
-export function formatCheckpointLabel(checkpoint: Pick<NormalizedPlanCheckpoint, "title" | "kind">): string {
+export function formatCheckpointLabel(
+  checkpoint: Pick<NormalizedPlanCheckpoint, "title" | "kind">,
+): string {
   return `${checkpoint.title} (${checkpoint.kind})`;
 }
 
@@ -247,7 +241,9 @@ export function getStepCheckpointMetadata(
   }
 
   return step.checkpointIds
-    .map((checkpointId) => planMetadata.checkpoints.find((checkpoint) => checkpoint.id === checkpointId))
+    .map((checkpointId) =>
+      planMetadata.checkpoints.find((checkpoint) => checkpoint.id === checkpointId),
+    )
     .filter((checkpoint): checkpoint is NormalizedPlanCheckpoint => Boolean(checkpoint));
 }
 

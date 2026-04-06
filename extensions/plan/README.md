@@ -16,7 +16,7 @@ This directory is the repo-local copy bundled under `extensions/plan`. It is not
 - non-UI approval fallback commands while approval is pending: `/plan approve`, `/plan continue <note>`, `/plan regenerate`, `/plan exit`
 - approval previews that now show coordination strategy, dependency, checkpoint, and assumption summaries in addition to compact step details
 - a structured plan dashboard widget that reuses validated `pi-plan-json` metadata for `/plan`, top-level `/autoplan`, inner autoplan subtasks, and autoplan progress review states
-- autoresearch-style dashboard controls: compact by default, `ctrl+x` to expand/collapse, and `ctrl+shift+x` for a fullscreen overlay
+- autoresearch-style dashboard controls: compact by default, `alt+x` to expand/collapse, and `alt+shift+x` for a fullscreen overlay
 - normalized plan metadata capture so task geometry, coordination pattern, dependencies, checkpoints, assumptions, and escalation triggers survive approval and execution reuse
 - `/todos` progress reporting that stays compact during approved execution even when the underlying plan carries richer coordination metadata
 - step-by-step approved execution with one `jj` commit per plan step plus a structured tagged `execution_result` payload for progress syncing
@@ -105,8 +105,8 @@ If you press `Esc` to cancel an in-flight planning response, Pi now stays in rea
 While that structured dashboard is visible:
 
 - compact mode is the default widget
-- `ctrl+x` toggles between compact and expanded dashboard rendering
-- `ctrl+shift+x` opens the same structured dashboard in a fullscreen overlay
+- `alt+x` toggles between compact and expanded dashboard rendering
+- `alt+shift+x` opens the same structured dashboard in a fullscreen overlay
 - the dashboard covers top-level `/plan`, top-level `/autoplan` approval, inner autoplan subtask work, and autoplan review states whenever validated structured payloads exist
 
 Choosing **Approve and execute now** automatically:
