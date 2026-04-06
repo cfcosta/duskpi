@@ -235,6 +235,38 @@ There is no single universally complete catalog across all domains. When the evi
 
 Only include cross-boundary candidates when the analyzed scope actually contains evidence for them. Be explicit about migration risk, compatibility constraints, and required staged rollout behavior.
 
+## Mandatory structured output contract
+
+Return your final mapping report with a fenced tagged JSON block using `refactor-plan-json`.
+
+Use this exact payload shape inside the tagged block:
+
+```refactor-plan-json
+{
+  "version": 1,
+  "kind": "approved_refactor_plan",
+  "summary": "one-paragraph summary of the proposed refactor program",
+  "executionUnits": [
+    {
+      "id": "stable-kebab-case-id",
+      "title": "short execution unit title",
+      "objective": "what this unit changes and why",
+      "targets": ["path/to/file.ts"],
+      "validations": ["command or test to run"],
+      "dependsOn": ["upstream-unit-id"]
+    }
+  ]
+}
+```
+
+Rules for the tagged block:
+
+- `executionUnits` must be the manager-facing atomic work units you believe could be approved later.
+- Every execution unit must include `id`, `title`, `objective`, `targets`, `validations`, and `dependsOn`.
+- Use unique stable ids. Do not invent dependency ids that are not present in the same payload.
+- Use `[]` for `dependsOn` when a unit has no prerequisites.
+- Keep the surrounding prose rich, but treat the tagged JSON block as the authoritative structured artifact.
+
 ## Output format
 
 ### 1. Dependency Map

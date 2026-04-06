@@ -66,13 +66,15 @@ export function buildPrompt(input: BuildPromptInput): string {
   }
 
   if (phase === "skeptic") {
-    return [prompts.skeptic, "## Mapper Report from Phase 1", reports.mapper ?? ""].join("\n\n");
+    return [prompts.skeptic, "## Mapper Proposal (Structured Contract)", reports.mapper ?? ""].join(
+      "\n\n",
+    );
   }
 
   if (phase === "arbiter") {
     const sections = [
       prompts.arbiter,
-      "## Mapper Report (Phase 1)",
+      "## Mapper Proposal (Structured Contract)",
       reports.mapper ?? "",
       "## Skeptic Review (Phase 2)",
       reports.skeptic ?? "",
@@ -80,11 +82,11 @@ export function buildPrompt(input: BuildPromptInput): string {
 
     if (input.refinement?.trim()) {
       sections.push(
-        "## Existing Arbitration",
+        "## Existing Approved Plan (Structured Contract)",
         reports.arbiter ?? "",
         "## Refinement Request",
         input.refinement.trim(),
-        "Please produce a fully revised refactor plan.",
+        "Please produce a fully revised refactor plan in the structured contract format.",
       );
     }
 

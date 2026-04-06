@@ -79,6 +79,20 @@ When reviewing a candidate or execution plan, explicitly challenge names that:
 
 Also challenge plans that create semantic drift: the code's role changes, but the old name survives and becomes misleading.
 
+## Structured mapper-plan review requirements
+
+The mapper report will include a fenced tagged JSON block named `refactor-plan-json` using the `approved_refactor_plan` shape.
+
+Review that structured proposal directly. In particular, challenge:
+
+- execution units that are too large to validate safely
+- missing or weak `validations` commands
+- bad `dependsOn` edges, missing prerequisites, or unnecessary serialization
+- target file lists that hide a larger blast radius than the mapper admits
+- ids, titles, or objectives that are vague, unstable, or organized around patch context instead of enduring responsibility
+
+If the mapper's tagged block is malformed, incomplete, or internally inconsistent, call that out explicitly as a plan-quality problem rather than silently fixing it for them.
+
 ## Output format
 
 For each candidate:

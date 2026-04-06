@@ -294,8 +294,21 @@ test("loadPrompts returns structured error when files are missing", () => {
   }
 });
 
-test("buildPrompt includes refinement contract for arbiter mode", () => {
-  const prompt = buildPrompt({
+test("buildPrompt labels structured contract inputs for skeptic and arbiter phases", () => {
+  const skepticPrompt = buildPrompt({
+    phase: "skeptic",
+    prompts: {
+      mapper: "MAPPER",
+      skeptic: "SKEPTIC",
+      arbiter: "ARBITER",
+      executor: "EXECUTOR",
+    },
+    reports: {
+      mapper: "mapper-report",
+    },
+  });
+
+  const arbiterPrompt = buildPrompt({
     phase: "arbiter",
     prompts: {
       mapper: "MAPPER",
@@ -311,10 +324,11 @@ test("buildPrompt includes refinement contract for arbiter mode", () => {
     refinement: "tighten blast radius",
   });
 
-  assert.match(prompt, /## Existing Arbitration/);
-  assert.match(prompt, /arbiter-report/);
-  assert.match(prompt, /## Refinement Request/);
-  assert.match(prompt, /tighten blast radius/);
+  assert.match(skepticPrompt, /## Mapper Proposal \(Structured Contract\)/);
+  assert.match(arbiterPrompt, /## Mapper Proposal \(Structured Contract\)/);
+  assert.match(arbiterPrompt, /## Existing Approved Plan \(Structured Contract\)/);
+  assert.match(arbiterPrompt, /fully revised refactor plan in the structured contract format/i);
+  assert.match(arbiterPrompt, /tighten blast radius/);
 });
 
 test("real prompt bundle includes a complete canonical refactoring catalog", () => {
@@ -342,6 +356,43 @@ test("real prompt bundle includes a complete canonical refactoring catalog", () 
   assert.match(loaded.prompts.executor, /Change Function Declaration/i);
   assert.match(loaded.prompts.executor, /Decompose Conditional/i);
   assert.match(loaded.prompts.executor, /Cross-boundary refactorings/i);
+});
+
+test("real prompt bundle wires mapper and arbiter to the refactor structured contract", () => {
+  const promptDirectory = path.join(path.dirname(new URL(import.meta.url).pathname), "prompts");
+  const loaded = loadPrompts(promptDirectory);
+
+  assert.equal(loaded.ok, true);
+  if (!loaded.ok) {
+    return;
+  }
+
+  assert.match(loaded.prompts.mapper, /refactor-plan-json/i);
+  assert.match(loaded.prompts.mapper, /approved_refactor_plan/i);
+  assert.match(loaded.prompts.mapper, /executionUnits/i);
+  assert.match(loaded.prompts.mapper, /dependsOn/i);
+  assert.match(loaded.prompts.arbiter, /refactor-plan-json/i);
+  assert.match(loaded.prompts.arbiter, /approved_refactor_plan/i);
+  assert.match(
+    loaded.prompts.arbiter,
+    /Emit the tagged block only when at least one execution unit is approved/i,
+  );
+});
+
+test("real skeptic prompt challenges malformed structured mapper proposals", () => {
+  const promptDirectory = path.join(path.dirname(new URL(import.meta.url).pathname), "prompts");
+  const loaded = loadPrompts(promptDirectory);
+
+  assert.equal(loaded.ok, true);
+  if (!loaded.ok) {
+    return;
+  }
+
+  assert.match(loaded.prompts.skeptic, /refactor-plan-json/i);
+  assert.match(loaded.prompts.skeptic, /approved_refactor_plan/i);
+  assert.match(loaded.prompts.skeptic, /missing or weak `validations` commands/i);
+  assert.match(loaded.prompts.skeptic, /bad `dependsOn` edges/i);
+  assert.match(loaded.prompts.skeptic, /malformed, incomplete, or internally inconsistent/i);
 });
 
 test("real prompt bundle requires precise refactoring labels and tier separation", () => {

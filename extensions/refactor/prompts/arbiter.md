@@ -287,6 +287,38 @@ When judging a plan:
 - reject implementation-layer suffixes or qualifiers such as `Core`, `Impl`, `Internal`, `Manager`, or repeated `Result`-style words when they do not express a real domain distinction
 - only allow contextual qualifiers when they are a real domain distinction visible to readers outside this refactor
 
+## Mandatory structured approval contract
+
+When you approve one or more refactor units, your final answer must include a fenced tagged JSON block using `refactor-plan-json`.
+
+Use this exact payload shape inside the tagged block:
+
+```refactor-plan-json
+{
+  "version": 1,
+  "kind": "approved_refactor_plan",
+  "summary": "one-paragraph summary of the approved refactor program",
+  "executionUnits": [
+    {
+      "id": "stable-kebab-case-id",
+      "title": "short execution unit title",
+      "objective": "what this unit changes and why",
+      "targets": ["path/to/file.ts"],
+      "validations": ["command or test to run"],
+      "dependsOn": ["upstream-unit-id"]
+    }
+  ]
+}
+```
+
+Rules for the tagged block:
+
+- Emit the tagged block only when at least one execution unit is approved.
+- Every approved execution unit must include `id`, `title`, `objective`, `targets`, `validations`, and `dependsOn`.
+- Preserve dependency ids consistently across the final approved plan.
+- Keep the tagged block aligned with the prose verdicts and atomic commit plan.
+- If a refinement request is present, return a fully revised structured plan rather than patching only one unit in isolation.
+
 ## Final summary
 
 - Total candidates approved
