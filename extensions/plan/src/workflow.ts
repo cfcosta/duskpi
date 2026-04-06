@@ -647,6 +647,8 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   }
 
   async handleTodosCommand(_args: unknown, ctx: ExtensionContext): Promise<void> {
+    clearInputEditor(ctx);
+
     const progress = this.getExecutionProgressView();
     if (progress.totalSteps === 0) {
       notify(this.pi, ctx, "No tracked plan steps. Create a plan in /plan mode first.", "info");
@@ -672,6 +674,8 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   }
 
   async handleAutoPlanCommand(args: unknown, ctx: ExtensionContext): Promise<GuidedWorkflowResult> {
+    clearInputEditor(ctx);
+
     const raw = typeof args === "string" ? args.trim() : "";
 
     const nonUiApprovalResult = await this.handleNonUiApprovalCommand(raw, ctx);
@@ -716,6 +720,8 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   }
 
   async handleCommand(args: unknown, ctx: ExtensionContext): Promise<GuidedWorkflowResult> {
+    clearInputEditor(ctx);
+
     const raw = typeof args === "string" ? args.trim() : "";
 
     const nonUiApprovalResult = await this.handleNonUiApprovalCommand(raw, ctx);
@@ -2702,6 +2708,20 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       notify(this.pi, ctx, reason);
     }
   }
+}
+
+function clearInputEditor(ctx: ExtensionContext): void {
+  if (!ctx.hasUI) {
+    return;
+  }
+
+  // Extension slash commands execute immediately, so proactively clear the composer
+  // the same way built-in interactive commands do.
+
+  const ui = ctx.ui as ExtensionContext["ui"] & {
+    setEditorText?: (text: string) => void;
+  };
+  ui.setEditorText?.("");
 }
 
 function notify(

@@ -135,18 +135,20 @@ Use it when you want Pi to:
 
 #### `/refactor`
 
-Refactor workflow with explicit skepticism before execution.
+Refactor workflow with explicit skepticism, structured approval, and branch-and-merge execution.
 
 Use it when you want Pi to:
 
-- map refactor candidates
+- map refactor candidates into a structured plan
 - challenge whether they are actually worth doing
-- narrow the blast radius
-- then execute only the approved refactor plan
+- revise the plan through hidden arbiter follow-ups before approval
+- run approved work in isolated jj workspaces through worker agents
+- execute independent refactor units in parallel dependency layers when possible
+- keep merge/conflict handling manager-owned instead of leaving it to workers
 
-These four workflow-style extensions share the `PhaseWorkflow` runtime in `packages/workflow-core/`, so they keep the same phase-driven behavior and safety hooks.
+`/bug-fix`, `/owasp-fix`, and `/test-audit` still share the `PhaseWorkflow` runtime in `packages/workflow-core/` for fixed phase-driven analysis and execution flows.
 
-The bundled `plan` extension uses the same package's `GuidedWorkflow` runtime instead. That guided path covers read-only planning, hidden critique and revision turns, approval callbacks, step tracking, and session cleanup.
+The bundled `plan` extension and `/refactor` both use the package's `GuidedWorkflow` runtime. That guided path covers read-only planning, hidden critique and revision turns, approval callbacks, step tracking, and session cleanup.
 
 ### 2. Switch into explicit planning mode
 
@@ -278,8 +280,8 @@ Shared runtime package used by both workflow families in this repo.
 
 It holds the reusable orchestration pieces for:
 
-- `PhaseWorkflow` for `/bug-fix`, `/owasp-fix`, `/test-audit`, and `/refactor`
-- `GuidedWorkflow` for `/plan`
+- `PhaseWorkflow` for `/bug-fix`, `/owasp-fix`, and `/test-audit`
+- `GuidedWorkflow` for `/plan` and `/refactor`
 - registration helpers for both workflow styles
 - prompt loading and message parsing helpers
 - extension-facing API abstractions and local typings

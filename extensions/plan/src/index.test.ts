@@ -75,6 +75,7 @@ function createUiStub(customSelection?: { cancelled: boolean; action?: string; n
   const widgetOptions = new Map<string, unknown>();
   const widgetUpdates: Array<{ key: string; value: unknown; options?: unknown }> = [];
   const customCalls: unknown[] = [];
+  const editorTextUpdates: string[] = [];
 
   return {
     notifications,
@@ -84,6 +85,7 @@ function createUiStub(customSelection?: { cancelled: boolean; action?: string; n
     widgetOptions,
     widgetUpdates,
     customCalls,
+    editorTextUpdates,
     ui: {
       notify(message: string, level: "info" | "warning" | "error") {
         notifications.push({ message, level });
@@ -102,6 +104,9 @@ function createUiStub(customSelection?: { cancelled: boolean; action?: string; n
 
         widgets.set(key, undefined);
         widgetFactories.set(key, value);
+      },
+      setEditorText(text: string) {
+        editorTextUpdates.push(text);
       },
       theme: {
         fg: (_color: string, text: string) => text,
@@ -1400,14 +1405,14 @@ test("plan extension registers the guided workflow listener surface plus todos",
     "turn_end",
   ]);
   expect(harness.tools.has("ask_user_question")).toBe(true);
-  expect([...harness.shortcuts.keys()].sort()).toEqual(["ctrl+shift+x", "ctrl+x"]);
-  expect(harness.shortcuts.get("ctrl+x")).toEqual(
+  expect([...harness.shortcuts.keys()].sort()).toEqual(["ctrl+shift+m", "ctrl+m"]);
+  expect(harness.shortcuts.get("ctrl+m")).toEqual(
     expect.objectContaining({
       description: "Expand or collapse the top-level /plan dashboard",
       handler: expect.any(Function),
     }),
   );
-  expect(harness.shortcuts.get("ctrl+shift+x")).toEqual(
+  expect(harness.shortcuts.get("ctrl+shift+m")).toEqual(
     expect.objectContaining({
       description: "Open the top-level /plan dashboard in fullscreen",
       handler: expect.any(Function),
@@ -1441,18 +1446,18 @@ test("direct workflow harness records shortcut registrations and can invoke them
   const harness = createDirectWorkflowHarness();
   const calls: string[] = [];
 
-  harness.api.registerShortcut("ctrl+x", {
+  harness.api.registerShortcut("ctrl+m", {
     description: "Toggle dashboard",
     handler(ctx: ExtensionContext) {
       calls.push(ctx.hasUI ? "ui" : "headless");
     },
   });
 
-  await harness.runShortcut("ctrl+x");
+  await harness.runShortcut("ctrl+m");
 
   expect([...harness.shortcuts.entries()]).toEqual([
     [
-      "ctrl+x",
+      "ctrl+m",
       {
         description: "Toggle dashboard",
         handler: expect.any(Function),
@@ -1482,6 +1487,15 @@ test("one-shot /plan task enables plan mode and starts a correlated planning req
   expect(harness.sentUserMessages[0]).toContain('"taskGeometry"');
   expect(harness.sentUserMessages[0]).toContain('"coordinationPattern"');
   expect(extractRequestId(harness.sentUserMessages[0] ?? "")).toBeTruthy();
+});
+
+test("/plan clears the editor immediately when the UI command fires", async () => {
+  const harness = createPlanExtensionHarness({ hasUI: true });
+
+  await harness.runCommand("plan", "Investigate flaky prompt extraction");
+
+  expect(harness.uiStub.editorTextUpdates).toEqual([""]);
+  expect(harness.sentUserMessages).toHaveLength(1);
 });
 
 test("/autoplan starts with the normal top-level planning flow", async () => {
@@ -2026,7 +2040,7 @@ test("inner autoplan subtask execution reuses the structured dashboard widget", 
   );
 
   expect(harness.uiStub.widgetFactories.get("plan-todos")).toEqual(expect.any(Function));
-  await harness.runShortcut("ctrl+x");
+  await harness.runShortcut("ctrl+m");
   const rendered = renderStoredWidgetFactory(harness.uiStub, "plan-todos", 140).join("\n");
   expect(rendered).toContain("Scope: /autoplan");
   expect(rendered).toContain("Summary: Current approved high-level task 1: A regression test for prompt leakage");
@@ -2095,7 +2109,7 @@ test("autoplan review pending renders a dashboard and session resets clear it", 
     expect.objectContaining({ customType: "autoplan-review-internal", display: false }),
   );
   expect(harness.uiStub.widgetFactories.get("plan-todos")).toEqual(expect.any(Function));
-  await harness.runShortcut("ctrl+x");
+  await harness.runShortcut("ctrl+m");
   const rendered = renderStoredWidgetFactory(harness.uiStub, "plan-todos", 140).join("\n");
   expect(rendered).toContain("Scope: /autoplan");
   expect(rendered).toContain("Summary: Reviewing progress against the long-term goal.");
@@ -2108,7 +2122,7 @@ test("autoplan review pending renders a dashboard and session resets clear it", 
 test("dashboard smoke path reuses one widget surface across /plan, top-level /autoplan, inner autoplan, and reset cleanup", async () => {
   const planHarness = createPlanExtensionHarness({ hasUI: true });
   await enterApprovalState(planHarness);
-  await planHarness.runShortcut("ctrl+x");
+  await planHarness.runShortcut("ctrl+m");
   expect(renderStoredWidgetFactory(planHarness.uiStub, "plan-todos", 140).join("\n")).toContain(
     "Scope: /plan",
   );
@@ -2126,7 +2140,7 @@ test("dashboard smoke path reuses one widget surface across /plan, top-level /au
     topLevelAutoPlanHarness,
     "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
   );
-  await topLevelAutoPlanHarness.runShortcut("ctrl+x");
+  await topLevelAutoPlanHarness.runShortcut("ctrl+m");
   expect(
     renderStoredWidgetFactory(topLevelAutoPlanHarness.uiStub, "plan-todos", 140).join("\n"),
   ).toContain("Scope: /autoplan");
@@ -2158,7 +2172,7 @@ test("dashboard smoke path reuses one widget surface across /plan, top-level /au
     innerAutoPlanHarness,
     "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
   );
-  await innerAutoPlanHarness.runShortcut("ctrl+x");
+  await innerAutoPlanHarness.runShortcut("ctrl+m");
   const innerRendered = renderStoredWidgetFactory(innerAutoPlanHarness.uiStub, "plan-todos", 140).join(
     "\n",
   );
@@ -4119,7 +4133,7 @@ test("top-level /plan approval renders a compact dashboard widget from structure
   expect(rendered).not.toContain("wrong/path.ts");
 });
 
-test("ctrl+x toggles the top-level /plan dashboard between compact and expanded modes", async () => {
+test("ctrl+m toggles the top-level /plan dashboard between compact and expanded modes", async () => {
   const harness = createPlanExtensionHarness({ hasUI: true });
 
   await enterApprovalState(harness);
@@ -4128,13 +4142,13 @@ test("ctrl+x toggles the top-level /plan dashboard between compact and expanded 
     "📋 plan approval • 0/2",
   );
 
-  await harness.runShortcut("ctrl+x");
+  await harness.runShortcut("ctrl+m");
   const expanded = renderStoredWidgetFactory(harness.uiStub, "plan-todos", 140).join("\n");
   expect(expanded).toContain("State: approval • 0/2 complete");
   expect(expanded).toContain("Scope: /plan");
   expect(expanded).toContain("☐ 1. A regression test for prompt leakage");
 
-  await harness.runShortcut("ctrl+x");
+  await harness.runShortcut("ctrl+m");
   const compact = renderStoredWidgetFactory(harness.uiStub, "plan-todos").join("\n");
   expect(compact).toContain("📋 plan approval • 0/2");
   expect(compact).not.toContain("State: approval • 0/2 complete");
@@ -4168,20 +4182,20 @@ test("top-level /autoplan approval reuses the structured dashboard widget and sh
   expect(compact).toContain("Structured top-level autoplan is ready for approval.");
   expect(compact).not.toContain("Markdown says the wrong step name");
 
-  await harness.runShortcut("ctrl+x");
+  await harness.runShortcut("ctrl+m");
   const expanded = renderStoredWidgetFactory(harness.uiStub, "plan-todos", 140).join("\n");
   expect(expanded).toContain("Scope: /autoplan");
   expect(expanded).toContain("Structured top-level autoplan is ready for approval.");
   expect(expanded).toContain("☐ 1. A regression test for prompt leakage");
 });
 
-test("ctrl+shift+x opens a fullscreen dashboard overlay and escape closes it", async () => {
+test("ctrl+shift+m opens a fullscreen dashboard overlay and escape closes it", async () => {
   const harness = createPlanExtensionHarness({ hasUI: true });
 
   await enterApprovalState(harness);
   const customCallsBefore = harness.uiStub.customCalls.length;
 
-  await harness.runShortcut("ctrl+shift+x");
+  await harness.runShortcut("ctrl+shift+m");
 
   expect(harness.uiStub.customCalls).toHaveLength(customCallsBefore + 1);
   const doneCalls: unknown[] = [];
@@ -4204,7 +4218,7 @@ test("session shutdown clears expanded dashboard state before the next top-level
   const harness = createPlanExtensionHarness({ hasUI: true });
 
   await enterApprovalState(harness);
-  await harness.runShortcut("ctrl+x");
+  await harness.runShortcut("ctrl+m");
   expect(renderStoredWidgetFactory(harness.uiStub, "plan-todos", 140).join("\n")).toContain(
     "State: approval • 0/2 complete",
   );
