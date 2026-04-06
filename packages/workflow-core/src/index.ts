@@ -80,3 +80,9 @@ export type {
   PhaseWorkflowController,
   RegisterPhaseWorkflowExtensionOptions,
 } from "./register-phase-workflow-extension";
+export { JjWorkspaceManager } from "./workspace-manager";
+export type {
+  JjWorkspaceManagerOptions,
+  ManagedWorkspace,
+  WorkspaceExec,
+} from "./workspace-manager";
