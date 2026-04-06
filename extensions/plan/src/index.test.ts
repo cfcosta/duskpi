@@ -1380,6 +1380,79 @@ test("non-ui /autoplan approve starts the recursive subtask loop", async () => {
 
   expect(harness.sentUserMessages).toHaveLength(2);
   expect(harness.sentUserMessages[1]).toContain("Current approved high-level task 1");
+  expect(harness.sentUserMessages[1]).not.toContain("Declared checkpoints for this high-level task:");
+  expect(harness.sentUserMessages[1]).not.toContain(
+    "Preserve the declared checkpoint or integration boundaries while planning this subtask.",
+  );
+});
+
+test("autoplan subtask prompts include checkpoint-aware guidance only when top-level metadata declares checkpoints", async () => {
+  const checkpointHarness = createPlanExtensionHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+  });
+
+  await checkpointHarness.runCommand("autoplan", "Rewrite this in Rust");
+
+  const checkpointTopLevelPrompt = checkpointHarness.sentUserMessages[0] ?? "";
+  await checkpointHarness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: checkpointTopLevelPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildCoordinationMetadataPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    checkpointHarness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  expect(checkpointHarness.sentUserMessages[1]).toContain(
+    "Declared checkpoints for this high-level task:",
+  );
+  expect(checkpointHarness.sentUserMessages[1]).toContain(
+    "- Review captured metadata (checkpoint): Confirm the stored metadata matches the parsed contract before approval.",
+  );
+  expect(checkpointHarness.sentUserMessages[1]).toContain(
+    "Preserve the declared checkpoint or integration boundaries while planning this subtask.",
+  );
+
+  const plainHarness = createPlanExtensionHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+  });
+
+  await plainHarness.runCommand("autoplan", "Rewrite this in Rust");
+
+  const plainTopLevelPrompt = plainHarness.sentUserMessages[0] ?? "";
+  await plainHarness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: plainTopLevelPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    plainHarness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  expect(plainHarness.sentUserMessages[1]).not.toContain(
+    "Declared checkpoints for this high-level task:",
+  );
+  expect(plainHarness.sentUserMessages[1]).not.toContain(
+    "Preserve the declared checkpoint or integration boundaries while planning this subtask.",
+  );
 });
 
 test("top-level /autoplan planning still allows ask_user_question before first approval", async () => {
@@ -1750,6 +1823,83 @@ test("/autoplan auto-plans each approved subtask without asking new questions", 
   expect(harness.sentUserMessages).toHaveLength(5);
   expect(harness.sentUserMessages[4]).toContain(
     "Current approved high-level task 2: Finalize the rust module wiring",
+  );
+});
+
+test("autoplan review prompts surface stored checkpoint metadata for completed and remaining high-level tasks", async () => {
+  const harness = createPlanExtensionHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+  });
+
+  await harness.runCommand("autoplan", "Rewrite this in Rust");
+
+  const topLevelPrompt = harness.sentUserMessages[0] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: topLevelPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildCoordinationMetadataPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  const subtaskPrompt = harness.sentUserMessages[1] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: subtaskPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  await harness.emit("turn_end", {
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "text",
+          text: buildExecutionResultText({ step: 1, status: "done", scope: "autoplan" }),
+        },
+      ],
+    },
+  });
+  await harness.emit("turn_end", {
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "text",
+          text: buildExecutionResultText({ step: 2, status: "done", scope: "autoplan" }),
+        },
+      ],
+    },
+  });
+
+  const reviewPrompt = String(harness.sentMessages.at(-1)?.content ?? "");
+  expect(reviewPrompt).toContain("Completed declared checkpoints:");
+  expect(reviewPrompt).toContain("Review captured metadata (checkpoint)");
+  expect(reviewPrompt).toContain("Remaining declared checkpoints:");
+  expect(reviewPrompt).toContain("Carry metadata into approval state (integration)");
+  expect(reviewPrompt).toContain(
+    "Preserve the declared checkpoint or integration boundaries in the remaining backlog.",
   );
 });
 

@@ -32,6 +32,10 @@ import {
   detectAutoPlanOutputComplianceIssues,
   extractDoneSteps,
   extractSkippedSteps,
+  findNormalizedPlanStep,
+  formatCheckpointLabel,
+  getCheckpointLabelsForSteps,
+  getStepCheckpointMetadata,
   isSafeReadOnlyCommand,
   markTodoItemsCompleted,
   markTodoItemsSkipped,
@@ -1525,11 +1529,26 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       (item) => !item.completed && !item.skipped,
     );
     const backlog = remaining.map((item) => `${item.step}. ${item.text}`).join("\n");
+    const currentStepMetadata = findNormalizedPlanStep(this.latestPlanMetadata ?? undefined, currentStep.step);
+    const currentStepCheckpoints = getStepCheckpointMetadata(
+      this.latestPlanMetadata ?? undefined,
+      currentStep.step,
+    );
 
     return [
       `Long-term goal: ${this.autoPlanGoal}`,
       ...this.getApprovedAutoPlanContextLines(),
       `Current approved high-level task ${currentStep.step}: ${currentStep.text}`,
+      currentStepMetadata && currentStepMetadata.dependsOn.length > 0
+        ? `This high-level task depends on approved steps: ${currentStepMetadata.dependsOn.join(", ")}`
+        : undefined,
+      currentStepCheckpoints.length > 0 ? "Declared checkpoints for this high-level task:" : undefined,
+      ...currentStepCheckpoints.map(
+        (checkpoint) => `- ${formatCheckpointLabel(checkpoint)}: ${checkpoint.why}`,
+      ),
+      currentStepCheckpoints.length > 0
+        ? "Preserve the declared checkpoint or integration boundaries while planning this subtask."
+        : undefined,
       backlog.length > 0 ? "Remaining high-level backlog for context:" : undefined,
       backlog.length > 0 ? backlog : undefined,
       "Plan only the current approved high-level task.",
@@ -1651,14 +1670,20 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   }
 
   private buildAutoPlanReviewPrompt(): string {
-    const completed = this.getExecutionSnapshot()
-      .items.filter((item) => item.completed)
-      .map((item) => `${item.step}. ${item.text}`)
-      .join("\n");
-    const remaining = this.getExecutionSnapshot()
-      .items.filter((item) => !item.completed && !item.skipped)
-      .map((item) => `${item.step}. ${item.text}`)
-      .join("\n");
+    const completedItems = this.getExecutionSnapshot().items.filter((item) => item.completed);
+    const remainingItems = this.getExecutionSnapshot().items.filter(
+      (item) => !item.completed && !item.skipped,
+    );
+    const completed = completedItems.map((item) => `${item.step}. ${item.text}`).join("\n");
+    const remaining = remainingItems.map((item) => `${item.step}. ${item.text}`).join("\n");
+    const completedCheckpointLabels = getCheckpointLabelsForSteps(
+      this.latestPlanMetadata ?? undefined,
+      completedItems.map((item) => item.step),
+    );
+    const remainingCheckpointLabels = getCheckpointLabelsForSteps(
+      this.latestPlanMetadata ?? undefined,
+      remainingItems.map((item) => item.step),
+    );
 
     return [
       "Review progress against the approved long-term goal.",
@@ -1666,8 +1691,15 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       ...this.getApprovedAutoPlanContextLines(),
       completed ? "Completed high-level tasks:" : undefined,
       completed || undefined,
+      completedCheckpointLabels.length > 0 ? "Completed declared checkpoints:" : undefined,
+      completedCheckpointLabels.length > 0 ? completedCheckpointLabels.join("; ") : undefined,
       remaining ? "Current remaining high-level backlog before review:" : undefined,
       remaining || undefined,
+      remainingCheckpointLabels.length > 0 ? "Remaining declared checkpoints:" : undefined,
+      remainingCheckpointLabels.length > 0 ? remainingCheckpointLabels.join("; ") : undefined,
+      remainingCheckpointLabels.length > 0
+        ? "Preserve the declared checkpoint or integration boundaries in the remaining backlog."
+        : undefined,
       "Inspect the current repo state if needed.",
       "Do not ask the user questions.",
       "Do not request approval.",

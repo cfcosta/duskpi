@@ -206,6 +206,45 @@ export function normalizeStructuredPlanMetadata(
   };
 }
 
+export function formatCheckpointLabel(checkpoint: Pick<NormalizedPlanCheckpoint, "title" | "kind">): string {
+  return `${checkpoint.title} (${checkpoint.kind})`;
+}
+
+export function findNormalizedPlanStep(
+  planMetadata: NormalizedPlanMetadata | undefined,
+  stepNumber: number,
+): NormalizedPlanStepMetadata | undefined {
+  return planMetadata?.steps.find((step) => step.step === stepNumber);
+}
+
+export function getStepCheckpointMetadata(
+  planMetadata: NormalizedPlanMetadata | undefined,
+  stepNumber: number,
+): NormalizedPlanCheckpoint[] {
+  const step = findNormalizedPlanStep(planMetadata, stepNumber);
+  if (!planMetadata || !step) {
+    return [];
+  }
+
+  return step.checkpointIds
+    .map((checkpointId) => planMetadata.checkpoints.find((checkpoint) => checkpoint.id === checkpointId))
+    .filter((checkpoint): checkpoint is NormalizedPlanCheckpoint => Boolean(checkpoint));
+}
+
+export function getCheckpointLabelsForSteps(
+  planMetadata: NormalizedPlanMetadata | undefined,
+  stepNumbers: number[],
+): string[] {
+  if (!planMetadata) {
+    return [];
+  }
+
+  const relevantSteps = new Set(stepNumbers);
+  return planMetadata.checkpoints
+    .filter((checkpoint) => relevantSteps.has(checkpoint.step))
+    .map((checkpoint) => formatCheckpointLabel(checkpoint));
+}
+
 export function extractDoneSteps(message: string): number[] {
   const steps: number[] = [];
   for (const match of message.matchAll(/\[DONE:(\d+)\]/gi)) {
