@@ -1,62 +1,123 @@
 import {
-  PhaseWorkflow,
+  GuidedWorkflow,
+  isSafeReadOnlyCommand,
   parseTrimmedStringArg as parseScopeArg,
   type ExtensionAPI,
+  type GuidedCritiqueVerdict,
+  type GuidedWorkflowResult,
   type PromptLoadResult,
 } from "../../packages/workflow-core/src/index";
 import { buildPrompt, type PromptBundle } from "./prompting";
 
-const ANALYSIS_PHASES = ["mapper", "skeptic", "arbiter"] as const;
-const EXECUTION_PHASE = "executor" as const;
+const VERDICT_PATTERN = /(?:^|\n)\s*(?:1\)\s*)?Verdict:\s*(PASS|REFINE|REJECT)\b/i;
 
-const PHASE_LABELS: Record<(typeof ANALYSIS_PHASES)[number] | typeof EXECUTION_PHASE, string> = {
-  mapper: "Mapping refactor candidates...",
-  skeptic: "Reviewing refactors...",
-  arbiter: "Arbitrating refactor plan...",
-  executor: "Executing refactors...",
-};
+export class RefactorWorkflow extends GuidedWorkflow {
+  private prompts?: PromptBundle;
+  private startupError?: Error;
 
-export class RefactorWorkflow extends PhaseWorkflow<PromptBundle> {
-  constructor(api: ExtensionAPI, promptProvider: () => PromptLoadResult<PromptBundle>) {
+  constructor(
+    api: ExtensionAPI,
+    private readonly promptProvider: () => PromptLoadResult<PromptBundle>,
+  ) {
     super(api, {
       id: "refactor",
-      analysisPhases: ANALYSIS_PHASES,
-      executionPhase: EXECUTION_PHASE,
-      phaseLabels: PHASE_LABELS,
-      promptProvider,
-      parseScopeArg,
-      buildPrompt: ({ phase, prompts, reports, scope, refinement }) =>
-        buildPrompt({
-          phase: phase as (typeof ANALYSIS_PHASES)[number] | typeof EXECUTION_PHASE,
-          prompts,
-          reports: {
-            mapper: reports.mapper,
-            skeptic: reports.skeptic,
-            arbiter: reports.arbiter,
-          },
-          scope,
-          refinement,
-        }),
-      text: {
-        unavailable: (error) =>
-          `Refactor is unavailable: ${error?.message ?? "prompt initialization failed."}`,
-        alreadyRunning: "Refactor is already running. Finish or cancel the current run first.",
-        analysisWriteBlocked: "Refactor analysis phase: writes are disabled",
-        complete: "Refactor workflow complete!",
-        cancelled: "Refactor cancelled.",
-        selectTitle: "Refactor - Analysis Complete",
-        executeOption: "Execute refactors (test-backed workflow)",
-        refineOption: "Refine the analysis",
-        cancelOption: "Cancel",
-        refineEditorLabel: "Refine analysis:",
-        sendFailed: (phase) => `Refactor stopped: failed to send prompt for phase '${phase}'.`,
-        missingOutputRetry: (phase, retry, maxRetries) =>
-          `No assistant output captured for phase '${phase}'. Retrying (${retry}/${maxRetries}).`,
-        missingOutputStopped: (attempts) =>
-          `Refactor stopped: no assistant output captured after ${attempts} attempts.`,
+      parseGoalArg: parseScopeArg,
+      buildPlanningPrompt: ({ goal }) => {
+        return buildPrompt({
+          phase: "mapper",
+          prompts: this.requirePrompts(),
+          reports: {},
+          scope: goal,
+        });
       },
-      maxEmptyOutputRetries: 2,
-      maxRefinementAttempts: 3,
+      critique: {
+        buildCritiquePrompt: ({ planText }) => {
+          return [
+            buildPrompt({
+              phase: "skeptic",
+              prompts: this.requirePrompts(),
+              reports: { mapper: planText },
+            }),
+            "Return your response with a leading line exactly in the form `1) Verdict: PASS`, `1) Verdict: REFINE`, or `1) Verdict: REJECT`.",
+          ].join("\n\n");
+        },
+        buildRevisionPrompt: ({ planText, critiqueText, verdict }) => {
+          const verdictInstruction =
+            verdict === "REJECT"
+              ? "Return the safest possible revised plan only if you can justify it clearly; otherwise minimize the approved execution surface."
+              : "Address the skeptic's concerns and return a fully revised refactor plan.";
+
+          return [
+            buildPrompt({
+              phase: "arbiter",
+              prompts: this.requirePrompts(),
+              reports: {
+                mapper: planText,
+                skeptic: critiqueText,
+              },
+            }),
+            verdictInstruction,
+          ].join("\n\n");
+        },
+        parseCritiqueVerdict: (text) => this.parseCritiqueVerdict(text),
+      },
+      planningPolicy: {
+        isSafeReadOnlyCommand,
+        writeBlockedReason: "Refactor analysis phase: writes are disabled",
+        bashBlockedReason: (command) =>
+          `Guided workflow planning phase blocked a potentially mutating bash command: ${command}`,
+      },
+      text: {
+        alreadyRunning: "Refactor is already running. Finish or cancel the current run first.",
+        sendFailed: "Refactor stopped: failed to send planning prompt.",
+      },
+      maxMissingOutputRetries: 2,
     });
+  }
+
+  async handleCommand(
+    args: unknown,
+    ctx: Parameters<GuidedWorkflow["handleCommand"]>[1],
+  ): Promise<GuidedWorkflowResult> {
+    this.reloadPrompts();
+
+    if (!this.prompts) {
+      ctx.ui.notify(
+        `Refactor is unavailable: ${this.startupError?.message ?? "prompt initialization failed."}`,
+        "error",
+      );
+      return { kind: "blocked", reason: "prompts_unavailable" };
+    }
+
+    return super.handleCommand(args, ctx);
+  }
+
+  private reloadPrompts(): void {
+    const result = this.promptProvider();
+    if (result.ok) {
+      this.prompts = result.prompts;
+      this.startupError = undefined;
+      return;
+    }
+
+    this.prompts = undefined;
+    this.startupError = result.error;
+  }
+
+  private requirePrompts(): PromptBundle {
+    if (!this.prompts) {
+      throw this.startupError ?? new Error("prompt initialization failed");
+    }
+
+    return this.prompts;
+  }
+
+  private parseCritiqueVerdict(text: string): GuidedCritiqueVerdict | undefined {
+    const verdict = text.match(VERDICT_PATTERN)?.[1]?.toUpperCase();
+    if (verdict === "PASS" || verdict === "REFINE" || verdict === "REJECT") {
+      return verdict;
+    }
+
+    return undefined;
   }
 }

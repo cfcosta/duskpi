@@ -9,28 +9,26 @@ import { buildPrompt, loadPrompts } from "./prompting";
 
 type NotifyLevel = "info" | "warning" | "error";
 
-function assertPhaseWorkflowListenerSurface(
+function assertGuidedWorkflowListenerSurface(
   listeners: Record<string, (...args: unknown[]) => Promise<unknown>>,
 ) {
   assert.deepEqual(Object.keys(listeners).sort(), [
     "agent_end",
+    "before_agent_start",
     "session_compact",
     "session_fork",
     "session_shutdown",
     "session_start",
     "session_switch",
     "tool_call",
+    "turn_end",
   ]);
-  assert.equal(listeners.before_agent_start, undefined);
-  assert.equal(listeners.turn_end, undefined);
 }
 
-function createHarness(options?: {
-  selectChoice?: string;
-  editorValue?: string;
-  failSendCount?: number;
-}) {
+function createHarness(options?: { failSendCount?: number }) {
   const sentMessages: string[] = [];
+  const sentCustomMessages: Array<{ customType?: string; content?: unknown; display?: boolean }> =
+    [];
   const notifications: Array<{ message: string; level: NotifyLevel }> = [];
   const statuses: Array<string | undefined> = [];
   const widgets: Array<string | undefined> = [];
@@ -46,6 +44,9 @@ function createHarness(options?: {
 
       sentMessages.push(message);
     },
+    sendMessage(message: { customType?: string; content?: unknown; display?: boolean }) {
+      sentCustomMessages.push(message);
+    },
   };
 
   const ctx = {
@@ -60,10 +61,10 @@ function createHarness(options?: {
         widgets.push(widget);
       },
       async select() {
-        return options?.selectChoice ?? "Cancel";
+        return undefined;
       },
       async editor() {
-        return options?.editorValue ?? "";
+        return "";
       },
     },
   };
@@ -77,55 +78,41 @@ function createHarness(options?: {
 
   const workflow = new RefactorWorkflow(api as never, () => ({ ok: true, prompts }));
 
-  return { workflow, ctx: ctx as never, sentMessages, notifications, statuses, widgets };
+  return {
+    workflow,
+    ctx: ctx as never,
+    sentMessages,
+    sentCustomMessages,
+    notifications,
+    statuses,
+    widgets,
+  };
 }
 
-test("workflow advances through mapper and skeptic phases", async () => {
+function textMessage(text: string) {
+  return { role: "assistant", content: [{ type: "text", text }] };
+}
+
+test("workflow starts by sending the mapper planning prompt", async () => {
   const { workflow, ctx, sentMessages } = createHarness();
 
   await workflow.handleCommand("  src  ", ctx);
+
   assert.equal(sentMessages.length, 1);
   assert.match(sentMessages[0], /MAPPER/);
   assert.match(sentMessages[0], /Focus on: src/);
-
-  await workflow.handleAgentEnd(
-    {
-      messages: [
-        { role: "user", content: [{ type: "text", text: sentMessages[0] }] },
-        { role: "assistant", content: [{ type: "text", text: "mapper-report" }] },
-      ],
-    },
-    ctx,
-  );
-  assert.equal(sentMessages.length, 2);
-  assert.match(sentMessages[1], /SKEPTIC/);
-  assert.match(sentMessages[1], /mapper-report/);
-
-  await workflow.handleAgentEnd(
-    {
-      messages: [
-        { role: "user", content: [{ type: "text", text: sentMessages[1] }] },
-        { role: "assistant", content: [{ type: "text", text: "skeptic-notes" }] },
-      ],
-    },
-    ctx,
-  );
-  assert.equal(sentMessages.length, 3);
-  assert.match(sentMessages[2], /ARBITER/);
-  assert.match(sentMessages[2], /skeptic-notes/);
 });
 
-test("workflow ignores agent_end events that do not match pending prompt", async () => {
+test("workflow ignores agent_end events that do not match the active planning request", async () => {
   const { workflow, ctx, sentMessages } = createHarness();
 
   await workflow.handleCommand("", ctx);
-  assert.equal(sentMessages.length, 1);
 
   const mismatched = await workflow.handleAgentEnd(
     {
       messages: [
         { role: "user", content: [{ type: "text", text: "some other prompt" }] },
-        { role: "assistant", content: [{ type: "text", text: "wrong response" }] },
+        textMessage("wrong response"),
       ],
     },
     ctx,
@@ -134,36 +121,116 @@ test("workflow ignores agent_end events that do not match pending prompt", async
   assert.equal(mismatched.kind, "blocked");
   assert.equal(mismatched.reason, "unmatched_agent_end");
   assert.equal(sentMessages.length, 1);
+});
 
+test("workflow sends a hidden skeptic critique after the mapper response", async () => {
+  const { workflow, ctx, sentMessages, sentCustomMessages } = createHarness();
+
+  await workflow.handleCommand("", ctx);
   await workflow.handleAgentEnd(
     {
       messages: [
-        { role: "user", content: [{ type: "text", text: sentMessages[0] }] },
-        { role: "assistant", content: [{ type: "text", text: "mapper-report" }] },
+        { role: "user", content: [{ type: "text", text: sentMessages[0]! }] },
+        textMessage("mapper-report"),
       ],
     },
     ctx,
   );
 
-  assert.equal(sentMessages.length, 2);
-  assert.match(sentMessages[1], /SKEPTIC/);
+  assert.equal(sentCustomMessages.length, 1);
+  assert.match(String(sentCustomMessages[0]?.content ?? ""), /SKEPTIC/);
+  assert.match(String(sentCustomMessages[0]?.content ?? ""), /mapper-report/);
+  assert.match(String(sentCustomMessages[0]?.content ?? ""), /Verdict: PASS/);
 });
 
-test("workflow stops after bounded empty-output retries", async () => {
-  const { workflow, ctx, sentMessages, notifications } = createHarness();
+test("workflow sends a hidden arbiter revision after a REFINE critique", async () => {
+  const { workflow, ctx, sentMessages, sentCustomMessages } = createHarness();
 
   await workflow.handleCommand("", ctx);
-  assert.equal(sentMessages.length, 1);
+  await workflow.handleAgentEnd(
+    {
+      messages: [
+        { role: "user", content: [{ type: "text", text: sentMessages[0]! }] },
+        textMessage("mapper-report"),
+      ],
+    },
+    ctx,
+  );
 
-  for (let i = 0; i < 3; i += 1) {
-    await workflow.handleAgentEnd(
-      { messages: [{ role: "assistant", content: [{ type: "tool_result", text: "nope" }] }] },
-      ctx,
-    );
-  }
+  const critiquePrompt = String(sentCustomMessages[0]?.content ?? "");
+  await workflow.handleAgentEnd(
+    {
+      messages: [
+        { role: "custom", content: critiquePrompt },
+        textMessage(`1) Verdict: REFINE
+2) Issues:
+- split a step`),
+      ],
+    },
+    ctx,
+  );
 
-  assert.equal(notifications.at(-1)?.level, "info");
-  assert.match(notifications.at(-1)?.message ?? "", /stopped: no assistant output/);
+  assert.equal(sentCustomMessages.length, 2);
+  assert.match(String(sentCustomMessages[1]?.content ?? ""), /ARBITER/);
+  assert.match(String(sentCustomMessages[1]?.content ?? ""), /mapper-report/);
+  assert.match(String(sentCustomMessages[1]?.content ?? ""), /split a step/);
+});
+
+test("workflow reaches approval after arbiter revision and a PASS critique", async () => {
+  const { workflow, ctx, sentMessages, sentCustomMessages } = createHarness();
+
+  await workflow.handleCommand("", ctx);
+  await workflow.handleAgentEnd(
+    {
+      messages: [
+        { role: "user", content: [{ type: "text", text: sentMessages[0]! }] },
+        textMessage("mapper-report"),
+      ],
+    },
+    ctx,
+  );
+
+  await workflow.handleAgentEnd(
+    {
+      messages: [
+        { role: "custom", content: String(sentCustomMessages[0]?.content ?? "") },
+        textMessage(`1) Verdict: REFINE
+2) Issues:
+- split a step`),
+      ],
+    },
+    ctx,
+  );
+
+  await workflow.handleAgentEnd(
+    {
+      messages: [
+        { role: "custom", content: String(sentCustomMessages[1]?.content ?? "") },
+        textMessage("arbiter-plan"),
+      ],
+    },
+    ctx,
+  );
+
+  const result = await workflow.handleAgentEnd(
+    {
+      messages: [
+        { role: "custom", content: String(sentCustomMessages[2]?.content ?? "") },
+        textMessage(`1) Verdict: PASS
+2) Issues:
+- none`),
+      ],
+    },
+    ctx,
+  );
+
+  assert.deepEqual(result, { kind: "ok" });
+  assert.deepEqual(workflow.getStateSnapshot(), {
+    phase: "approval",
+    goal: undefined,
+    pendingRequestId: undefined,
+    awaitingResponse: false,
+  });
 });
 
 test("workflow blocks rerun while active", async () => {
@@ -182,86 +249,42 @@ test("workflow recovers cleanly when sendUserMessage throws", async () => {
   const firstRun = await workflow.handleCommand("", ctx);
   assert.equal(firstRun.kind, "recoverable_error");
   assert.equal(notifications.at(-1)?.level, "error");
-  assert.match(notifications.at(-1)?.message ?? "", /failed to send prompt/i);
+  assert.match(notifications.at(-1)?.message ?? "", /failed to send planning prompt/i);
 
   const secondRun = await workflow.handleCommand("", ctx);
   assert.equal(secondRun.kind, "ok");
 });
 
-test("workflow executes executor phase with latest arbiter output", async () => {
-  const { workflow, ctx, sentMessages, widgets } = createHarness({
-    selectChoice: "Execute refactors (test-backed workflow)",
-  });
-
-  await workflow.handleCommand("", ctx);
-  await workflow.handleAgentEnd(
-    { messages: [{ role: "assistant", content: [{ type: "text", text: "mapper-report" }] }] },
-    ctx,
-  );
-  await workflow.handleAgentEnd(
-    { messages: [{ role: "assistant", content: [{ type: "text", text: "skeptic-report" }] }] },
-    ctx,
-  );
-  await workflow.handleAgentEnd(
-    { messages: [{ role: "assistant", content: [{ type: "text", text: "arbiter-v1" }] }] },
-    ctx,
-  );
-
-  assert.equal(widgets.at(-1), undefined);
-  assert.match(sentMessages.at(-1) ?? "", /EXECUTOR/);
-  assert.match(sentMessages.at(-1) ?? "", /arbiter-v1/);
-});
-
-test("workflow limits refinement attempts", async () => {
-  const { workflow, ctx, notifications } = createHarness({
-    selectChoice: "Refine the analysis",
-    editorValue: "make it sharper",
-  });
-
-  await workflow.handleCommand("", ctx);
-  await workflow.handleAgentEnd(
-    { messages: [{ role: "assistant", content: [{ type: "text", text: "mapper-report" }] }] },
-    ctx,
-  );
-  await workflow.handleAgentEnd(
-    { messages: [{ role: "assistant", content: [{ type: "text", text: "skeptic-report" }] }] },
-    ctx,
-  );
-
-  for (let i = 0; i < 4; i += 1) {
-    await workflow.handleAgentEnd(
-      { messages: [{ role: "assistant", content: [{ type: "text", text: `arbiter-${i}` }] }] },
-      ctx,
-    );
-  }
-
-  assert.equal(notifications.at(-1)?.level, "info");
-  assert.match(notifications.at(-1)?.message ?? "", /refactor cancelled/i);
-});
-
-test("analysis phases block write-capable tools and only allow safe bash", async () => {
+test("planning shell blocks write-capable tools and only allows safe bash", async () => {
   const { workflow, ctx } = createHarness();
 
   await workflow.handleCommand("", ctx);
 
-  const writeResult = await workflow.handleToolCall({ toolName: "Write" });
-  const lowerEditResult = await workflow.handleToolCall({ toolName: "edit" });
-  const multiEditResult = await workflow.handleToolCall({ toolName: "MultiEdit" });
-  const mutatingBashResult = await workflow.handleToolCall({
-    toolName: "Bash",
-    input: { command: "rm -rf tmp" },
-  });
-  const readOnlyBashResult = await workflow.handleToolCall({
-    toolName: "Bash",
-    input: { command: "ls -la" },
-  });
+  const writeResult = await workflow.handleToolCall({ toolName: "Write" }, ctx);
+  const lowerEditResult = await workflow.handleToolCall({ toolName: "edit" }, ctx);
+  const multiEditResult = await workflow.handleToolCall({ toolName: "MultiEdit" }, ctx);
+  const mutatingBashResult = await workflow.handleToolCall(
+    {
+      toolName: "Bash",
+      input: { command: "rm -rf tmp" },
+    },
+    ctx,
+  );
+  const readOnlyBashResult = await workflow.handleToolCall(
+    {
+      toolName: "Bash",
+      input: { command: "ls -la" },
+    },
+    ctx,
+  );
 
   assert.equal(writeResult?.block, true);
   assert.equal(lowerEditResult?.block, true);
   assert.equal(multiEditResult?.block, true);
   assert.deepEqual(mutatingBashResult, {
     block: true,
-    reason: "Workflow analysis phase blocked a potentially mutating bash command: rm -rf tmp",
+    reason:
+      "Guided workflow planning phase blocked a potentially mutating bash command: rm -rf tmp",
   });
   assert.equal(readOnlyBashResult, undefined);
 });
@@ -600,28 +623,35 @@ test("real executor prompt gives concrete remediation guidance for LLM smells", 
   );
 });
 
-test("workflow reports invalid assistant payload instead of retrying as empty output", async () => {
+test("workflow retries an invalid planning payload as empty output", async () => {
   const { workflow, ctx, sentMessages, notifications } = createHarness();
 
   await workflow.handleCommand("", ctx);
   assert.equal(sentMessages.length, 1);
 
   const result = await workflow.handleAgentEnd(
-    { messages: [{ role: "assistant", content: "invalid-payload-shape" }] },
+    {
+      messages: [
+        { role: "user", content: [{ type: "text", text: sentMessages[0]! }] },
+        { role: "assistant", content: "invalid-payload-shape" },
+      ],
+    },
     ctx,
   );
 
   assert.equal(result.kind, "recoverable_error");
-  assert.equal(result.reason, "invalid_agent_payload");
-  assert.equal(notifications.at(-1)?.level, "error");
-  assert.match(notifications.at(-1)?.message ?? "", /invalid assistant payload/i);
+  assert.equal(result.reason, "empty_output_retry");
+  assert.equal(notifications.at(-1)?.level, "warning");
+  assert.match(notifications.at(-1)?.message ?? "", /planning response/i);
 });
 
-test("refactor command wiring uses real prompt files end-to-end", async () => {
+test("refactor command wiring uses real prompt files through mapper and hidden skeptic phases", async () => {
   const commands: Record<string, { handler: (args: unknown, ctx: unknown) => Promise<unknown> }> =
     {};
   const listeners: Record<string, (...args: unknown[]) => Promise<unknown>> = {};
   const sentMessages: string[] = [];
+  const sentCustomMessages: Array<{ customType?: string; content?: unknown; display?: boolean }> =
+    [];
 
   const api = {
     registerCommand(
@@ -636,6 +666,9 @@ test("refactor command wiring uses real prompt files end-to-end", async () => {
     sendUserMessage(message: string) {
       sentMessages.push(message);
     },
+    sendMessage(message: { customType?: string; content?: unknown; display?: boolean }) {
+      sentCustomMessages.push(message);
+    },
   };
 
   const ctx = {
@@ -644,7 +677,7 @@ test("refactor command wiring uses real prompt files end-to-end", async () => {
       setStatus() {},
       setWidget() {},
       async select() {
-        return "Cancel";
+        return undefined;
       },
       async editor() {
         return "";
@@ -658,10 +691,18 @@ test("refactor command wiring uses real prompt files end-to-end", async () => {
   assert.match(sentMessages[0] ?? "", /You are a refactor mapping agent/);
 
   await listeners.agent_end?.(
-    { messages: [{ role: "assistant", content: [{ type: "text", text: "mapper-report" }] }] },
+    {
+      messages: [
+        { role: "user", content: [{ type: "text", text: sentMessages[0] }] },
+        { role: "assistant", content: [{ type: "text", text: "mapper-report" }] },
+      ],
+    },
     ctx,
   );
-  assert.match(sentMessages[1] ?? "", /You are an adversarial refactor reviewer/);
+  assert.match(
+    String(sentCustomMessages[0]?.content ?? ""),
+    /You are an adversarial refactor reviewer/,
+  );
 });
 
 test("refactor registers command and event handlers", () => {
@@ -685,5 +726,5 @@ test("refactor registers command and event handlers", () => {
   refactor(api as never);
 
   assert.ok(commands["refactor"]);
-  assertPhaseWorkflowListenerSurface(listeners);
+  assertGuidedWorkflowListenerSurface(listeners);
 });

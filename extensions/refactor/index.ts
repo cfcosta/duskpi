@@ -1,18 +1,21 @@
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
-  registerPhaseWorkflowExtension,
+  registerGuidedWorkflowExtension,
   type ExtensionAPI,
 } from "../../packages/workflow-core/src/index";
 import { loadPrompts } from "./prompting";
 import { RefactorWorkflow } from "./workflow";
 
 export default function refactor(api: ExtensionAPI): void {
-  registerPhaseWorkflowExtension(api, {
-    moduleUrl: import.meta.url,
+  const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
+  const promptDirectory = path.resolve(moduleDirectory, "prompts");
+
+  registerGuidedWorkflowExtension(api, {
     commandName: "refactor",
-    description: "Run the refactoring workflow (4 phases)",
-    loadPrompts,
-    createWorkflow: (extensionApi, promptProvider) => {
-      return new RefactorWorkflow(extensionApi, promptProvider);
+    description: "Run the refactoring workflow",
+    createWorkflow: (extensionApi) => {
+      return new RefactorWorkflow(extensionApi, () => loadPrompts(promptDirectory));
     },
   });
 }
