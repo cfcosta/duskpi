@@ -57,6 +57,7 @@ const {
 } = await import("./workflow");
 
 type CommandHandler = (args: string, ctx: ExtensionContext) => Promise<void> | void;
+type ShortcutHandler = (ctx: ExtensionContext) => Promise<void> | void;
 type EventHandler = (event: unknown, ctx: ExtensionContext) => Promise<unknown> | unknown;
 
 interface HarnessOptions {
@@ -70,12 +71,18 @@ function createUiStub(customSelection?: { cancelled: boolean; action?: string; n
   const notifications: Array<{ message: string; level: "info" | "warning" | "error" }> = [];
   const statuses = new Map<string, string | undefined>();
   const widgets = new Map<string, string[] | undefined>();
+  const widgetFactories = new Map<string, unknown>();
+  const widgetOptions = new Map<string, unknown>();
+  const widgetUpdates: Array<{ key: string; value: unknown; options?: unknown }> = [];
   const customCalls: unknown[] = [];
 
   return {
     notifications,
     statuses,
     widgets,
+    widgetFactories,
+    widgetOptions,
+    widgetUpdates,
     customCalls,
     ui: {
       notify(message: string, level: "info" | "warning" | "error") {
@@ -84,8 +91,17 @@ function createUiStub(customSelection?: { cancelled: boolean; action?: string; n
       setStatus(key: string, value: string | undefined) {
         statuses.set(key, value);
       },
-      setWidget(key: string, value: string[] | undefined) {
-        widgets.set(key, value);
+      setWidget(key: string, value: string[] | ((...args: unknown[]) => unknown) | undefined, options?: unknown) {
+        widgetUpdates.push({ key, value, options });
+        widgetOptions.set(key, options);
+        if (Array.isArray(value) || value === undefined) {
+          widgets.set(key, value);
+          widgetFactories.delete(key);
+          return;
+        }
+
+        widgets.set(key, undefined);
+        widgetFactories.set(key, value);
       },
       theme: {
         fg: (_color: string, text: string) => text,
@@ -103,6 +119,7 @@ function createPlanExtensionHarness(options: HarnessOptions = {}) {
   const commands = new Map<string, CommandHandler>();
   const eventHandlers = new Map<string, EventHandler[]>();
   const tools = new Map<string, unknown>();
+  const shortcuts = new Map<string, { description?: string; handler: ShortcutHandler }>();
   const sentUserMessages: string[] = [];
   const sentMessages: Array<{ customType?: string; content?: unknown; display?: boolean }> = [];
   const allTools = [
@@ -137,6 +154,9 @@ function createPlanExtensionHarness(options: HarnessOptions = {}) {
       if (!activeTools.includes(definition.name)) {
         activeTools = [...activeTools, definition.name];
       }
+    },
+    registerShortcut(shortcut: string, config: { description?: string; handler: ShortcutHandler }) {
+      shortcuts.set(shortcut, config);
     },
     on(eventName: string, handler: EventHandler) {
       const handlers = eventHandlers.get(eventName) ?? [];
@@ -182,16 +202,25 @@ function createPlanExtensionHarness(options: HarnessOptions = {}) {
     return results;
   };
 
+  const runShortcut = async (shortcut: string) => {
+    const registered = shortcuts.get(shortcut);
+    assert.ok(registered, `Expected shortcut ${shortcut} to be registered`);
+    await registered?.handler(ctx);
+  };
+
   return {
+    api: pi,
     ctx,
     uiStub,
     commands,
     eventHandlers,
     tools,
+    shortcuts,
     sentMessages,
     sentUserMessages,
     getActiveTools: () => [...activeTools],
     runCommand,
+    runShortcut,
     emit,
     emitWithResult,
   };
@@ -200,6 +229,7 @@ function createPlanExtensionHarness(options: HarnessOptions = {}) {
 function createDirectWorkflowHarness(options: HarnessOptions = {}) {
   const sentUserMessages: string[] = [];
   const sentMessages: Array<{ customType?: string; content?: unknown; display?: boolean }> = [];
+  const shortcuts = new Map<string, { description?: string; handler: ShortcutHandler }>();
   const allTools = [
     { name: "read", capabilities: { readOnly: true } },
     { name: "bash", capabilities: { executesShell: true } },
@@ -225,6 +255,9 @@ function createDirectWorkflowHarness(options: HarnessOptions = {}) {
     getAllTools() {
       return allTools;
     },
+    registerShortcut(shortcut: string, config: { description?: string; handler: ShortcutHandler }) {
+      shortcuts.set(shortcut, config);
+    },
     getActiveTools() {
       return activeTools;
     },
@@ -241,13 +274,22 @@ function createDirectWorkflowHarness(options: HarnessOptions = {}) {
 
   const workflow = new PiPlanWorkflow(pi as never);
 
+  const runShortcut = async (shortcut: string) => {
+    const registered = shortcuts.get(shortcut);
+    assert.ok(registered, `Expected shortcut ${shortcut} to be registered`);
+    await registered?.handler(ctx);
+  };
+
   return {
+    api: pi,
     workflow,
     ctx,
     uiStub,
+    shortcuts,
     sentMessages,
     sentUserMessages,
     getActiveTools: () => [...activeTools],
+    runShortcut,
     handleAutoPlanCommand: async (args: string) =>
       workflow.handleAutoPlanCommand(args, ctx as never),
     handleAgentEnd: async (event: unknown) => workflow.handleAgentEnd(event as never, ctx as never),
@@ -1317,6 +1359,54 @@ test("plan extension registers the guided workflow listener surface plus todos",
     "turn_end",
   ]);
   expect(harness.tools.has("ask_user_question")).toBe(true);
+  expect([...harness.shortcuts.keys()]).toEqual([]);
+});
+
+test("plan test harness records rich widget factories with options", () => {
+  const uiStub = createUiStub();
+  const factory = (_tui: unknown, _theme: unknown) => ({
+    render(_width: number) {
+      return ["dashboard"];
+    },
+  });
+
+  uiStub.ui.setWidget("plan-dashboard", factory, { placement: "above_editor" });
+
+  expect(uiStub.widgets.get("plan-dashboard")).toBeUndefined();
+  expect(uiStub.widgetFactories.get("plan-dashboard")).toBe(factory);
+  expect(uiStub.widgetOptions.get("plan-dashboard")).toEqual({ placement: "above_editor" });
+  expect(uiStub.widgetUpdates).toEqual([
+    {
+      key: "plan-dashboard",
+      value: factory,
+      options: { placement: "above_editor" },
+    },
+  ]);
+});
+
+test("direct workflow harness records shortcut registrations and can invoke them", async () => {
+  const harness = createDirectWorkflowHarness();
+  const calls: string[] = [];
+
+  harness.api.registerShortcut("ctrl+x", {
+    description: "Toggle dashboard",
+    handler(ctx: ExtensionContext) {
+      calls.push(ctx.hasUI ? "ui" : "headless");
+    },
+  });
+
+  await harness.runShortcut("ctrl+x");
+
+  expect([...harness.shortcuts.entries()]).toEqual([
+    [
+      "ctrl+x",
+      {
+        description: "Toggle dashboard",
+        handler: expect.any(Function),
+      },
+    ],
+  ]);
+  expect(calls).toEqual(["headless"]);
 });
 
 test("one-shot /plan task enables plan mode and starts a correlated planning request", async () => {
