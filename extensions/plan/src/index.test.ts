@@ -3954,6 +3954,41 @@ test("ctrl+x toggles the top-level /plan dashboard between compact and expanded 
   expect(compact).not.toContain("State: approval • 0/2 complete");
 });
 
+test("top-level /autoplan approval reuses the structured dashboard widget and shortcuts", async () => {
+  const harness = createPlanExtensionHarness({ hasUI: true });
+
+  await harness.runCommand("autoplan", "Rewrite this in Rust");
+  const topLevelPrompt = harness.sentUserMessages[0] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: topLevelPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildConflictingRichPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- structured and ready",
+  );
+
+  expect(harness.uiStub.statuses.get("plan")).toBe("📋 0/2");
+  const compact = renderStoredWidgetFactory(harness.uiStub, "plan-todos").join("\n");
+  expect(compact).toContain("📋 autoplan: Rewrite this in Rust approval • 0/2");
+  expect(compact).toContain("Structured top-level autoplan is ready for approval.");
+  expect(compact).not.toContain("Markdown says the wrong step name");
+
+  await harness.runShortcut("ctrl+x");
+  const expanded = renderStoredWidgetFactory(harness.uiStub, "plan-todos", 140).join("\n");
+  expect(expanded).toContain("Scope: /autoplan");
+  expect(expanded).toContain("Structured top-level autoplan is ready for approval.");
+  expect(expanded).toContain("☐ 1. A regression test for prompt leakage");
+});
+
 test("ctrl+shift+x opens a fullscreen dashboard overlay and escape closes it", async () => {
   const harness = createPlanExtensionHarness({ hasUI: true });
 

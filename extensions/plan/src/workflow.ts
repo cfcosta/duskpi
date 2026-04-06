@@ -2417,7 +2417,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     if (!dashboardSnapshot) {
       this.dashboardExpanded = false;
       this.refreshPlanWidget(ctx);
-      notify(this.pi, ctx, "No structured top-level /plan dashboard is available yet.", "info");
+      notify(this.pi, ctx, "No structured top-level planning dashboard is available yet.", "info");
       return;
     }
 
@@ -2428,7 +2428,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   private async openTopLevelDashboardFullscreen(ctx: ExtensionContext): Promise<void> {
     const dashboardSnapshot = this.buildTopLevelPlanDashboardSnapshot();
     if (!dashboardSnapshot) {
-      notify(this.pi, ctx, "No structured top-level /plan dashboard is available yet.", "info");
+      notify(this.pi, ctx, "No structured top-level planning dashboard is available yet.", "info");
       return;
     }
 
@@ -2457,7 +2457,12 @@ export class PiPlanWorkflow extends GuidedWorkflow {
 
   private buildTopLevelPlanDashboardSnapshot(): PlanDashboardSnapshot | undefined {
     const state = this.getStateSnapshot();
-    if (!this.planModeEnabled || this.executionMode || this.autoPlanMode !== "off") {
+    const isTopLevelAutoPlan = this.autoPlanMode === "bootstrap";
+    if (!this.planModeEnabled || this.executionMode) {
+      return undefined;
+    }
+
+    if (!isTopLevelAutoPlan && this.autoPlanMode !== "off") {
       return undefined;
     }
 
@@ -2475,14 +2480,17 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     );
     const checkpoints = planMetadata.checkpoints.map((checkpoint) => formatCheckpointLabel(checkpoint));
     const critiqueSummary = this.latestCritiqueSummary || this.approvalReview?.critiqueSummary;
-    const summary =
-      state.phase === "approval"
+    const summary = isTopLevelAutoPlan
+      ? state.phase === "approval"
+        ? "Structured top-level autoplan is ready for approval."
+        : "Structured top-level autoplan captured from valid pi-plan-json output."
+      : state.phase === "approval"
         ? "Structured plan ready for approval."
         : "Structured plan captured from valid pi-plan-json output.";
 
     return {
-      title: "plan",
-      scopeLabel: "/plan",
+      title: isTopLevelAutoPlan && this.autoPlanGoal.trim().length > 0 ? `autoplan: ${this.autoPlanGoal}` : "plan",
+      scopeLabel: isTopLevelAutoPlan ? "/autoplan" : "/plan",
       stateLabel: state.phase,
       summary,
       taskGeometry: planMetadata.taskGeometry,
