@@ -4,11 +4,14 @@ import {
   type PromptLoadResult,
 } from "../../packages/workflow-core/src/index";
 
+import type { RefactorExecutionUnit } from "./contract";
+
 export const PROMPT_FILE_NAMES = {
   mapper: "mapper.md",
   skeptic: "skeptic.md",
   arbiter: "arbiter.md",
   executor: "executor.md",
+  worker: "worker.md",
 } as const;
 
 export type PromptKey = keyof typeof PROMPT_FILE_NAMES;
@@ -53,6 +56,14 @@ type BuildPromptInput =
       reports: WorkflowReports;
     };
 
+export interface WorkerPromptInput {
+  prompts: PromptBundle;
+  executionUnit: RefactorExecutionUnit;
+  approvedPlanSummary?: string;
+  step?: number;
+  totalSteps?: number;
+}
+
 export function buildPrompt(input: BuildPromptInput): string {
   const { phase, prompts, reports } = input;
 
@@ -94,6 +105,34 @@ export function buildPrompt(input: BuildPromptInput): string {
   }
 
   return [prompts.executor, "## Approved Refactor Plan", reports.arbiter ?? ""].join("\n\n");
+}
+
+export function buildWorkerPrompt(input: WorkerPromptInput): string {
+  const sections = [input.prompts.worker];
+
+  if (input.approvedPlanSummary?.trim()) {
+    sections.push("## Approved Plan Summary", input.approvedPlanSummary.trim());
+  }
+
+  if (typeof input.step === "number" && typeof input.totalSteps === "number") {
+    sections.push("## Execution Position", `Unit ${input.step}/${input.totalSteps}`);
+  }
+
+  sections.push(
+    "## Assigned Execution Unit",
+    `ID: ${input.executionUnit.id}`,
+    `Title: ${input.executionUnit.title}`,
+    `Objective: ${input.executionUnit.objective}`,
+    input.executionUnit.dependsOn.length > 0
+      ? `Depends on: ${input.executionUnit.dependsOn.join(", ")}`
+      : "Depends on: none",
+    "Targets:",
+    ...input.executionUnit.targets.map((target) => `- ${target}`),
+    "Validations:",
+    ...input.executionUnit.validations.map((validation) => `- ${validation}`),
+  );
+
+  return sections.join("\n\n");
 }
 
 export { PromptLoadError };

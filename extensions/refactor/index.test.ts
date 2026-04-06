@@ -6,7 +6,7 @@ import * as path from "node:path";
 import refactor from "./index";
 import { REFACTOR_PLAN_JSON_BLOCK_TAG } from "./contract";
 import { RefactorWorkflow } from "./workflow";
-import { buildPrompt, loadPrompts } from "./prompting";
+import { buildPrompt, buildWorkerPrompt, loadPrompts } from "./prompting";
 
 type NotifyLevel = "info" | "warning" | "error";
 
@@ -79,6 +79,7 @@ function createHarness(options?: {
     skeptic: "SKEPTIC",
     arbiter: "ARBITER",
     executor: "EXECUTOR",
+    worker: "WORKER",
   };
 
   const workflow = new RefactorWorkflow(api as never, () => ({ ok: true, prompts }));
@@ -405,6 +406,7 @@ test("loadPrompts loads prompt bundle from a valid directory", () => {
   fs.writeFileSync(path.join(tempDir, "skeptic.md"), "skeptic");
   fs.writeFileSync(path.join(tempDir, "arbiter.md"), "arbiter");
   fs.writeFileSync(path.join(tempDir, "executor.md"), "executor");
+  fs.writeFileSync(path.join(tempDir, "worker.md"), "worker");
 
   const result = loadPrompts(tempDir);
 
@@ -435,6 +437,7 @@ test("buildPrompt labels structured contract inputs for skeptic and arbiter phas
       skeptic: "SKEPTIC",
       arbiter: "ARBITER",
       executor: "EXECUTOR",
+      worker: "WORKER",
     },
     reports: {
       mapper: "mapper-report",
@@ -448,6 +451,7 @@ test("buildPrompt labels structured contract inputs for skeptic and arbiter phas
       skeptic: "SKEPTIC",
       arbiter: "ARBITER",
       executor: "EXECUTOR",
+      worker: "WORKER",
     },
     reports: {
       mapper: "mapper-report",
@@ -462,6 +466,39 @@ test("buildPrompt labels structured contract inputs for skeptic and arbiter phas
   assert.match(arbiterPrompt, /## Existing Approved Plan \(Structured Contract\)/);
   assert.match(arbiterPrompt, /fully revised refactor plan in the structured contract format/i);
   assert.match(arbiterPrompt, /tighten blast radius/);
+});
+
+test("buildWorkerPrompt renders the assigned execution unit", () => {
+  const prompt = buildWorkerPrompt({
+    prompts: {
+      mapper: "MAPPER",
+      skeptic: "SKEPTIC",
+      arbiter: "ARBITER",
+      executor: "EXECUTOR",
+      worker: "WORKER",
+    },
+    approvedPlanSummary: "Split the refactor workflow into explicit execution units.",
+    step: 2,
+    totalSteps: 3,
+    executionUnit: {
+      id: "guided-shell",
+      title: "Adopt GuidedWorkflow",
+      objective: "Move /refactor planning to GuidedWorkflow.",
+      targets: ["extensions/refactor/workflow.ts", "extensions/refactor/index.ts"],
+      validations: ["bun test extensions/refactor/index.test.ts"],
+      dependsOn: ["contract-core"],
+    },
+  });
+
+  assert.match(prompt, /^WORKER/m);
+  assert.match(prompt, /## Approved Plan Summary/);
+  assert.match(prompt, /## Execution Position/);
+  assert.match(prompt, /Unit 2\/3/);
+  assert.match(prompt, /## Assigned Execution Unit/);
+  assert.match(prompt, /ID: guided-shell/);
+  assert.match(prompt, /Depends on: contract-core/);
+  assert.match(prompt, /- extensions\/refactor\/workflow.ts/);
+  assert.match(prompt, /- bun test extensions\/refactor\/index.test.ts/);
 });
 
 test("real prompt bundle includes a complete canonical refactoring catalog", () => {
@@ -485,10 +522,26 @@ test("real prompt bundle includes a complete canonical refactoring catalog", () 
   assert.match(loaded.prompts.mapper, /Cross-boundary refactorings/i);
   assert.match(loaded.prompts.arbiter, /Approved refactoring action catalog/i);
   assert.match(loaded.prompts.arbiter, /Canonical replacements for coarse wording/i);
+  assert.match(loaded.prompts.worker, /refactor worker executing one approved refactor unit/i);
   assert.match(loaded.prompts.executor, /Refactoring action discipline/i);
   assert.match(loaded.prompts.executor, /Change Function Declaration/i);
   assert.match(loaded.prompts.executor, /Decompose Conditional/i);
   assert.match(loaded.prompts.executor, /Cross-boundary refactorings/i);
+});
+
+test("real worker prompt instructs isolated execution within one approved unit", () => {
+  const promptDirectory = path.join(path.dirname(new URL(import.meta.url).pathname), "prompts");
+  const loaded = loadPrompts(promptDirectory);
+
+  assert.equal(loaded.ok, true);
+  if (!loaded.ok) {
+    return;
+  }
+
+  assert.match(loaded.prompts.worker, /isolated workspace/i);
+  assert.match(loaded.prompts.worker, /implement ONLY the assigned unit/i);
+  assert.match(loaded.prompts.worker, /Do not expand into sibling units/i);
+  assert.match(loaded.prompts.worker, /validations you ran/i);
 });
 
 test("real prompt bundle wires mapper and arbiter to the refactor structured contract", () => {
