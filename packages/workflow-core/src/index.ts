@@ -32,6 +32,7 @@ export type {
   SessionSwitchEvent,
   ThemeActivationResult,
   ToolCallEvent,
+  ToolCapabilities,
   ToolInfo,
   TurnEndEvent,
 } from "./extension-api";

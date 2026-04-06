@@ -87,8 +87,16 @@ function createApi() {
     },
     getAllTools() {
       return [
-        { name: "read", description: "Read file contents" },
-        { name: "bash", description: "Execute shell commands" },
+        {
+          name: "read",
+          description: "Read file contents",
+          capabilities: { readOnly: true },
+        },
+        {
+          name: "bash",
+          description: "Execute shell commands",
+          capabilities: { executesShell: true },
+        },
       ];
     },
     setActiveTools() {},
@@ -199,6 +207,23 @@ function extractRequestId(prompt: string): string | undefined {
   const match = prompt.match(/<!--\s*workflow-request-id:([^>]+)\s*-->/i);
   return match?.[1]?.trim();
 }
+
+test("workflow-core test API exposes tool capability metadata", () => {
+  const { api } = createApi();
+
+  assert.deepEqual(api.getAllTools(), [
+    {
+      name: "read",
+      description: "Read file contents",
+      capabilities: { readOnly: true },
+    },
+    {
+      name: "bash",
+      description: "Execute shell commands",
+      capabilities: { executesShell: true },
+    },
+  ]);
+});
 
 test("GuidedWorkflow starts idle", () => {
   const { api } = createApi();

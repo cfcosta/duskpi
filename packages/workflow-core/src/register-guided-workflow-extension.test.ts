@@ -98,8 +98,17 @@ test("registerGuidedWorkflowExtension wires guided workflow handlers", async () 
     },
     getAllTools() {
       return [
-        { name: "read", description: "Read file contents" },
-        { name: "bash", description: "Execute shell commands", parameters: { type: "object" } },
+        {
+          name: "read",
+          description: "Read file contents",
+          capabilities: { readOnly: true },
+        },
+        {
+          name: "bash",
+          description: "Execute shell commands",
+          parameters: { type: "object" },
+          capabilities: { executesShell: true },
+        },
       ];
     },
     setActiveTools(toolNames) {
@@ -118,8 +127,11 @@ test("registerGuidedWorkflowExtension wires guided workflow handlers", async () 
 
   assert.deepEqual(api.getActiveTools(), ["read"]);
   assert.deepEqual(
-    api.getAllTools().map((tool) => tool.name),
-    ["read", "bash"],
+    api.getAllTools().map((tool) => ({ name: tool.name, capabilities: tool.capabilities })),
+    [
+      { name: "read", capabilities: { readOnly: true } },
+      { name: "bash", capabilities: { executesShell: true } },
+    ],
   );
   assert.deepEqual(sentCustomMessages, [
     { customType: "guided-status", optionsDeliverAs: "followUp" },

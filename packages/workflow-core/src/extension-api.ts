@@ -76,10 +76,19 @@ export interface SendUserMessageOptions {
   deliverAs?: "steer" | "followUp";
 }
 
+export interface ToolCapabilities {
+  readOnly?: boolean;
+  mutatesWorkspace?: boolean;
+  executesShell?: boolean;
+  readsExternalResources?: boolean;
+  asksUserQuestions?: boolean;
+}
+
 export interface ToolInfo {
   name: string;
   description?: string;
   parameters?: unknown;
+  capabilities?: ToolCapabilities;
 }
 
 export interface ToolCallEvent {
