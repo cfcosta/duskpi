@@ -1982,6 +1982,129 @@ test("/autoplan auto-plans each approved subtask without asking new questions", 
   );
 });
 
+test("inner autoplan subtask execution reuses the structured dashboard widget", async () => {
+  const harness = createPlanExtensionHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+  });
+
+  await harness.runCommand("autoplan", "Rewrite this in Rust");
+  const topLevelPrompt = harness.sentUserMessages[0] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: topLevelPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildConflictingRichPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  const subtaskPrompt = harness.sentUserMessages[1] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: subtaskPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildConflictingRichPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  expect(harness.uiStub.widgetFactories.get("plan-todos")).toEqual(expect.any(Function));
+  await harness.runShortcut("ctrl+x");
+  const rendered = renderStoredWidgetFactory(harness.uiStub, "plan-todos", 140).join("\n");
+  expect(rendered).toContain("Scope: /autoplan");
+  expect(rendered).toContain("Summary: Current approved high-level task 1: A regression test for prompt leakage");
+  expect(rendered).toContain("State: subtask • 0/2 complete");
+  expect(rendered).toContain("☐ 1. A regression test for prompt leakage");
+  expect(rendered).not.toContain("Markdown says the wrong step name");
+});
+
+test("autoplan review pending renders a dashboard and session resets clear it", async () => {
+  const harness = createPlanExtensionHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+  });
+
+  await harness.runCommand("autoplan", "Rewrite this in Rust");
+  const topLevelPrompt = harness.sentUserMessages[0] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: topLevelPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  const subtaskPrompt = harness.sentUserMessages[1] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: subtaskPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  await harness.emit("turn_end", {
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: buildExecutionResultText({ step: 1, status: "done", scope: "autoplan" }) }],
+    },
+  });
+  await harness.emit("turn_end", {
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: buildExecutionResultText({ step: 2, status: "done", scope: "autoplan" }) }],
+    },
+  });
+
+  expect(harness.sentMessages.at(-1)).toEqual(
+    expect.objectContaining({ customType: "autoplan-review-internal", display: false }),
+  );
+  expect(harness.uiStub.widgetFactories.get("plan-todos")).toEqual(expect.any(Function));
+  await harness.runShortcut("ctrl+x");
+  const rendered = renderStoredWidgetFactory(harness.uiStub, "plan-todos", 140).join("\n");
+  expect(rendered).toContain("Scope: /autoplan");
+  expect(rendered).toContain("Summary: Reviewing progress against the long-term goal.");
+  expect(rendered).toContain("State: review • ");
+  expect(rendered).toContain("☑ 1. A regression test for prompt leakage");
+
+  await assertPlanStateReset(harness, "session_switch", SESSION_RESET_EVENTS[0][1]);
+});
+
 test("checkpoint moments allow ask_user_question during inner autoplan planning and execution", async () => {
   const harness = createPlanExtensionHarness({
     hasUI: true,

@@ -33,6 +33,7 @@ import {
   parseTaggedPlanContract,
   parseTaggedReviewContract,
   type StructuredPlanOutput,
+  type StructuredReviewContinueOutput,
   type StructuredReviewOutput,
 } from "./output-contract";
 import {
@@ -365,6 +366,18 @@ class AutoPlanSubtaskWorkflow extends GuidedWorkflow {
     };
   }
 
+  getDashboardSnapshotState(): {
+    phase: GuidedWorkflowPhase;
+    planText?: string;
+    items: GuidedWorkflowExecutionItem[];
+  } {
+    return {
+      phase: this.getStateSnapshot().phase,
+      planText: this.getLatestPlanText(),
+      items: this.getExecutionSnapshot().items.map((item) => ({ ...item })),
+    };
+  }
+
   restoreRecoveredExecutionState(state: AutoPlanSubtaskExecutionResumeState): void {
     const internals = this as unknown as {
       state: {
@@ -468,6 +481,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   private autoPlanApprovedPlanText = "";
   private autoPlanPendingStart = false;
   private autoPlanOuterStep?: number;
+  private latestAutoPlanReview: StructuredReviewContinueOutput | null = null;
   private autoPlanExecutionCompliance: AutoPlanExecutionComplianceState = {
     attempted: false,
   };
@@ -941,6 +955,8 @@ export class PiPlanWorkflow extends GuidedWorkflow {
           "Autoplan subtask planning kept returning invalid tagged JSON after one retry. Stopping autoplan.",
           "error",
         );
+      } else {
+        this.setStatus(ctx);
       }
       return result;
     }
@@ -1617,6 +1633,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       this.buildAutoPlanSubtaskGoal(currentStep),
       ctx,
     );
+    this.setStatus(ctx);
 
     if (result.kind !== "ok") {
       notify(this.pi, ctx, "Autoplan couldn't start the next approved subtask.", "error");
@@ -1752,6 +1769,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       complianceRecoveryAttempted: false,
       allowsCheckpointInterruptions: this.hasCheckpointMetadataForOuterStep(completedOuterStep),
     };
+    this.setStatus(ctx);
 
     try {
       this.pi.sendMessage(
@@ -1869,6 +1887,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     const hasTrackedBacklog = Boolean(this.getCurrentOuterExecutionItem());
 
     if (isAutoPlanCompleteResponse(reviewText)) {
+      this.latestAutoPlanReview = null;
       if (hasTrackedBacklog) {
         notify(
           this.pi,
@@ -1887,6 +1906,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
         return "retry";
       }
 
+      this.latestAutoPlanReview = null;
       notify(
         this.pi,
         ctx,
@@ -1897,6 +1917,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     }
 
     if (structuredReview.value.status === "complete") {
+      this.latestAutoPlanReview = null;
       if (hasTrackedBacklog) {
         notify(
           this.pi,
@@ -1909,6 +1930,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       return "complete";
     }
 
+    this.latestAutoPlanReview = structuredReview.value;
     const remainingItems = toTodoItemsFromStructuredReview(structuredReview.value);
     this.replaceOuterExecutionBacklog(remainingItems);
     return this.getCurrentOuterExecutionItem() ? "continue" : "complete";
@@ -1969,6 +1991,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     this.autoPlanReview.pendingRequestId = requestId;
     this.autoPlanReview.awaitingResponse = true;
     this.autoPlanReview.prompt = prompt;
+    this.setStatus(ctx);
 
     try {
       this.pi.sendMessage(
@@ -2083,6 +2106,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     this.autoPlanApprovedPlanText = "";
     this.autoPlanPendingStart = false;
     this.autoPlanOuterStep = undefined;
+    this.latestAutoPlanReview = null;
     this.resetAutoPlanExecutionComplianceState();
     this.resetAutoPlanReviewState();
   }
@@ -2322,7 +2346,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       return;
     }
 
-    const dashboardSnapshot = this.buildTopLevelPlanDashboardSnapshot();
+    const dashboardSnapshot = this.buildPlanDashboardSnapshot();
     if (dashboardSnapshot) {
       const dashboardMode = this.getTopLevelDashboardMode();
       ctx.ui.setWidget(TODO_WIDGET_KEY, (_tui, theme) => {
@@ -2372,11 +2396,14 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       return;
     }
 
-    const dashboardSnapshot = this.buildTopLevelPlanDashboardSnapshot();
+    const dashboardSnapshot = this.buildPlanDashboardSnapshot();
     if (dashboardSnapshot) {
+      const completedDashboardSteps = dashboardSnapshot.steps.filter(
+        (step) => step.status === "done" || step.status === "skipped",
+      ).length;
       ctx.ui.setStatus(
         STATUS_KEY,
-        ctx.ui.theme.fg("accent", `📋 0/${dashboardSnapshot.steps.length}`),
+        ctx.ui.theme.fg("accent", `📋 ${completedDashboardSteps}/${dashboardSnapshot.steps.length}`),
       );
       this.refreshPlanWidget(ctx);
       return;
@@ -2413,7 +2440,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   }
 
   private toggleTopLevelDashboardExpanded(ctx: ExtensionContext): void {
-    const dashboardSnapshot = this.buildTopLevelPlanDashboardSnapshot();
+    const dashboardSnapshot = this.buildPlanDashboardSnapshot();
     if (!dashboardSnapshot) {
       this.dashboardExpanded = false;
       this.refreshPlanWidget(ctx);
@@ -2426,7 +2453,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   }
 
   private async openTopLevelDashboardFullscreen(ctx: ExtensionContext): Promise<void> {
-    const dashboardSnapshot = this.buildTopLevelPlanDashboardSnapshot();
+    const dashboardSnapshot = this.buildPlanDashboardSnapshot();
     if (!dashboardSnapshot) {
       notify(this.pi, ctx, "No structured top-level planning dashboard is available yet.", "info");
       return;
@@ -2455,6 +2482,14 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     }
   }
 
+  private buildPlanDashboardSnapshot(): PlanDashboardSnapshot | undefined {
+    return (
+      this.buildTopLevelPlanDashboardSnapshot() ??
+      this.buildInnerAutoPlanDashboardSnapshot() ??
+      this.buildAutoPlanReviewDashboardSnapshot()
+    );
+  }
+
   private buildTopLevelPlanDashboardSnapshot(): PlanDashboardSnapshot | undefined {
     const state = this.getStateSnapshot();
     const isTopLevelAutoPlan = this.autoPlanMode === "bootstrap";
@@ -2475,10 +2510,6 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       return undefined;
     }
 
-    const dependencyEdges = planMetadata.steps.flatMap((step) =>
-      step.dependsOn.map((dependency) => `${step.step} ← ${dependency}`),
-    );
-    const checkpoints = planMetadata.checkpoints.map((checkpoint) => formatCheckpointLabel(checkpoint));
     const critiqueSummary = this.latestCritiqueSummary || this.approvalReview?.critiqueSummary;
     const summary = isTopLevelAutoPlan
       ? state.phase === "approval"
@@ -2488,23 +2519,119 @@ export class PiPlanWorkflow extends GuidedWorkflow {
         ? "Structured plan ready for approval."
         : "Structured plan captured from valid pi-plan-json output.";
 
-    return {
+    return this.buildDashboardSnapshotFromMetadata(planMetadata, {
       title: isTopLevelAutoPlan && this.autoPlanGoal.trim().length > 0 ? `autoplan: ${this.autoPlanGoal}` : "plan",
       scopeLabel: isTopLevelAutoPlan ? "/autoplan" : "/plan",
       stateLabel: state.phase,
       summary,
+      badges: [...(this.approvalReview?.badges ?? [])],
+      critiqueSummary,
+    });
+  }
+
+  private buildInnerAutoPlanDashboardSnapshot(): PlanDashboardSnapshot | undefined {
+    if (this.autoPlanMode !== "executing" || this.autoPlanReview.awaitingResponse) {
+      return undefined;
+    }
+
+    const subtaskState = this.autoPlanSubtaskWorkflow.getDashboardSnapshotState();
+    if (subtaskState.phase === "idle") {
+      return undefined;
+    }
+
+    const structuredPlan = resolveStructuredPlan(subtaskState.planText);
+    if (!structuredPlan) {
+      return undefined;
+    }
+
+    const planMetadata = normalizeStructuredPlanMetadata(structuredPlan);
+    const currentOuterStep = this.getCurrentOuterExecutionItem();
+    const currentOuterLabel = currentOuterStep
+      ? `Current approved high-level task ${currentOuterStep.step}: ${currentOuterStep.text}`
+      : undefined;
+    const statusByStep = new Map<number, PlanDashboardStepView["status"]>(
+      subtaskState.items.map((item) => [
+        item.step,
+        item.skipped ? "skipped" : item.completed ? "done" : "pending",
+      ]),
+    );
+
+    return this.buildDashboardSnapshotFromMetadata(planMetadata, {
+      title: this.autoPlanGoal.trim().length > 0 ? `autoplan: ${this.autoPlanGoal}` : "autoplan",
+      scopeLabel: "/autoplan",
+      stateLabel:
+        subtaskState.phase === "executing"
+          ? "subtask"
+          : `subtask ${subtaskState.phase}`,
+      summary: currentOuterLabel,
+      badges: ["inner autoplan"],
+      statusByStep,
+    });
+  }
+
+  private buildAutoPlanReviewDashboardSnapshot(): PlanDashboardSnapshot | undefined {
+    if (!this.autoPlanReview.awaitingResponse || this.autoPlanMode !== "executing") {
+      return undefined;
+    }
+
+    const reviewMetadata = this.latestAutoPlanReview?.status === "continue"
+      ? normalizeStructuredReviewMetadata(this.latestAutoPlanReview)
+      : this.latestPlanMetadata;
+    if (!reviewMetadata || reviewMetadata.steps.length === 0) {
+      return undefined;
+    }
+
+    const statusByStep = new Map<number, PlanDashboardStepView["status"]>(
+      this.getExecutionSnapshot().items.map((item) => [
+        item.step,
+        item.skipped ? "skipped" : item.completed ? "done" : "pending",
+      ]),
+    );
+
+    return this.buildDashboardSnapshotFromMetadata(reviewMetadata, {
+      title: this.autoPlanGoal.trim().length > 0 ? `autoplan: ${this.autoPlanGoal}` : "autoplan",
+      scopeLabel: "/autoplan",
+      stateLabel: "review",
+      summary: "Reviewing progress against the long-term goal.",
+      badges: ["reviewing progress"],
+      statusByStep,
+    });
+  }
+
+  private buildDashboardSnapshotFromMetadata(
+    planMetadata: NormalizedPlanMetadata,
+    options: {
+      title: string;
+      scopeLabel: string;
+      stateLabel: string;
+      summary: string;
+      badges?: string[];
+      critiqueSummary?: string;
+      statusByStep?: Map<number, PlanDashboardStepView["status"]>;
+    },
+  ): PlanDashboardSnapshot {
+    const dependencyEdges = planMetadata.steps.flatMap((step) =>
+      step.dependsOn.map((dependency) => `${step.step} ← ${dependency}`),
+    );
+    const checkpoints = planMetadata.checkpoints.map((checkpoint) => formatCheckpointLabel(checkpoint));
+
+    return {
+      title: options.title,
+      scopeLabel: options.scopeLabel,
+      stateLabel: options.stateLabel,
+      summary: options.summary,
       taskGeometry: planMetadata.taskGeometry,
       coordinationPattern: planMetadata.coordinationPattern,
       assumptions: [...planMetadata.assumptions],
       checkpoints,
       dependencies: dependencyEdges,
-      badges: [...(this.approvalReview?.badges ?? [])],
-      critiqueSummary,
+      badges: [...(options.badges ?? [])],
+      critiqueSummary: options.critiqueSummary,
       steps: planMetadata.steps.map<PlanDashboardStepView>((step) => ({
         step: step.step,
         label: step.label,
         kind: step.kind,
-        status: "pending",
+        status: options.statusByStep?.get(step.step) ?? "pending",
         targets: [...step.targets],
         validation: [...step.validation],
         risks: [...step.risks],
@@ -2987,6 +3114,29 @@ function buildParseRecoveryPrompt(draftText: string): string {
 
 function buildWorkflowRequestIdMarker(requestId: string): string {
   return `<!-- workflow-request-id:${requestId} -->`;
+}
+
+function normalizeStructuredReviewMetadata(
+  structuredReview: StructuredReviewContinueOutput,
+): NormalizedPlanMetadata {
+  return {
+    taskGeometry: structuredReview.taskGeometry,
+    coordinationPattern: structuredReview.coordinationPattern,
+    assumptions: [...structuredReview.assumptions],
+    escalationTriggers: [],
+    checkpoints: structuredReview.checkpoints.map((checkpoint) => ({ ...checkpoint })),
+    steps: structuredReview.steps.map((step) => ({
+      step: step.step,
+      kind: step.kind,
+      objective: step.objective,
+      label: cleanStepText(step.objective),
+      targets: [...step.targets],
+      validation: [...step.validation],
+      risks: [...step.risks],
+      dependsOn: [...step.dependsOn],
+      checkpointIds: [...step.checkpointIds],
+    })),
+  };
 }
 
 function resolvePlanMetadata(
