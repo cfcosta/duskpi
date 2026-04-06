@@ -189,6 +189,13 @@ export interface ExtensionToolDefinition<Params = unknown, Details = unknown> {
   ): unknown;
 }
 
+export type ExtensionShortcut = string;
+
+export interface ExtensionShortcutOptions {
+  description?: string;
+  handler: (ctx: ExtensionContext) => Promise<void> | void;
+}
+
 export interface ExtensionAPI {
   sendMessage<T = unknown>(message: ExtensionCustomMessage<T>, options?: SendMessageOptions): void;
   sendUserMessage(message: string | unknown[], options?: SendUserMessageOptions): void;
@@ -210,6 +217,7 @@ export interface ExtensionAPI {
   registerTool<Params = unknown, Details = unknown>(
     definition: ExtensionToolDefinition<Params, Details>,
   ): void;
+  registerShortcut(shortcut: ExtensionShortcut, options: ExtensionShortcutOptions): void;
   getActiveTools(): string[];
   getAllTools(): ToolInfo[];
   setActiveTools(toolNames: string[]): void;

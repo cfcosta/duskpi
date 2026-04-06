@@ -15,6 +15,8 @@ export type {
   ExtensionCustomMessage,
   ExtensionEventMap,
   ExtensionMessageRenderOptions,
+  ExtensionShortcut,
+  ExtensionShortcutOptions,
   ExtensionTheme,
   ExtensionToolResult,
   ExtensionUI,

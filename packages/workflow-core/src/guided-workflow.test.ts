@@ -82,6 +82,7 @@ function createApi() {
     registerCommand() {},
     registerMessageRenderer() {},
     registerTool() {},
+    registerShortcut() {},
     getActiveTools() {
       return ["read", "bash"];
     },

@@ -5,6 +5,8 @@ import {
   type BeforeAgentStartResult,
   type ExtensionAPI,
   type ExtensionContext,
+  type ExtensionShortcut,
+  type ExtensionShortcutOptions,
   type ExtensionTheme,
   type ExtensionUICustomFactory,
   type ExtensionWidgetFactory,
@@ -57,9 +59,18 @@ test("local extension typings cover guided-workflow UI and messaging features", 
       theme.fg("accent", "dispose");
     },
   });
+  const shortcut: ExtensionShortcut = "ctrl+x";
+  const shortcutOptions: ExtensionShortcutOptions = {
+    description: "Toggle dashboard",
+    handler(shortcutCtx) {
+      shortcutCtx.ui.notify("toggled", "info");
+    },
+  };
 
   ctx.ui.setWidget("todos", ["first", "second"]);
   ctx.ui.setWidget("todos", widgetFactory, { placement: "above_editor" });
+  shortcutOptions.handler(ctx);
+  assert.equal(shortcut, "ctrl+x");
 
   const customResult = await ctx.ui.custom<string>((_tui, theme, _keybindings, done) => {
     done(theme.strikethrough("done"));
@@ -78,6 +89,7 @@ test("registerGuidedWorkflowExtension wires guided workflow handlers", async () 
   const listeners: Record<string, (event: unknown, ctx: ExtensionContext) => unknown> = {};
   const forwarded: Array<{ type: string; payload: unknown; ctx: ExtensionContext }> = [];
   const sentCustomMessages: Array<{ customType: string; optionsDeliverAs?: string }> = [];
+  const registeredShortcuts: Array<{ shortcut: ExtensionShortcut; description?: string }> = [];
   let activeTools = ["read", "bash"];
 
   const api: ExtensionAPI = {
@@ -90,6 +102,9 @@ test("registerGuidedWorkflowExtension wires guided workflow handlers", async () 
     sendUserMessage() {},
     registerMessageRenderer() {},
     registerTool() {},
+    registerShortcut(shortcut, options) {
+      registeredShortcuts.push({ shortcut, description: options.description });
+    },
     registerCommand(name, command) {
       commands[name] = command;
     },
@@ -123,6 +138,10 @@ test("registerGuidedWorkflowExtension wires guided workflow handlers", async () 
     { customType: "guided-status", content: "hidden", display: false },
     { triggerTurn: true, deliverAs: "followUp" },
   );
+  api.registerShortcut("ctrl+x", {
+    description: "Toggle dashboard",
+    handler() {},
+  });
   api.setActiveTools(["read"]);
 
   assert.deepEqual(api.getActiveTools(), ["read"]);
@@ -135,6 +154,9 @@ test("registerGuidedWorkflowExtension wires guided workflow handlers", async () 
   );
   assert.deepEqual(sentCustomMessages, [
     { customType: "guided-status", optionsDeliverAs: "followUp" },
+  ]);
+  assert.deepEqual(registeredShortcuts, [
+    { shortcut: "ctrl+x", description: "Toggle dashboard" },
   ]);
 
   let createWorkflowCalls = 0;
