@@ -15,6 +15,8 @@ This directory is the repo-local copy bundled under `extensions/plan`. It is not
 - an approval menu with approve, continue, regenerate, and exit actions
 - non-UI approval fallback commands while approval is pending: `/plan approve`, `/plan continue <note>`, `/plan regenerate`, `/plan exit`
 - approval previews that now show coordination strategy, dependency, checkpoint, and assumption summaries in addition to compact step details
+- a structured plan dashboard widget that reuses validated `pi-plan-json` metadata for `/plan`, top-level `/autoplan`, inner autoplan subtasks, and autoplan progress review states
+- autoresearch-style dashboard controls: compact by default, `ctrl+x` to expand/collapse, and `ctrl+shift+x` for a fullscreen overlay
 - normalized plan metadata capture so task geometry, coordination pattern, dependencies, checkpoints, assumptions, and escalation triggers survive approval and execution reuse
 - `/todos` progress reporting that stays compact during approved execution even when the underlying plan carries richer coordination metadata
 - step-by-step approved execution with one `jj` commit per plan step plus a structured tagged `execution_result` payload for progress syncing
@@ -39,8 +41,9 @@ Sometimes you want speed. Sometimes you want a review point before the first edi
 - every draft plan gets a critique pass before the approval UI appears
 - malformed drafts get one automatic restatement retry before the extension surfaces a visible failure
 - approved plans run one step at a time with tracked progress
+- validated structured plans and reviews now drive a persistent dashboard widget instead of a plain todo-only widget surface
 - session switches and forks do not carry stale transient plan state into the next boundary
-- same-session compaction preserves active plan/autoplan flows so critique, revision, approval, and execution can continue
+- same-session compaction preserves active plan/autoplan flows so critique, revision, approval, execution, and dashboard state can continue
 
 ## Repo architecture
 
@@ -86,7 +89,7 @@ This enables plan mode if needed and immediately starts the planning request.
 
 ### 3) Review, refine, or approve
 
-After a plan is generated, Pi first runs an internal hidden critique pass. The critique and revision prompts stay out of the visible chat, while status notifications still appear normally. If Pi responds with a draft that still does not contain a valid tagged `pi-plan-json` block for the required contract, the extension automatically asks for one restatement using the required contract before surfacing a visible failure. Once the plan passes critique, you get an approval menu with:
+After a plan is generated, Pi first runs an internal hidden critique pass. The critique and revision prompts stay out of the visible chat, while status notifications still appear normally. If Pi responds with a draft that still does not contain a valid tagged `pi-plan-json` block for the required contract, the extension automatically asks for one restatement using the required contract before surfacing a visible failure. Once a valid structured plan exists, the dashboard widget switches from the old plain todo surface to a compact structured summary driven only by validated `pi-plan-json` payloads; markdown-only or invalid drafts stay dashboard-free. Once the plan passes critique, you get an approval menu with:
 
 - a compact review summary built from the first extracted plan steps
 - per-step file/component and validation hints when the plan includes them
@@ -98,6 +101,13 @@ After a plan is generated, Pi first runs an internal hidden critique pass. The c
 - **Exit plan mode**
 
 If you press `Esc` to cancel an in-flight planning response, Pi now stays in read-only plan mode and waits for your next message as steering input instead of auto-retrying the interrupted draft.
+
+While that structured dashboard is visible:
+
+- compact mode is the default widget
+- `ctrl+x` toggles between compact and expanded dashboard rendering
+- `ctrl+shift+x` opens the same structured dashboard in a fullscreen overlay
+- the dashboard covers top-level `/plan`, top-level `/autoplan` approval, inner autoplan subtask work, and autoplan review states whenever validated structured payloads exist
 
 Choosing **Approve and execute now** automatically:
 
@@ -238,7 +248,7 @@ For `/autoplan`, execution results may also include `scope: "autoplan"` and `out
 
 Before approval is shown, Pi critiques the draft plan for atomicity, ordering, specificity, validation quality, executability, and metadata noise. Weak plans are automatically sent back for refinement through hidden extension messages. If Pi returns a draft without a valid tagged `pi-plan-json` block, the extension sends one automatic restatement request that preserves the same intent but explicitly asks for the required markdown + tagged JSON contract. If the second draft is still invalid, approval is not opened and plan mode stays read-only with a visible failure notification.
 
-When a plan includes coordination metadata like task geometry, coordination pattern, dependencies, checkpoints, assumptions, escalation triggers, target files/components, validation methods, or rollback notes, the extension preserves that structure for approval previews, autoplan prompt state, execution prompts, and recovery behavior while keeping `/todos` and the widget intentionally compact.
+When a plan includes coordination metadata like task geometry, coordination pattern, dependencies, checkpoints, assumptions, escalation triggers, target files/components, validation methods, or rollback notes, the extension preserves that structure for approval previews, dashboard rendering, autoplan prompt state, execution prompts, and recovery behavior while keeping `/todos` intentionally compact. The dashboard itself is structured-only: it renders only from validated `pi-plan-json` plan/review payloads and clears on resets when no valid structured state remains.
 
 ## Commands
 

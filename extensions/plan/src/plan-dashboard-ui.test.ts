@@ -1,4 +1,5 @@
 import { expect, mock, test } from "bun:test";
+import type { PlanDashboardSnapshot } from "./plan-dashboard-ui";
 
 mock.module("@mariozechner/pi-tui", () => ({
   matchesKey: (data: string, key: string) => data === key,
@@ -35,7 +36,7 @@ function createTui() {
   };
 }
 
-function createSnapshot() {
+function createSnapshot(): PlanDashboardSnapshot {
   return {
     title: "plan dashboard",
     scopeLabel: "/plan",

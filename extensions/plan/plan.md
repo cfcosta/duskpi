@@ -27,13 +27,16 @@
 - Every draft plan gets a hidden critique pass before the approval UI appears.
 - If a draft still does not contain a valid tagged `pi-plan-json` block for the required markdown + JSON contract, the extension automatically asks Pi once to restate the same draft using the required contract and an explicit `Plan:` section. A second failure stays read-only and surfaces a visible error instead of opening approval.
 - The approval UI now shows compact step labels plus strategy, dependency, checkpoint, assumption, file/component, and validation summaries when the structured plan metadata includes them.
+- A structured dashboard widget now replaces the old plain todo-only widget surface whenever validated `pi-plan-json` plan/review metadata exists.
+- The dashboard is compact by default, supports `ctrl+x` expand/collapse, and supports `ctrl+shift+x` fullscreen overlay rendering.
+- The dashboard now covers top-level `/plan`, top-level `/autoplan` approval, inner autoplan subtasks, and autoplan review states.
 - If approval is pending without an interactive UI, `/plan approve`, `/plan continue <note>`, `/plan regenerate`, and `/plan exit` act as command-line approval fallbacks.
 - `/autoplan` reuses the top-level `/plan` approval flow once. Top-level autoplan planning before that first approval may still ask clarification questions, including continue/regenerate revisions.
 - After the first `/autoplan` approval, inner subtask planning, hidden progress review, and inner execution stay autonomous between declared checkpoint or integration moments and may only surface user interruption at those approved moments.
 - `/autoplan` keeps going from the previously approved backlog if a hidden progress-review response is missing, ambiguous, or unparseable.
 - Execution prompts now include stored coordination context plus structured target files/components, validation, and rollback notes from the approved plan metadata.
 - Guided execution progress now syncs from tagged `execution_result` payloads instead of `[DONE:n]` / `[SKIPPED:n]` markers.
-- `/todos` and the widget intentionally stay compact even when the underlying plan carries richer coordination metadata.
+- `/todos` stays intentionally compact even when the underlying plan carries richer coordination metadata, while the widget itself now renders a structured dashboard summary when validated structured state exists.
 
 ## Architectural notes
 

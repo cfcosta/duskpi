@@ -985,7 +985,7 @@ test("parseTaggedPlanningContract parses a valid tagged JSON plan block", async 
   const { parseTaggedPlanningContract } = await import("./output-contract");
 
   const payload = {
-    version: 2,
+    version: 2 as const,
     kind: "plan" as const,
     taskGeometry: "shared_artifact" as const,
     coordinationPattern: "checkpointed_execution" as const,
@@ -1031,7 +1031,7 @@ test("parseTaggedReviewContract parses a valid tagged JSON continue review block
   const { parseTaggedReviewContract } = await import("./output-contract");
 
   const payload = {
-    version: 2,
+    version: 2 as const,
     kind: "review" as const,
     status: "continue" as const,
     summary: "Structured review parsing still needs one workflow update.",

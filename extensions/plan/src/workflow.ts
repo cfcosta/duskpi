@@ -5,6 +5,7 @@ import {
   type ExtensionAPI,
   type ExtensionContext,
   type GuidedWorkflowExecutionItem,
+  type GuidedWorkflowPhase,
   type GuidedWorkflowResult,
   type SessionCompactEvent,
   type ToolInfo,
@@ -2563,7 +2564,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
         subtaskState.phase === "executing"
           ? "subtask"
           : `subtask ${subtaskState.phase}`,
-      summary: currentOuterLabel,
+      summary: currentOuterLabel ?? "Planning the current approved high-level task.",
       badges: ["inner autoplan"],
       statusByStep,
     });

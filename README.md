@@ -156,9 +156,9 @@ The bundled `plan` extension adds:
 - `/autoplan`
 - `/todos`
 
-Use `/plan` when you want Pi to stay read-only while it investigates, proposes an execution plan, runs an internal critique pass, and waits for approval before switching back to execution.
+Use `/plan` when you want Pi to stay read-only while it investigates, proposes an execution plan, runs an internal critique pass, and waits for approval before switching back to execution. When the plan output includes a valid structured `pi-plan-json` payload, the plan widget becomes a compact structured dashboard instead of the older plain todo-only surface.
 
-Use `/autoplan` when the top-level goal needs multiple rounds of planning: it gets one approved high-level plan first, then re-plans and executes each approved subtask automatically while checking whether new tasks are still needed. Top-level autoplan planning may still ask clarification questions before that first approval, but the inner autoplan loop reuses the approved top-level plan as context and keeps going without re-questioning the user.
+Use `/autoplan` when the top-level goal needs multiple rounds of planning: it gets one approved high-level plan first, then re-plans and executes each approved subtask automatically while checking whether new tasks are still needed. Top-level autoplan planning may still ask clarification questions before that first approval, but the inner autoplan loop reuses the approved top-level plan as context and keeps going without re-questioning the user. The same structured dashboard now covers top-level `/autoplan` approval, inner subtask work, and autoplan review states whenever validated structured payloads exist.
 
 This is useful when you want:
 
@@ -166,6 +166,7 @@ This is useful when you want:
 - a concrete step list
 - a review point before execution
 - tracked step-by-step execution after approval
+- a structured dashboard widget with `ctrl+x` expand/collapse and `ctrl+shift+x` fullscreen controls for validated plan/review output
 
 ### 3. Run autonomous optimization loops
 
