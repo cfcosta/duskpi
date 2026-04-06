@@ -100,6 +100,9 @@ test("registerGuidedWorkflowExtension wires guided workflow handlers", async () 
       });
     },
     sendUserMessage() {},
+    async exec() {
+      return { stdout: "", stderr: "", code: 0, killed: false };
+    },
     registerMessageRenderer() {},
     registerTool() {},
     registerShortcut(shortcut, options) {

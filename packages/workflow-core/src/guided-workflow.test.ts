@@ -79,6 +79,9 @@ function createApi() {
       sentUserMessages.push(message);
       sentUserMessageOptions.push(options ? { deliverAs: options.deliverAs } : undefined);
     },
+    async exec() {
+      return { stdout: "", stderr: "", code: 0, killed: false };
+    },
     registerCommand() {},
     registerMessageRenderer() {},
     registerTool() {},

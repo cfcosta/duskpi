@@ -13,6 +13,8 @@ export type {
   ExtensionAPI,
   ExtensionContext,
   ExtensionCustomMessage,
+  ExecOptions,
+  ExecResult,
   ExtensionEventMap,
   ExtensionMessageRenderOptions,
   ExtensionShortcut,

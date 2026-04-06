@@ -76,6 +76,19 @@ export interface SendUserMessageOptions {
   deliverAs?: "steer" | "followUp";
 }
 
+export interface ExecOptions {
+  signal?: AbortSignal;
+  timeout?: number;
+  cwd?: string;
+}
+
+export interface ExecResult {
+  stdout: string;
+  stderr: string;
+  code: number;
+  killed: boolean;
+}
+
 export interface ToolCapabilities {
   readOnly?: boolean;
   mutatesWorkspace?: boolean;
@@ -199,6 +212,7 @@ export interface ExtensionShortcutOptions {
 export interface ExtensionAPI {
   sendMessage<T = unknown>(message: ExtensionCustomMessage<T>, options?: SendMessageOptions): void;
   sendUserMessage(message: string | unknown[], options?: SendUserMessageOptions): void;
+  exec(command: string, args: string[], options?: ExecOptions): Promise<ExecResult>;
   registerCommand(
     name: string,
     command: {
