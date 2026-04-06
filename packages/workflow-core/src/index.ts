@@ -95,3 +95,25 @@ export type {
   WorkerRunnerExec,
   WorkerRunnerOptions,
 } from "./worker-runner";
+export { ExecutionManager } from "./execution-manager";
+export type {
+  BlockedExecutionWorkerResult,
+  CompletedExecutionWorkerResult,
+  ExecuteUnitInput,
+  ExecutionManagerIntegrationResult,
+  ExecutionManagerOptions,
+  ExecutionRunResult,
+  ExecutionUnitExecutor,
+  ExecutionUnitLike,
+  ExecutionWorkerResult,
+  WorkerPromptRenderInput,
+  WorkerRunnerLike,
+  WorkspaceManagerLike,
+} from "./execution-manager";
+export { buildExecutionLayers, ExecutionScheduler } from "./execution-scheduler";
+export type {
+  ExecutePlanInput,
+  ExecutionScheduleResult,
+  ExecutionSchedulerOptions,
+  ScheduledExecutionLayer,
+} from "./execution-scheduler";
