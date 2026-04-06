@@ -2105,6 +2105,69 @@ test("autoplan review pending renders a dashboard and session resets clear it", 
   await assertPlanStateReset(harness, "session_switch", SESSION_RESET_EVENTS[0][1]);
 });
 
+test("dashboard smoke path reuses one widget surface across /plan, top-level /autoplan, inner autoplan, and reset cleanup", async () => {
+  const planHarness = createPlanExtensionHarness({ hasUI: true });
+  await enterApprovalState(planHarness);
+  await planHarness.runShortcut("ctrl+x");
+  expect(renderStoredWidgetFactory(planHarness.uiStub, "plan-todos", 140).join("\n")).toContain(
+    "Scope: /plan",
+  );
+
+  const topLevelAutoPlanHarness = createPlanExtensionHarness({ hasUI: true });
+  await topLevelAutoPlanHarness.runCommand("autoplan", "Rewrite this in Rust");
+  const topLevelPrompt = topLevelAutoPlanHarness.sentUserMessages[0] ?? "";
+  await topLevelAutoPlanHarness.emit("agent_end", {
+    messages: [
+      { role: "user", content: [{ type: "text", text: topLevelPrompt }] },
+      { role: "assistant", content: [{ type: "text", text: buildPlanText() }] },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    topLevelAutoPlanHarness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+  await topLevelAutoPlanHarness.runShortcut("ctrl+x");
+  expect(
+    renderStoredWidgetFactory(topLevelAutoPlanHarness.uiStub, "plan-todos", 140).join("\n"),
+  ).toContain("Scope: /autoplan");
+
+  const innerAutoPlanHarness = createPlanExtensionHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+  });
+  await innerAutoPlanHarness.runCommand("autoplan", "Rewrite this in Rust");
+  const innerTopLevelPrompt = innerAutoPlanHarness.sentUserMessages[0] ?? "";
+  await innerAutoPlanHarness.emit("agent_end", {
+    messages: [
+      { role: "user", content: [{ type: "text", text: innerTopLevelPrompt }] },
+      { role: "assistant", content: [{ type: "text", text: buildPlanText() }] },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    innerAutoPlanHarness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+  const innerSubtaskPrompt = innerAutoPlanHarness.sentUserMessages[1] ?? "";
+  await innerAutoPlanHarness.emit("agent_end", {
+    messages: [
+      { role: "user", content: [{ type: "text", text: innerSubtaskPrompt }] },
+      { role: "assistant", content: [{ type: "text", text: buildPlanText() }] },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    innerAutoPlanHarness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+  await innerAutoPlanHarness.runShortcut("ctrl+x");
+  const innerRendered = renderStoredWidgetFactory(innerAutoPlanHarness.uiStub, "plan-todos", 140).join(
+    "\n",
+  );
+  expect(innerRendered).toContain("Scope: /autoplan");
+  expect(innerRendered).toContain("State: subtask");
+
+  await assertPlanStateReset(innerAutoPlanHarness, "session_switch", SESSION_RESET_EVENTS[0][1]);
+});
+
 test("checkpoint moments allow ask_user_question during inner autoplan planning and execution", async () => {
   const harness = createPlanExtensionHarness({
     hasUI: true,

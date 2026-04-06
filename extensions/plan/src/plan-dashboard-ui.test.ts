@@ -126,6 +126,35 @@ test("renderPlanDashboardLines omits the inline header for fullscreen mode", () 
   expect(lines.join("\n")).not.toContain("─── plan dashboard ");
 });
 
+test("expanded and fullscreen modes reuse the same structured step markers", () => {
+  const snapshot = {
+    ...createSnapshot(),
+    scopeLabel: "/autoplan",
+    stateLabel: "review",
+    summary: "Reviewing progress against the long-term goal.",
+  };
+
+  const expanded = renderPlanDashboardLines(snapshot, "expanded", 140, createTheme() as never).join(
+    "\n",
+  );
+  const fullscreen = renderPlanDashboardLines(
+    snapshot,
+    "fullscreen",
+    140,
+    createTheme() as never,
+  ).join("\n");
+
+  expect(expanded).toContain("Scope: /autoplan");
+  expect(expanded).toContain("State: review • 2/3 complete");
+  expect(expanded).toContain("☑ 1. Expose registerShortcut in workflow-core");
+  expect(expanded).toContain("↷ 3. Create the structured plan dashboard component");
+
+  expect(fullscreen).toContain("Scope: /autoplan");
+  expect(fullscreen).toContain("State: review • 2/3 complete");
+  expect(fullscreen).toContain("☑ 1. Expose registerShortcut in workflow-core");
+  expect(fullscreen).toContain("↷ 3. Create the structured plan dashboard component");
+});
+
 test("FullscreenPlanDashboardComponent caches by width and scrolls content", () => {
   const tui = createTui();
   const component = new FullscreenPlanDashboardComponent(
