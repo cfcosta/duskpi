@@ -117,3 +117,10 @@ export type {
   ExecutionSchedulerOptions,
   ScheduledExecutionLayer,
 } from "./execution-scheduler";
+export { GuidedExecutionWorkflow } from "./guided-execution-workflow";
+export type {
+  ExecutionPlanParseResult,
+  GuidedExecutionApprovalOptions,
+  GuidedExecutionOptions,
+  GuidedExecutionWorkflowOptions,
+} from "./guided-execution-workflow";
