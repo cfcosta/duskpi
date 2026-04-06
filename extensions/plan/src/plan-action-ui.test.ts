@@ -26,6 +26,22 @@ mock.module("@mariozechner/pi-tui", () => ({
       return [this.text];
     }
   },
+  Markdown: class {
+    constructor(..._args: unknown[]) {}
+
+    setText(_value: string) {}
+
+    render(_width: number) {
+      return [""];
+    }
+  },
+  Text: class {
+    constructor(private readonly text: string) {}
+
+    render(_width: number) {
+      return [this.text];
+    }
+  },
   Key: {
     tab: "tab",
     escape: "escape",
@@ -45,6 +61,7 @@ mock.module("@mariozechner/pi-tui", () => ({
 
     return `${text.slice(0, width - 1)}…`;
   },
+  wrapTextWithAnsi: (text: string) => [text],
 }));
 
 const { PlanActionComponent, selectPlanNextActionWithInlineNote } =

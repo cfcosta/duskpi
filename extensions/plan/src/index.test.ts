@@ -643,7 +643,13 @@ function buildNonCompliantAutoPlanReviewText(): string {
 }
 
 function buildNonCompliantAutoPlanExecutionText(): string {
-  return "I need your decision on whether to keep the legacy path before continuing. [DONE:1]";
+  return "I need your decision on whether to keep the legacy path before continuing.";
+}
+
+function buildExecutionResultBatchText(
+  updates: Array<{ step: number; status: "done" | "skipped"; scope?: "plan" | "autoplan" }>,
+): string {
+  return updates.map((update) => buildExecutionResultText(update)).join("\n\n");
 }
 
 function extractRequestId(prompt: string): string | undefined {
@@ -2510,9 +2516,9 @@ test("normal /plan execution remains unchanged by autoplan execution-turn recove
     },
   });
 
-  expect(harness.sentUserMessages).toHaveLength(2);
-  expect(harness.sentUserMessages[1]).toContain(
-    "Complete only step 2: Update the approval action UI to show a compact summary",
+  expect(harness.sentUserMessages).toHaveLength(1);
+  expect(harness.sentUserMessages[0]).toContain(
+    "Complete only step 1: Add a regression test for prompt leakage",
   );
 });
 
@@ -4115,7 +4121,13 @@ test("todo widget hides older items once the current step would scroll off-scree
       content: [
         {
           type: "text",
-          text: "Completed the first chunk [DONE:1] [DONE:2] [DONE:3] [DONE:4] [DONE:5]",
+          text: buildExecutionResultBatchText([
+            { step: 1, status: "done" },
+            { step: 2, status: "done" },
+            { step: 3, status: "done" },
+            { step: 4, status: "done" },
+            { step: 5, status: "done" },
+          ]),
         },
       ],
     },
