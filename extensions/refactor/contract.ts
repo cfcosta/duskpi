@@ -17,6 +17,68 @@ export interface ApprovedRefactorPlan {
   executionUnits: RefactorExecutionUnit[];
 }
 
+export function orderExecutionUnits(plan: ApprovedRefactorPlan): RefactorExecutionUnit[] {
+  const remainingDependencies = new Map<string, Set<string>>();
+  const dependents = new Map<string, string[]>();
+  const originalIndexes = new Map<string, number>();
+
+  for (const [index, executionUnit] of plan.executionUnits.entries()) {
+    remainingDependencies.set(executionUnit.id, new Set(executionUnit.dependsOn));
+    dependents.set(executionUnit.id, []);
+    originalIndexes.set(executionUnit.id, index);
+  }
+
+  for (const executionUnit of plan.executionUnits) {
+    for (const dependencyId of executionUnit.dependsOn) {
+      dependents.get(dependencyId)?.push(executionUnit.id);
+    }
+  }
+
+  const ready = plan.executionUnits
+    .filter((executionUnit) => executionUnit.dependsOn.length === 0)
+    .map((executionUnit) => executionUnit.id)
+    .sort((left, right) => {
+      return (originalIndexes.get(left) ?? 0) - (originalIndexes.get(right) ?? 0);
+    });
+
+  const orderedIds: string[] = [];
+  while (ready.length > 0) {
+    const nextId = ready.shift();
+    if (!nextId) {
+      break;
+    }
+
+    orderedIds.push(nextId);
+
+    for (const dependentId of dependents.get(nextId) ?? []) {
+      const dependencies = remainingDependencies.get(dependentId);
+      if (!dependencies) {
+        continue;
+      }
+
+      dependencies.delete(nextId);
+      if (
+        dependencies.size === 0 &&
+        !orderedIds.includes(dependentId) &&
+        !ready.includes(dependentId)
+      ) {
+        ready.push(dependentId);
+        ready.sort((left, right) => {
+          return (originalIndexes.get(left) ?? 0) - (originalIndexes.get(right) ?? 0);
+        });
+      }
+    }
+  }
+
+  if (orderedIds.length !== plan.executionUnits.length) {
+    return [...plan.executionUnits];
+  }
+
+  return orderedIds
+    .map((id) => plan.executionUnits.find((executionUnit) => executionUnit.id === id))
+    .filter((executionUnit): executionUnit is RefactorExecutionUnit => Boolean(executionUnit));
+}
+
 export type RefactorPlanParseErrorCode = "missing_block" | "malformed_json" | "invalid_schema";
 
 export interface RefactorPlanParseSuccess {

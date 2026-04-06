@@ -7,9 +7,20 @@ import {
   type GuidedWorkflowResult,
   type PromptLoadResult,
 } from "../../packages/workflow-core/src/index";
+import {
+  orderExecutionUnits,
+  parseTaggedRefactorPlan,
+  type RefactorExecutionUnit,
+} from "./contract";
 import { buildPrompt, type PromptBundle } from "./prompting";
 
 const VERDICT_PATTERN = /(?:^|\n)\s*(?:1\)\s*)?Verdict:\s*(PASS|REFINE|REJECT)\b/i;
+
+function formatExecutionItemText(executionUnit: RefactorExecutionUnit): string {
+  return executionUnit.dependsOn.length > 0
+    ? `${executionUnit.id}: ${executionUnit.title} (depends on: ${executionUnit.dependsOn.join(", ")})`
+    : `${executionUnit.id}: ${executionUnit.title}`;
+}
 
 export class RefactorWorkflow extends GuidedWorkflow {
   private prompts?: PromptBundle;
@@ -60,6 +71,74 @@ export class RefactorWorkflow extends GuidedWorkflow {
           ].join("\n\n");
         },
         parseCritiqueVerdict: (text) => this.parseCritiqueVerdict(text),
+      },
+      approval: {
+        selectAction: async (_args, ctx) => {
+          const selection = await ctx.ui.select("Refactor - Plan Ready", [
+            "Approve refactor plan",
+            "Continue planning",
+            "Regenerate plan",
+            "Cancel",
+          ]);
+
+          if (selection === "Approve refactor plan") {
+            return { action: "approve" };
+          }
+
+          if (selection === "Continue planning") {
+            const note = (await ctx.ui.editor("Continue planning note:", ""))?.trim();
+            return note ? { action: "continue", note } : { cancelled: true };
+          }
+
+          if (selection === "Regenerate plan") {
+            return { action: "regenerate" };
+          }
+
+          if (selection === "Cancel") {
+            return { action: "exit" };
+          }
+
+          return { cancelled: true };
+        },
+      },
+      execution: {
+        extractItems: ({ planText }) => {
+          const parsed = parseTaggedRefactorPlan(planText);
+          if (!parsed.ok) {
+            return [];
+          }
+
+          return orderExecutionUnits(parsed.value).map((executionUnit, index) => ({
+            step: index + 1,
+            text: formatExecutionItemText(executionUnit),
+          }));
+        },
+        buildExecutionPrompt: ({ planText, currentStep, items }) => {
+          const parsed = parseTaggedRefactorPlan(planText);
+          if (!parsed.ok) {
+            return "Approved refactor plan could not be parsed into execution units.";
+          }
+
+          const orderedUnits = orderExecutionUnits(parsed.value);
+          const executionUnit = orderedUnits[currentStep.step - 1];
+          if (!executionUnit) {
+            return `Execute approved refactor step ${currentStep.step}: ${currentStep.text}`;
+          }
+
+          return [
+            `Execute approved refactor unit ${currentStep.step}/${items.length}.`,
+            `Unit ID: ${executionUnit.id}`,
+            `Title: ${executionUnit.title}`,
+            `Objective: ${executionUnit.objective}`,
+            executionUnit.dependsOn.length > 0
+              ? `Dependencies: ${executionUnit.dependsOn.join(", ")}`
+              : "Dependencies: none",
+            "Targets:",
+            ...executionUnit.targets.map((target) => `- ${target}`),
+            "Validations:",
+            ...executionUnit.validations.map((validation) => `- ${validation}`),
+          ].join("\n");
+        },
       },
       planningPolicy: {
         isSafeReadOnlyCommand,
