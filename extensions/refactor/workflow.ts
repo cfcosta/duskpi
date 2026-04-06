@@ -13,6 +13,10 @@ import {
   type RefactorExecutionUnit,
 } from "./contract";
 import { RefactorExecutionManager, type RefactorExecutionRunResult } from "./execution-manager";
+import {
+  RefactorExecutionScheduler,
+  type RefactorExecutionScheduleResult,
+} from "./execution-scheduler";
 import { buildPrompt, buildWorkerPrompt, type PromptBundle } from "./prompting";
 import { RefactorWorkerRunner } from "./worker-runner";
 import { JjWorkspaceManager } from "./workspace-manager";
@@ -57,16 +61,68 @@ function buildExecutionManagerPrompt(
   return lines.join("\n");
 }
 
+function buildExecutionSchedulerPrompt(
+  schedule: RefactorExecutionScheduleResult,
+  executionUnits: RefactorExecutionUnit[],
+): string {
+  const lines = [
+    `Execution scheduler processed ${executionUnits.length} approved refactor units.`,
+    `Batch status: ${schedule.status}`,
+  ];
+
+  const stepByUnitId = new Map(
+    executionUnits.map((executionUnit, index) => [executionUnit.id, index + 1]),
+  );
+  const resultsByUnitId = new Map(
+    schedule.layers.flatMap((layer) =>
+      layer.results.map((result) => [result.unitId, result] as const),
+    ),
+  );
+
+  for (const executionUnit of executionUnits) {
+    const step = stepByUnitId.get(executionUnit.id) ?? 1;
+    const result = resultsByUnitId.get(executionUnit.id);
+    if (!result) {
+      lines.push(
+        `- Step ${step} (${executionUnit.id}): emit execution_result status "skipped" with summary "Not run because dependency-layer execution stopped before this unit."`,
+      );
+      continue;
+    }
+
+    if (result.status === "completed") {
+      lines.push(
+        `- Step ${step} (${executionUnit.id}): emit execution_result status "done" with summary "${result.summary}"`,
+      );
+      continue;
+    }
+
+    lines.push(
+      `- Step ${step} (${executionUnit.id}): emit execution_result status "skipped" with summary "${result.summary}"`,
+    );
+  }
+
+  if (schedule.remainingUnitIds.length > 0) {
+    lines.push(
+      "Remaining units were not started:",
+      ...schedule.remainingUnitIds.map((unitId) => `- ${unitId}`),
+    );
+  }
+
+  return lines.join("\n");
+}
+
 export class RefactorWorkflow extends GuidedWorkflow {
   private prompts?: PromptBundle;
   private startupError?: Error;
   private repoRoot?: string;
   private latestExecutionRun?: RefactorExecutionRunResult;
+  private latestExecutionSchedule?: RefactorExecutionScheduleResult;
 
   constructor(
     private readonly api: ExtensionAPI,
     private readonly promptProvider: () => PromptLoadResult<PromptBundle>,
     private readonly executionManager?: RefactorExecutionManager,
+    private readonly executionScheduler?: RefactorExecutionScheduler,
   ) {
     super(api, {
       id: "refactor",
@@ -140,22 +196,28 @@ export class RefactorWorkflow extends GuidedWorkflow {
         },
         onApprove: async ({ planText }, ctx) => {
           this.latestExecutionRun = undefined;
+          this.latestExecutionSchedule = undefined;
           const parsed = parseTaggedRefactorPlan(planText);
           if (!parsed.ok) {
             return;
           }
 
           const orderedUnits = orderExecutionUnits(parsed.value);
-          if (orderedUnits.length !== 1) {
+          if (orderedUnits.length === 1) {
+            const executionManager = this.getExecutionManager(ctx.cwd);
+            this.latestExecutionRun = await executionManager.executeUnit({
+              executionUnit: orderedUnits[0]!,
+              approvedPlanSummary: parsed.value.summary,
+              step: 1,
+              totalSteps: 1,
+            });
             return;
           }
 
-          const executionManager = this.getExecutionManager(ctx.cwd);
-          this.latestExecutionRun = await executionManager.executeUnit({
-            executionUnit: orderedUnits[0]!,
+          const executionScheduler = this.getExecutionScheduler(ctx.cwd);
+          this.latestExecutionSchedule = await executionScheduler.execute({
+            executionUnits: orderedUnits,
             approvedPlanSummary: parsed.value.summary,
-            step: 1,
-            totalSteps: 1,
           });
         },
       },
@@ -181,6 +243,10 @@ export class RefactorWorkflow extends GuidedWorkflow {
           const executionUnit = orderedUnits[currentStep.step - 1];
           if (!executionUnit) {
             return `Execute approved refactor step ${currentStep.step}: ${currentStep.text}`;
+          }
+
+          if (this.latestExecutionSchedule) {
+            return buildExecutionSchedulerPrompt(this.latestExecutionSchedule, orderedUnits);
           }
 
           if (this.latestExecutionRun && this.latestExecutionRun.unitId === executionUnit.id) {
@@ -226,6 +292,7 @@ export class RefactorWorkflow extends GuidedWorkflow {
   ): Promise<GuidedWorkflowResult> {
     this.repoRoot = ctx.cwd;
     this.latestExecutionRun = undefined;
+    this.latestExecutionSchedule = undefined;
     this.reloadPrompts();
 
     if (!this.prompts) {
@@ -279,6 +346,16 @@ export class RefactorWorkflow extends GuidedWorkflow {
         summary: workerResult.summary,
         changedFiles: workerResult.changedFiles,
       }),
+    });
+  }
+
+  private getExecutionScheduler(repoRootOverride?: string): RefactorExecutionScheduler {
+    if (this.executionScheduler) {
+      return this.executionScheduler;
+    }
+
+    return new RefactorExecutionScheduler({
+      executor: this.getExecutionManager(repoRootOverride),
     });
   }
 

@@ -6,6 +6,7 @@ import * as path from "node:path";
 import refactor from "./index";
 import { REFACTOR_PLAN_JSON_BLOCK_TAG } from "./contract";
 import type { RefactorExecutionManager } from "./execution-manager";
+import type { RefactorExecutionScheduler } from "./execution-scheduler";
 import { RefactorWorkflow } from "./workflow";
 import { buildPrompt, buildWorkerPrompt, loadPrompts } from "./prompting";
 
@@ -32,6 +33,7 @@ function createHarness(options?: {
   selectChoice?: string;
   editorValue?: string;
   executionManager?: RefactorExecutionManager;
+  executionScheduler?: RefactorExecutionScheduler;
 }) {
   const sentMessages: string[] = [];
   const sentCustomMessages: Array<{ customType?: string; content?: unknown; display?: boolean }> =
@@ -92,6 +94,7 @@ function createHarness(options?: {
     api as never,
     () => ({ ok: true, prompts }),
     options?.executionManager,
+    options?.executionScheduler,
   );
 
   return {
@@ -313,9 +316,46 @@ test("workflow reaches approval after arbiter revision and a PASS critique", asy
   });
 });
 
-test("workflow approval hands off ordered execution items and dispatches the first execution prompt", async () => {
+test("workflow approval hands off ordered execution items and surfaces scheduler output for multi-unit plans", async () => {
+  const executionScheduler = {
+    async execute() {
+      return {
+        status: "completed" as const,
+        layers: [
+          {
+            layer: 1,
+            unitIds: ["contract-core"],
+            results: [
+              {
+                unitId: "contract-core",
+                status: "completed" as const,
+                summary: "Integrated contract-core",
+                changedFiles: ["extensions/refactor/contract.ts"],
+                validations: [],
+              },
+            ],
+          },
+          {
+            layer: 2,
+            unitIds: ["guided-shell"],
+            results: [
+              {
+                unitId: "guided-shell",
+                status: "completed" as const,
+                summary: "Integrated guided-shell",
+                changedFiles: ["extensions/refactor/workflow.ts"],
+                validations: [],
+              },
+            ],
+          },
+        ],
+        remainingUnitIds: [],
+      };
+    },
+  };
   const { workflow, ctx, sentMessages, sentCustomMessages } = createHarness({
     selectChoice: "Approve refactor plan",
+    executionScheduler: executionScheduler as never,
   });
 
   await workflow.handleCommand("", ctx);
@@ -377,9 +417,19 @@ test("workflow approval hands off ordered execution items and dispatches the fir
       "guided-shell: Adopt GuidedWorkflow (depends on: contract-core)",
     ],
   );
-  assert.match(sentMessages.at(-1) ?? "", /Execute approved refactor unit 1\/2\./);
-  assert.match(sentMessages.at(-1) ?? "", /Unit ID: contract-core/);
-  assert.match(sentMessages.at(-1) ?? "", /Dependencies: none/);
+  assert.match(
+    sentMessages.at(-1) ?? "",
+    /Execution scheduler processed 2 approved refactor units\./,
+  );
+  assert.match(sentMessages.at(-1) ?? "", /Batch status: completed/);
+  assert.match(
+    sentMessages.at(-1) ?? "",
+    /Step 1 \(contract-core\): emit execution_result status "done" with summary "Integrated contract-core"/,
+  );
+  assert.match(
+    sentMessages.at(-1) ?? "",
+    /Step 2 \(guided-shell\): emit execution_result status "done" with summary "Integrated guided-shell"/,
+  );
 });
 
 test("workflow surfaces single-unit execution manager success through the first execution prompt", async () => {

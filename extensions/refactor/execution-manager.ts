@@ -59,7 +59,11 @@ export interface ExecuteRefactorUnitInput {
   timeoutMs?: number;
 }
 
-export class RefactorExecutionManager {
+export interface RefactorUnitExecutor {
+  executeUnit(input: ExecuteRefactorUnitInput): Promise<RefactorExecutionRunResult>;
+}
+
+export class RefactorExecutionManager implements RefactorUnitExecutor {
   private readonly workspaceBaseDir: string;
 
   constructor(private readonly options: RefactorExecutionManagerOptions) {
