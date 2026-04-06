@@ -12,7 +12,7 @@ export default function bugFix(api: ExtensionAPI): void {
   const promptDirectory = path.resolve(moduleDirectory, "prompts");
 
   registerGuidedWorkflowExtension(api, {
-    commandName: "bug-fix",
+    commandName: "bugfix",
     description: "Run the adversarial bug-finding workflow",
     createWorkflow: (extensionApi) => {
       return new BugFinderWorkflow(extensionApi, () => loadPrompts(promptDirectory));

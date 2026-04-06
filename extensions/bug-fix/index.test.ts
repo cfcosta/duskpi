@@ -593,7 +593,7 @@ test("bugFinder command wiring uses real prompt files end-to-end", async () => {
 
   bugFinder(api as never);
 
-  await commands["bug-fix"]?.handler("", ctx as never);
+  await commands["bugfix"]?.handler("", ctx as never);
   assert.match(sentMessages[0] ?? "", /You are a bug-finding agent/);
   assert.match(sentMessages[0] ?? "", /You are an adversarial bug reviewer/);
   assert.match(sentMessages[0] ?? "", /You are the final arbiter/);
@@ -635,6 +635,6 @@ test("bugFinder registers command and guided workflow event handlers", () => {
 
   bugFinder(api as never);
 
-  assert.ok(commands["bug-fix"]);
+  assert.ok(commands["bugfix"]);
   assertGuidedWorkflowListenerSurface(listeners);
 });
