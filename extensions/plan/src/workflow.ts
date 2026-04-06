@@ -21,6 +21,11 @@ import {
   type PlanApprovalPreviewStep,
 } from "./plan-action-ui";
 import {
+  renderPlanDashboardLines,
+  type PlanDashboardSnapshot,
+  type PlanDashboardStepView,
+} from "./plan-dashboard-ui";
+import {
   PLAN_OUTPUT_JSON_BLOCK_TAG,
   RUNTIME_PLAN_CONTRACT_VERSION,
   parseTaggedPlanContract,
@@ -2298,6 +2303,18 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       return;
     }
 
+    const dashboardSnapshot = this.buildTopLevelPlanDashboardSnapshot();
+    if (dashboardSnapshot) {
+      ctx.ui.setWidget(TODO_WIDGET_KEY, (_tui, theme) => {
+        return {
+          render: (width: number) => {
+            return renderPlanDashboardLines(dashboardSnapshot, "compact", width, theme);
+          },
+        };
+      });
+      return;
+    }
+
     const progress = this.getExecutionProgressView();
     if (progress.totalSteps === 0) {
       ctx.ui.setWidget(TODO_WIDGET_KEY, undefined);
@@ -2350,6 +2367,62 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       this.planModeEnabled ? ctx.ui.theme.fg("warning", "⏸ plan") : undefined,
     );
     this.updateTodoWidget(ctx);
+  }
+
+  private buildTopLevelPlanDashboardSnapshot(): PlanDashboardSnapshot | undefined {
+    const state = this.getStateSnapshot();
+    if (!this.planModeEnabled || this.executionMode || this.autoPlanMode !== "off") {
+      return undefined;
+    }
+
+    if (state.phase !== "planning" && state.phase !== "approval") {
+      return undefined;
+    }
+
+    const planMetadata = this.latestPlanMetadata;
+    if (!planMetadata || planMetadata.steps.length === 0) {
+      return undefined;
+    }
+
+    const dependencyEdges = planMetadata.steps.flatMap((step) =>
+      step.dependsOn.map((dependency) => `${step.step} ← ${dependency}`),
+    );
+    const checkpoints = planMetadata.checkpoints.map((checkpoint) => formatCheckpointLabel(checkpoint));
+    const critiqueSummary = this.latestCritiqueSummary || this.approvalReview?.critiqueSummary;
+    const summary =
+      state.phase === "approval"
+        ? "Structured plan ready for approval."
+        : "Structured plan captured from valid pi-plan-json output.";
+
+    return {
+      title: "plan",
+      scopeLabel: "/plan",
+      stateLabel: state.phase,
+      summary,
+      taskGeometry: planMetadata.taskGeometry,
+      coordinationPattern: planMetadata.coordinationPattern,
+      assumptions: [...planMetadata.assumptions],
+      checkpoints,
+      dependencies: dependencyEdges,
+      badges: [...(this.approvalReview?.badges ?? [])],
+      critiqueSummary,
+      steps: planMetadata.steps.map<PlanDashboardStepView>((step) => ({
+        step: step.step,
+        label: step.label,
+        kind: step.kind,
+        status: "pending",
+        targets: [...step.targets],
+        validation: [...step.validation],
+        risks: [...step.risks],
+        dependsOn: [...step.dependsOn],
+        checkpoints: step.checkpointIds
+          .map((checkpointId) => {
+            const checkpoint = planMetadata.checkpoints.find((candidate) => candidate.id === checkpointId);
+            return checkpoint ? formatCheckpointLabel(checkpoint) : checkpointId;
+          })
+          .filter((value) => value.length > 0),
+      })),
+    };
   }
 
   private enterPlanMode(ctx: ExtensionContext): void {

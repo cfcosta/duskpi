@@ -699,6 +699,19 @@ function extractRequestId(prompt: string): string | undefined {
   return match?.[1]?.trim();
 }
 
+function renderStoredWidgetFactory(
+  uiStub: ReturnType<typeof createUiStub>,
+  key: string,
+  width = 120,
+): string[] {
+  const factory = uiStub.widgetFactories.get(key) as
+    | ((tui: unknown, theme: typeof uiStub.ui.theme) => { render(width: number): string[] })
+    | undefined;
+  assert.ok(factory, `Expected widget factory for ${key}`);
+  const component = factory({}, uiStub.ui.theme);
+  return component.render(width);
+}
+
 function buildExecutionResultText(args: {
   step: number;
   status: "done" | "skipped";
@@ -3850,6 +3863,33 @@ test("after a PASS critique the plan stays tracked without leaking visible follo
     message: "No tracked plan steps. Create a plan in /plan mode first.",
     level: "info",
   });
+});
+
+test("top-level /plan approval renders a compact dashboard widget from structured metadata", async () => {
+  const harness = createPlanExtensionHarness({ hasUI: true });
+
+  await harness.runCommand("plan", "on");
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildConflictingRichPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- structured and ready",
+  );
+
+  expect(harness.uiStub.widgets.get("plan-todos")).toBeUndefined();
+  const rendered = renderStoredWidgetFactory(harness.uiStub, "plan-todos").join("\n");
+  expect(rendered).toContain("📋 plan approval • 0/2");
+  expect(rendered).toContain("shared_artifact • checkpointed_execution");
+  expect(rendered).toContain("Structured plan ready for approval.");
+  expect(rendered).toContain("A regression test for prompt leakage");
+  expect(rendered).not.toContain("Markdown says the wrong step name");
+  expect(rendered).not.toContain("wrong/path.ts");
 });
 
 test("continue selection sends a correlated planning follow-up and keeps read-only tools", async () => {
