@@ -9,15 +9,17 @@ This directory is the repo-local copy bundled under `extensions/plan`. It is not
 - default execution-first mode (YOLO)
 - read-only `/plan` mode for investigation and plan drafting
 - `/autoplan` for long-term goals: approve one top-level plan, then recursively re-plan and execute each approved subtask
+- a runtime `pi-plan-json` **v2** contract for plans, reviews, and execution results
 - an internal hidden critique and revision pass before approval
 - one automatic draft-reformat retry when Pi returns a plan without a valid tagged `pi-plan-json` contract block
 - an approval menu with approve, continue, regenerate, and exit actions
 - non-UI approval fallback commands while approval is pending: `/plan approve`, `/plan continue <note>`, `/plan regenerate`, `/plan exit`
-- approval previews that show compact step summaries plus file and validation hints when available
-- `/todos` progress reporting that stays compact during approved execution even when the plan contains richer step metadata
-- step-by-step approved execution with one `jj` commit per plan step
-- execution prompts that reuse the original step objective plus files, validation, and rollback notes when the plan includes them
-- status text derived from guided workflow snapshots and todo-widget output derived from guided execution snapshots
+- approval previews that now show coordination strategy, dependency, checkpoint, and assumption summaries in addition to compact step details
+- normalized plan metadata capture so task geometry, coordination pattern, dependencies, checkpoints, assumptions, and escalation triggers survive approval and execution reuse
+- `/todos` progress reporting that stays compact during approved execution even when the underlying plan carries richer coordination metadata
+- step-by-step approved execution with one `jj` commit per plan step plus a structured tagged `execution_result` payload for progress syncing
+- execution prompts that reuse the approved step objective plus files, validation, rollback notes, and stored coordination context from the plan metadata
+- capability-aware read-only tool selection in plan mode, with strict fallback behavior for older unannotated tools
 - transient plan state reset on `session_switch` and `session_fork`, while `session_compact` now preserves active plan/autoplan flows in the same session
 
 ```txt
@@ -102,9 +104,10 @@ Choosing **Approve and execute now** automatically:
 1. exits plan mode,
 2. restores normal tools,
 3. triggers implementation for the next open step,
-4. includes the original step objective plus any parsed files, validation notes, and rollback notes in the execution prompt,
+4. includes the approved step objective plus stored coordination context, files, validation notes, and rollback notes in the execution prompt,
 5. expects one atomic `jj` commit for that step,
-6. then prompts the next remaining step until the todo list is complete.
+6. expects a tagged `execution_result` JSON block under `pi-plan-json` after the commit so progress can be synced structurally,
+7. then prompts the next remaining step until the todo list is complete.
 
 If no interactive UI is available while approval is pending, the same approval state can be resolved through slash commands instead:
 
@@ -127,16 +130,18 @@ If no interactive UI is available while approval is pending, the same approval s
 
 In plan mode:
 
-- mutating tools are blocked: `edit`, `write`, `ast_rewrite`
-- active tools are switched to a read-only subset when available
+- capability-marked mutating tools are blocked before execution, even when their names are not part of the legacy hard-coded write list
+- active tools are switched to a capability-aware read-only subset when metadata is available
+- older unannotated tools still fall back to the repo-local allowlist so common inspection tools keep working during the transition
 - when available, external research can use `web_search` for discovery and `web_fetch` for reading exact pages
 
 ### Bash restrictions
 
-`bash` commands are filtered through a read-only policy:
+`bash` commands are filtered through a strict read-only policy:
 
 - allowed examples: `ls`, `grep`, `find`, `git status`, `git log`
 - blocked examples: `rm`, `mv`, `npm install`, `git commit`, redirection writes (`>`, `>>`)
+- blocked shell control forms now also include pipes, command chaining, command substitution, process substitution, and multiline shell input, even when the base command looks read-only
 
 ### Clarification questions
 
@@ -145,7 +150,8 @@ While considering changes, plan mode should actively surface user-owned decision
 For `/autoplan`, that clarification behavior is intentionally split in two:
 
 - before the first approval, the top-level autoplan planning rounds may still ask clarification questions, including top-level continue/regenerate revisions
-- after the first approval, inner autoplan subtask planning, hidden progress review, and inner execution no longer ask new questions or approvals; they reuse the approved top-level plan text as context and infer the best repo-consistent choice instead
+- after the first approval, inner autoplan subtask planning, hidden progress review, and inner execution stay autonomous **between** declared checkpoint or integration moments
+- when the approved top-level metadata explicitly marks a checkpoint or integration moment, inner autoplan planning, review, or execution may surface a user interruption there; outside those declared moments, the extension treats user-input or approval-seeking behavior as a policy violation and triggers the stricter recovery prompts instead
 
 - 1-4 questions per questionnaire, with more than one question when multiple independent choices remain
 - 2-4 suggested options per question
@@ -166,14 +172,73 @@ In plan mode, the system prompt now follows a Claude Code-style planning flow an
 5. Plan (step objective, target files or components, validation)
 6. End with: `Ready to execute when approved.`
 7. After the markdown plan, include a fenced tagged JSON block using `pi-plan-json`.
-   - Plan payloads must be shaped like:
-     - `{ "version": 1, "kind": "plan", "steps": [...] }`
-   - Each step must include:
-     - `step`, `objective`, `targets`, `validation`, `risks`
 
-Before approval is shown, Pi critiques the draft plan for atomicity, ordering, specificity, validation quality, executability, and metadata noise. Weak plans are automatically sent back for refinement through hidden extension messages. If Pi returns a draft without a valid tagged `pi-plan-json` block, the extension now sends one automatic restatement request that preserves the same intent but explicitly asks for the required markdown + tagged JSON contract. If the second draft is still invalid, approval is not opened and plan mode stays read-only with a visible failure notification.
+### Runtime v2 tagged JSON payloads
 
-When a plan includes nested step metadata like target files/components, validation method, or risks and rollback notes, the extension now preserves that structure for approval previews and execution prompts while keeping `/todos` and the widget intentionally one-line and compact during approved execution.
+The runtime contract is now version 2.
+
+#### Plan payload
+
+```json
+{
+  "version": 2,
+  "kind": "plan",
+  "taskGeometry": "shared_artifact",
+  "coordinationPattern": "checkpointed_execution",
+  "assumptions": ["..."],
+  "escalationTriggers": ["..."],
+  "checkpoints": [
+    {
+      "id": "checkpoint-1",
+      "title": "Review metadata capture",
+      "kind": "checkpoint",
+      "step": 1,
+      "why": "..."
+    }
+  ],
+  "steps": [
+    {
+      "step": 1,
+      "kind": "implement",
+      "objective": "...",
+      "targets": ["..."],
+      "validation": ["..."],
+      "risks": ["..."],
+      "dependsOn": [],
+      "checkpointIds": ["checkpoint-1"]
+    }
+  ]
+}
+```
+
+#### Review payload
+
+- continue reviews use `kind: "review"`, `status: "continue"`, `summary`, coordination metadata, checkpoints, and steps
+- complete reviews use `kind: "review"`, `status: "complete"`, and `summary`
+
+#### Execution result payload
+
+Approved execution now syncs progress from structured tagged JSON instead of `[DONE:n]` / `[SKIPPED:n]` markers:
+
+```json
+{
+  "version": 2,
+  "kind": "execution_result",
+  "scope": "plan",
+  "step": 1,
+  "status": "done",
+  "summary": "...",
+  "changedTargets": ["..."],
+  "validationsRun": ["..."],
+  "checkpointsReached": ["..."]
+}
+```
+
+For `/autoplan`, execution results may also include `scope: "autoplan"` and `outerStep`.
+
+Before approval is shown, Pi critiques the draft plan for atomicity, ordering, specificity, validation quality, executability, and metadata noise. Weak plans are automatically sent back for refinement through hidden extension messages. If Pi returns a draft without a valid tagged `pi-plan-json` block, the extension sends one automatic restatement request that preserves the same intent but explicitly asks for the required markdown + tagged JSON contract. If the second draft is still invalid, approval is not opened and plan mode stays read-only with a visible failure notification.
+
+When a plan includes coordination metadata like task geometry, coordination pattern, dependencies, checkpoints, assumptions, escalation triggers, target files/components, validation methods, or rollback notes, the extension preserves that structure for approval previews, autoplan prompt state, execution prompts, and recovery behavior while keeping `/todos` and the widget intentionally compact.
 
 ## Commands
 
@@ -184,18 +249,19 @@ When a plan includes nested step metadata like target files/components, validati
 - `/plan off` — disable plan mode
 - `/plan status` — show current status
 - `/plan <task>` — enable mode if needed and start planning for `<task>`
-- `/autoplan <goal>` — create a top-level plan for a long-term goal, wait for the usual approval, then recursively plan and execute each approved subtask without asking new questions or approvals for the inner subplans; top-level planning before the first approval may still ask clarification questions when needed
+- `/autoplan <goal>` — create a top-level plan for a long-term goal, wait for the usual approval, then recursively plan and execute each approved subtask; top-level planning before the first approval may still ask clarification questions when needed, and post-approval inner turns only allow interruption at declared checkpoint or integration moments from the approved top-level metadata
 - `/autoplan status` — show the current autoplan loop state
 - `/autoplan stop` — stop the current autoplan loop and clear its transient state
 - `/plan approve` — when approval is pending and no interactive UI is available, approve and start execution
 - `/plan continue <note>` — when approval is pending and no interactive UI is available, continue planning with a required note
 - `/plan regenerate` — when approval is pending and no interactive UI is available, rebuild the plan from scratch
 - `/plan exit` — when approval is pending and no interactive UI is available, leave plan mode and clear tracked plan state
-- `/todos` — show tracked approved-execution progress (`✓` and `○`) from guided execution items, using compact labels even if the underlying plan stores richer metadata and trimming older items when needed to keep the current step visible
-- approved execution runs one step per turn, requires one atomic `jj` commit for that step, then auto-continues to the next remaining todo
+- `/todos` — show tracked approved-execution progress (`✓`, `○`, and `↷`) from guided execution items, using compact labels even if the underlying plan stores richer metadata and trimming older items when needed to keep the current step visible
+- approved execution runs one step per turn, requires one atomic `jj` commit for that step, then a tagged `execution_result` payload, then auto-continues to the next remaining todo
 - after each planning turn, the action menu includes:
   - a compact review summary for the extracted plan
-  - per-step file/component and validation hints when present in the plan
+  - strategy, dependency, checkpoint, and assumption summaries when present in the structured plan metadata
+  - per-step file/component, validation, dependency, and checkpoint hints when present in the plan
   - critique summary and badges when available
   - quick action hotkeys: `A` approve, `C` continue, `R` regenerate, `X` exit, `E` edit note
   - `Approve and execute now` _(optional inline note supported; execution reuses the original step objective and available files/validation/rollback notes)_
