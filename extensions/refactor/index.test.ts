@@ -954,6 +954,20 @@ test("real executor prompt gives concrete remediation guidance for LLM smells", 
   );
 });
 
+test("real executor prompt aligns with manager-owned merge and conflict gating", () => {
+  const promptDirectory = path.join(path.dirname(new URL(import.meta.url).pathname), "prompts");
+  const loaded = loadPrompts(promptDirectory);
+
+  assert.equal(loaded.ok, true);
+  if (!loaded.ok) {
+    return;
+  }
+
+  assert.match(loaded.prompts.executor, /merge and conflict handling as manager-owned gates/i);
+  assert.match(loaded.prompts.executor, /report the conflict explicitly/i);
+  assert.match(loaded.prompts.executor, /surface the exact conflicted files or blockers/i);
+});
+
 test("workflow retries an invalid planning payload as empty output", async () => {
   const { workflow, ctx, sentMessages, notifications } = createHarness();
 

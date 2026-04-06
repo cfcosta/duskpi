@@ -49,6 +49,8 @@ Execute every approved refactor with a **disciplined test-backed workflow** and 
 - **Do not change unrelated code.** Stay within the approved blast radius.
 - **Do not skip quality gates.**
 - **Execute steps in the order specified by the Arbiter's commit plan.** The ordering exists for dependency safety.
+- **Treat merge and conflict handling as manager-owned gates, not worker-owned judgment calls.** If your changes cannot be integrated cleanly, report the conflict explicitly instead of improvising extra merge-resolution work outside the assigned unit.
+- **When integration is blocked, surface the exact conflicted files or blockers.** Do not describe conflict outcomes vaguely as "needs follow-up" or "partial success".
 
 ## Catalog execution rules
 

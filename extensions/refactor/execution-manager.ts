@@ -20,6 +20,7 @@ export interface WorkerRunnerLike {
 export interface ExecutionManagerIntegrationResult {
   summary?: string;
   changedFiles?: string[];
+  conflicts?: string[];
 }
 
 export interface RefactorExecutionManagerOptions {
@@ -105,6 +106,17 @@ export class RefactorExecutionManager implements RefactorUnitExecutor {
         executionUnit: input.executionUnit,
         workerResult,
       });
+
+      if ((integrationResult?.conflicts?.length ?? 0) > 0) {
+        return {
+          unitId: workerResult.unitId,
+          status: "failed",
+          summary:
+            integrationResult?.summary ?? `Integration blocked for '${workerResult.unitId}'.`,
+          blockers: integrationResult!.conflicts!,
+          validations: workerResult.validations,
+        };
+      }
 
       return {
         unitId: workerResult.unitId,

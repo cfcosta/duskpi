@@ -183,6 +183,54 @@ test("execution manager escalates worker runner parse failures", async () => {
   assert.deepEqual(forgetCalls, ["refactor-step-1-guided-shell"]);
 });
 
+test("execution manager blocks completion when integration reports merge conflicts", async () => {
+  const { workspaceManager, forgetCalls } = createWorkspaceManagerMock();
+  const workerCalls: Array<{ workspaceRoot: string; prompt: string; timeoutMs?: number }> = [];
+  const manager = new RefactorExecutionManager({
+    repoRoot: "/repo",
+    workspaceManager,
+    workerRunner: createWorkerRunnerMock(
+      {
+        version: 1,
+        kind: "refactor_worker_result",
+        unitId: "guided-shell",
+        status: "completed",
+        summary: "Moved /refactor planning to GuidedWorkflow.",
+        changedFiles: ["extensions/refactor/workflow.ts"],
+        validations: [
+          {
+            command: "bun test extensions/refactor/index.test.ts",
+            outcome: "passed",
+          },
+        ],
+      },
+      workerCalls,
+    ),
+    renderWorkerPrompt() {
+      return "Worker prompt";
+    },
+    async integrate() {
+      return {
+        summary: "Integration blocked due to merge conflicts.",
+        conflicts: ["extensions/refactor/workflow.ts conflicted during merge"],
+      };
+    },
+  });
+
+  const result = await manager.executeUnit({ executionUnit: createExecutionUnit(), step: 1 });
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.summary, "Integration blocked due to merge conflicts.");
+  assert.deepEqual(result.blockers, ["extensions/refactor/workflow.ts conflicted during merge"]);
+  assert.deepEqual(result.validations, [
+    {
+      command: "bun test extensions/refactor/index.test.ts",
+      outcome: "passed",
+    },
+  ]);
+  assert.deepEqual(forgetCalls, ["refactor-step-1-guided-shell"]);
+});
+
 test("execution manager escalates integration failures after a completed worker run", async () => {
   const { workspaceManager, forgetCalls } = createWorkspaceManagerMock();
   const workerCalls: Array<{ workspaceRoot: string; prompt: string; timeoutMs?: number }> = [];
