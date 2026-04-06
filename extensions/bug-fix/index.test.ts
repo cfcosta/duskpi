@@ -3,8 +3,11 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import bugFinder from "./index";
+import { BUG_FIX_PLAN_JSON_BLOCK_TAG, parseTaggedBugFixPlan } from "./contract";
 import { BugFinderWorkflow } from "./workflow";
+import { BUG_FIX_WORKER_RESULT_JSON_BLOCK_TAG, parseTaggedWorkerResult } from "./worker-result";
 import { buildPrompt, loadPrompts } from "./prompting";
 
 type NotifyLevel = "info" | "warning" | "error";
@@ -311,10 +314,114 @@ test("buildPrompt includes refinement contract for arbiter mode", () => {
     refinement: "tighten exploit validation",
   });
 
-  assert.match(prompt, /## Existing Arbitration/);
+  assert.match(prompt, /## Existing Approved Bug-Fix Plan \(Structured Contract\)/);
   assert.match(prompt, /arbiter-report/);
   assert.match(prompt, /## Refinement Request/);
   assert.match(prompt, /tighten exploit validation/);
+  assert.match(prompt, new RegExp(BUG_FIX_PLAN_JSON_BLOCK_TAG, "i"));
+  assert.match(prompt, /fully revised bug-fix plan in the structured contract format/i);
+});
+
+test("buildPrompt passes the approved bug-fix plan to fixer mode as a structured contract", () => {
+  const prompt = buildPrompt({
+    phase: "fixer",
+    prompts: {
+      finder: "FINDER",
+      skeptic: "SKEPTIC",
+      arbiter: "ARBITER",
+      fixer: "FIXER",
+    },
+    reports: {
+      arbiter: "approved-plan-report",
+    },
+  });
+
+  assert.match(prompt, /## Approved Bug-Fix Plan \(Structured Contract\)/);
+  assert.match(prompt, /approved-plan-report/);
+});
+
+test("parseTaggedBugFixPlan parses the approved bug-fix structured contract", () => {
+  const result = parseTaggedBugFixPlan(
+    [
+      `\`\`\`${BUG_FIX_PLAN_JSON_BLOCK_TAG}`,
+      JSON.stringify(
+        {
+          version: 1,
+          kind: "approved_bug_fix_plan",
+          summary: "Fix the parser crash and tighten validation output.",
+          executionUnits: [
+            {
+              id: "null-guard",
+              title: "Guard null dereference",
+              objective: "Prevent the parser crash on a null token.",
+              targets: ["src/parser.ts"],
+              validations: ["bun test extensions/bug-fix/index.test.ts"],
+              dependsOn: [],
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "\`\`\`",
+    ].join("\n"),
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok) {
+    return;
+  }
+
+  assert.equal(result.value.executionUnits[0]?.id, "null-guard");
+});
+
+test("parseTaggedWorkerResult parses the bug-fix worker-result structured contract", () => {
+  const result = parseTaggedWorkerResult(
+    [
+      `\`\`\`${BUG_FIX_WORKER_RESULT_JSON_BLOCK_TAG}`,
+      JSON.stringify(
+        {
+          version: 1,
+          kind: "bug_fix_worker_result",
+          unitId: "null-guard",
+          status: "completed",
+          summary: "Added a null guard before dereferencing the parser token.",
+          changedFiles: ["src/parser.ts"],
+          validations: [
+            {
+              command: "bun test extensions/bug-fix/index.test.ts",
+              outcome: "passed",
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "\`\`\`",
+    ].join("\n"),
+  );
+
+  assert.equal(result.ok, true);
+  if (!result.ok) {
+    return;
+  }
+
+  assert.equal(result.value.unitId, "null-guard");
+});
+
+test("real prompt bundle wires arbiter and fixer to the bug-fix structured contracts", () => {
+  const result = loadPrompts(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "prompts"));
+
+  assert.equal(result.ok, true);
+  if (!result.ok) {
+    return;
+  }
+
+  assert.match(result.prompts.arbiter, /bug-fix-plan-json/i);
+  assert.match(result.prompts.arbiter, /approved_bug_fix_plan/i);
+  assert.match(result.prompts.fixer, /bug-fix-plan-json/i);
+  assert.match(result.prompts.fixer, /bug-fix-worker-result-json/i);
+  assert.match(result.prompts.fixer, /bug_fix_worker_result/i);
 });
 
 test("workflow reports invalid assistant payload instead of retrying as empty output", async () => {

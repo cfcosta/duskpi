@@ -4,6 +4,8 @@ import {
   type PromptLoadResult,
 } from "../../packages/workflow-core/src/index";
 
+import { BUG_FIX_PLAN_JSON_BLOCK_TAG } from "./contract";
+
 export const PROMPT_FILE_NAMES = {
   finder: "finder.md",
   skeptic: "skeptic.md",
@@ -80,18 +82,27 @@ export function buildPrompt(input: BuildPromptInput): string {
 
     if (input.refinement?.trim()) {
       sections.push(
-        "## Existing Arbitration",
+        "## Existing Approved Bug-Fix Plan (Structured Contract)",
         reports.arbiter ?? "",
         "## Refinement Request",
         input.refinement.trim(),
-        "Please produce a fully revised arbitration report.",
+        "Please produce a fully revised bug-fix plan in the structured contract format.",
       );
     }
+
+    sections.push(
+      "## Structured Contract Reminder",
+      `If you confirm one or more real bugs, include a tagged JSON block named \`${BUG_FIX_PLAN_JSON_BLOCK_TAG}\` using the approved_bug_fix_plan contract.`,
+    );
 
     return sections.join("\n\n");
   }
 
-  return [prompts.fixer, "## Verified Bug List", reports.arbiter ?? ""].join("\n\n");
+  return [
+    prompts.fixer,
+    "## Approved Bug-Fix Plan (Structured Contract)",
+    reports.arbiter ?? "",
+  ].join("\n\n");
 }
 
 export { PromptLoadError };
