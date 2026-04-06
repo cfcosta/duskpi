@@ -208,6 +208,34 @@ function extractRequestId(prompt: string): string | undefined {
   return match?.[1]?.trim();
 }
 
+function buildExecutionResultText(args: {
+  step: number;
+  status: "done" | "skipped";
+  summary?: string;
+}): string {
+  return [
+    "Execution update",
+    "",
+    "```pi-plan-json",
+    JSON.stringify(
+      {
+        version: 2,
+        kind: "execution_result",
+        scope: "plan",
+        step: args.step,
+        status: args.status,
+        summary: args.summary ?? `Step ${args.step} ${args.status}`,
+        changedTargets: [],
+        validationsRun: [],
+        checkpointsReached: [],
+      },
+      null,
+      2,
+    ),
+    "```",
+  ].join("\n");
+}
+
 test("workflow-core test API exposes tool capability metadata", () => {
   const { api } = createApi();
 
@@ -1306,7 +1334,7 @@ test("GuidedWorkflow can deliver the first execution prompt as a hidden follow-u
   });
 });
 
-test("GuidedWorkflow syncs matching [DONE:n] markers onto execution items", async () => {
+test("GuidedWorkflow syncs structured execution results onto execution items", async () => {
   const { api, sentUserMessages } = createApi();
   const { approval } = createApprovalOptions({
     selection: { action: "approve" },
@@ -1336,7 +1364,7 @@ test("GuidedWorkflow syncs matching [DONE:n] markers onto execution items", asyn
     {
       message: {
         role: "assistant",
-        content: [{ type: "text", text: "Implemented second task [DONE:2]" }],
+        content: [{ type: "text", text: buildExecutionResultText({ step: 2, status: "done" }) }],
       },
     },
     ctx,
@@ -1381,7 +1409,97 @@ test("GuidedWorkflow ignores unrelated execution output when syncing progress", 
     {
       message: {
         role: "assistant",
-        content: [{ type: "text", text: "Finished validation without markers" }],
+        content: [{ type: "text", text: "Finished validation without structured execution results" }],
+      },
+    },
+    ctx,
+  );
+
+  assert.deepEqual(workflow.getExecutionSnapshot(), {
+    note: undefined,
+    items: [
+      { step: 1, text: "First task", completed: false },
+      { step: 2, text: "Second task", completed: false },
+    ],
+  });
+});
+
+test("GuidedWorkflow ignores malformed structured execution results", async () => {
+  const { api, sentUserMessages } = createApi();
+  const { approval } = createApprovalOptions({
+    selection: { action: "approve" },
+  });
+  const { execution } = createExecutionOptions();
+  const workflow = new GuidedWorkflow(api, {
+    id: "guided-test",
+    parseGoalArg: parseTrimmedStringArg,
+    approval,
+    execution,
+    text: { alreadyRunning: "guided running" },
+  });
+  const { ctx } = createContext();
+
+  await workflow.handleCommand("first run", ctx);
+  await workflow.handleAgentEnd(
+    {
+      messages: [
+        { role: "user", content: [{ type: "text", text: sentUserMessages[0]! }] },
+        { role: "assistant", content: [{ type: "text", text: "draft plan" }] },
+      ],
+    },
+    ctx,
+  );
+
+  await workflow.handleTurnEnd(
+    {
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: ["```pi-plan-json", '{"version": 2,', "```"].join("\n") }],
+      },
+    },
+    ctx,
+  );
+
+  assert.deepEqual(workflow.getExecutionSnapshot(), {
+    note: undefined,
+    items: [
+      { step: 1, text: "First task", completed: false },
+      { step: 2, text: "Second task", completed: false },
+    ],
+  });
+});
+
+test("GuidedWorkflow ignores out-of-range structured execution results", async () => {
+  const { api, sentUserMessages } = createApi();
+  const { approval } = createApprovalOptions({
+    selection: { action: "approve" },
+  });
+  const { execution } = createExecutionOptions();
+  const workflow = new GuidedWorkflow(api, {
+    id: "guided-test",
+    parseGoalArg: parseTrimmedStringArg,
+    approval,
+    execution,
+    text: { alreadyRunning: "guided running" },
+  });
+  const { ctx } = createContext();
+
+  await workflow.handleCommand("first run", ctx);
+  await workflow.handleAgentEnd(
+    {
+      messages: [
+        { role: "user", content: [{ type: "text", text: sentUserMessages[0]! }] },
+        { role: "assistant", content: [{ type: "text", text: "draft plan" }] },
+      ],
+    },
+    ctx,
+  );
+
+  await workflow.handleTurnEnd(
+    {
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: buildExecutionResultText({ step: 99, status: "done" }) }],
       },
     },
     ctx,
@@ -1426,7 +1544,7 @@ test("GuidedWorkflow sends the next execution prompt after completing the curren
     {
       message: {
         role: "assistant",
-        content: [{ type: "text", text: "Completed first task [DONE:1]" }],
+        content: [{ type: "text", text: buildExecutionResultText({ step: 1, status: "done" }) }],
       },
     },
     ctx,
@@ -1474,7 +1592,7 @@ test("GuidedWorkflow sends the next execution prompt as a hidden follow-up after
     {
       message: {
         role: "assistant",
-        content: [{ type: "text", text: "Completed first task [DONE:1]" }],
+        content: [{ type: "text", text: buildExecutionResultText({ step: 1, status: "done" }) }],
       },
     },
     ctx,
@@ -1527,7 +1645,7 @@ test("GuidedWorkflow sends the next execution prompt after skipping the current 
     {
       message: {
         role: "assistant",
-        content: [{ type: "text", text: "Step already satisfied [SKIPPED:1]" }],
+        content: [{ type: "text", text: buildExecutionResultText({ step: 1, status: "skipped" }) }],
       },
     },
     ctx,
@@ -1574,7 +1692,7 @@ test("GuidedWorkflow clears execution state after the final step is done", async
     {
       message: {
         role: "assistant",
-        content: [{ type: "text", text: "Completed first task [DONE:1]" }],
+        content: [{ type: "text", text: buildExecutionResultText({ step: 1, status: "done" }) }],
       },
     },
     ctx,
@@ -1583,7 +1701,7 @@ test("GuidedWorkflow clears execution state after the final step is done", async
     {
       message: {
         role: "assistant",
-        content: [{ type: "text", text: "Completed second task [DONE:2]" }],
+        content: [{ type: "text", text: buildExecutionResultText({ step: 2, status: "done" }) }],
       },
     },
     ctx,
@@ -1631,7 +1749,7 @@ test("GuidedWorkflow clears execution state after the final step is skipped", as
     {
       message: {
         role: "assistant",
-        content: [{ type: "text", text: "Already satisfied [SKIPPED:1]" }],
+        content: [{ type: "text", text: buildExecutionResultText({ step: 1, status: "skipped" }) }],
       },
     },
     ctx,
@@ -1640,7 +1758,7 @@ test("GuidedWorkflow clears execution state after the final step is skipped", as
     {
       message: {
         role: "assistant",
-        content: [{ type: "text", text: "No code change needed [SKIPPED:2]" }],
+        content: [{ type: "text", text: buildExecutionResultText({ step: 2, status: "skipped" }) }],
       },
     },
     ctx,
@@ -1658,7 +1776,7 @@ test("GuidedWorkflow clears execution state after the final step is skipped", as
   });
 });
 
-test("GuidedWorkflow does not send extra prompts after execution is complete", async () => {
+test("GuidedWorkflow ignores duplicate structured execution results after execution completes", async () => {
   const { api, sentUserMessages } = createApi();
   const { approval } = createApprovalOptions({
     selection: { action: "approve" },
@@ -1688,7 +1806,7 @@ test("GuidedWorkflow does not send extra prompts after execution is complete", a
     {
       message: {
         role: "assistant",
-        content: [{ type: "text", text: "Completed first task [DONE:1]" }],
+        content: [{ type: "text", text: buildExecutionResultText({ step: 1, status: "done" }) }],
       },
     },
     ctx,
@@ -1697,7 +1815,7 @@ test("GuidedWorkflow does not send extra prompts after execution is complete", a
     {
       message: {
         role: "assistant",
-        content: [{ type: "text", text: "Completed second task [DONE:2]" }],
+        content: [{ type: "text", text: buildExecutionResultText({ step: 2, status: "done" }) }],
       },
     },
     ctx,
@@ -1708,7 +1826,7 @@ test("GuidedWorkflow does not send extra prompts after execution is complete", a
     {
       message: {
         role: "assistant",
-        content: [{ type: "text", text: "Repeated marker [DONE:2]" }],
+        content: [{ type: "text", text: buildExecutionResultText({ step: 2, status: "done" }) }],
       },
     },
     ctx,

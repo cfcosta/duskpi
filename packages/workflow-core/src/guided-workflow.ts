@@ -109,13 +109,17 @@ export interface GuidedWorkflowExecutionSnapshot {
   items: GuidedWorkflowExecutionItem[];
 }
 
+export interface GuidedWorkflowExecutionResult {
+  step: number;
+  status: "done" | "skipped";
+}
+
 export interface GuidedWorkflowExecutionOptions {
   extractItems: (
     args: Omit<GuidedWorkflowApprovalPromptArgs, "note">,
   ) => Array<Omit<GuidedWorkflowExecutionItem, "completed"> | GuidedWorkflowExecutionItem>;
   buildExecutionPrompt: (args: GuidedWorkflowExecutionPromptArgs) => string;
-  extractDoneStepNumbers?: (text: string) => number[];
-  extractSkippedStepNumbers?: (text: string) => number[];
+  extractExecutionResults?: (text: string) => GuidedWorkflowExecutionResult[];
 }
 
 export interface GuidedWorkflowOptions {
@@ -695,35 +699,25 @@ export class GuidedWorkflow implements GuidedWorkflowController {
     text: string,
     currentStepNumber?: number,
   ): { completedCount: number; currentStepCompleted: boolean } {
-    const doneSteps =
-      this.options.execution?.extractDoneStepNumbers?.(text) ?? extractDoneStepNumbers(text);
-    const skippedSteps =
-      this.options.execution?.extractSkippedStepNumbers?.(text) ?? extractSkippedStepNumbers(text);
+    const updates =
+      this.options.execution?.extractExecutionResults?.(text) ?? extractExecutionResults(text);
     let completedCount = 0;
     let currentStepCompleted = false;
 
-    for (const step of doneSteps) {
-      const item = this.executionItems.find((candidate) => candidate.step === step);
+    for (const update of updates) {
+      const item = this.executionItems.find((candidate) => candidate.step === update.step);
       if (!item || item.completed || item.skipped) {
         continue;
       }
 
-      item.completed = true;
-      completedCount += 1;
-      if (step === currentStepNumber) {
-        currentStepCompleted = true;
-      }
-    }
-
-    for (const step of skippedSteps) {
-      const item = this.executionItems.find((candidate) => candidate.step === step);
-      if (!item || item.completed || item.skipped) {
-        continue;
+      if (update.status === "done") {
+        item.completed = true;
+      } else {
+        item.skipped = true;
       }
 
-      item.skipped = true;
       completedCount += 1;
-      if (step === currentStepNumber) {
+      if (update.step === currentStepNumber) {
         currentStepCompleted = true;
       }
     }
@@ -887,24 +881,71 @@ function buildDefaultRegeneratePrompt(args: GuidedWorkflowApprovalPromptArgs): s
   return `Regenerate the full plan from scratch.${note}`;
 }
 
-function extractDoneStepNumbers(text: string): number[] {
-  const steps: number[] = [];
-  for (const match of text.matchAll(/\[DONE:(\d+)\]/gi)) {
-    const step = Number(match[1]);
-    if (Number.isFinite(step)) {
-      steps.push(step);
+const EXECUTION_RESULT_BLOCK_TAG = "pi-plan-json";
+const EXECUTION_RESULT_CONTRACT_VERSION = 2;
+
+function extractExecutionResults(text: string): GuidedWorkflowExecutionResult[] {
+  const updates: GuidedWorkflowExecutionResult[] = [];
+  for (const block of extractTaggedJsonBlocks(text, EXECUTION_RESULT_BLOCK_TAG)) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(block);
+    } catch {
+      continue;
+    }
+
+    const result = parseExecutionResult(parsed);
+    if (result) {
+      updates.push(result);
     }
   }
-  return steps;
+
+  return updates;
 }
 
-function extractSkippedStepNumbers(text: string): number[] {
-  const steps: number[] = [];
-  for (const match of text.matchAll(/\[SKIPPED:(\d+)\]/gi)) {
-    const step = Number(match[1]);
-    if (Number.isFinite(step)) {
-      steps.push(step);
+function extractTaggedJsonBlocks(text: string, tag: string): string[] {
+  const escapedTag = escapeRegExp(tag);
+  const pattern = new RegExp("```" + `(?:${escapedTag})\\s*\\n([\\s\\S]*?)\\n` + "```", "gi");
+  const blocks: string[] = [];
+
+  for (const match of text.matchAll(pattern)) {
+    const block = match[1]?.trim();
+    if (block) {
+      blocks.push(block);
     }
   }
-  return steps;
+
+  return blocks;
+}
+
+function parseExecutionResult(value: unknown): GuidedWorkflowExecutionResult | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  if (
+    value.version !== EXECUTION_RESULT_CONTRACT_VERSION ||
+    value.kind !== "execution_result" ||
+    (value.status !== "done" && value.status !== "skipped")
+  ) {
+    return undefined;
+  }
+
+  const step = value.step;
+  if (typeof step !== "number" || !Number.isInteger(step) || step < 1) {
+    return undefined;
+  }
+
+  return {
+    step,
+    status: value.status,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
