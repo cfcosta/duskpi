@@ -1568,13 +1568,13 @@ test("/autoplan falls back to the existing backlog when progress review keeps re
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: "Finished the first subtask step [DONE:1]" }],
+      content: [{ type: "text", text: buildExecutionResultText({ step: 1, status: "done", scope: "autoplan" }) }],
     },
   });
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: "Finished the second subtask step [DONE:2]" }],
+      content: [{ type: "text", text: buildExecutionResultText({ step: 2, status: "done", scope: "autoplan" }) }],
     },
   });
 
@@ -1669,13 +1669,13 @@ test("/autoplan ignores Status: COMPLETE while tracked backlog still exists", as
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: "Finished the first subtask step [DONE:1]" }],
+      content: [{ type: "text", text: buildExecutionResultText({ step: 1, status: "done", scope: "autoplan" }) }],
     },
   });
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: "Finished the second subtask step [DONE:2]" }],
+      content: [{ type: "text", text: buildExecutionResultText({ step: 2, status: "done", scope: "autoplan" }) }],
     },
   });
 
@@ -1736,7 +1736,8 @@ test("/autoplan auto-plans each approved subtask without asking new questions", 
     invokeToolCall(harness, { toolName: "ask_user_question", input: { questions: [] } }),
   ).resolves.toEqual({
     block: true,
-    reason: "Autoplan subtask planning must not ask the user new questions.",
+    reason:
+      "Autoplan subtask planning must not ask the user new questions outside declared checkpoint or integration moments.",
   });
 
   const subtaskPrompt = harness.sentUserMessages[1] ?? "";
@@ -1772,13 +1773,14 @@ test("/autoplan auto-plans each approved subtask without asking new questions", 
     invokeToolCall(harness, { toolName: "ask_user_question", input: { questions: [] } }),
   ).resolves.toEqual({
     block: true,
-    reason: "Autoplan subtask execution must not ask the user new questions.",
+    reason:
+      "Autoplan subtask execution must not ask the user new questions outside declared checkpoint or integration moments.",
   });
 
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: "Finished the first subtask step [DONE:1]" }],
+      content: [{ type: "text", text: buildExecutionResultText({ step: 1, status: "done", scope: "autoplan" }) }],
     },
   });
   expect(harness.sentUserMessages).toHaveLength(4);
@@ -1789,7 +1791,7 @@ test("/autoplan auto-plans each approved subtask without asking new questions", 
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: "Finished the second subtask step [DONE:2]" }],
+      content: [{ type: "text", text: buildExecutionResultText({ step: 2, status: "done", scope: "autoplan" }) }],
     },
   });
 
@@ -1801,7 +1803,8 @@ test("/autoplan auto-plans each approved subtask without asking new questions", 
     invokeToolCall(harness, { toolName: "ask_user_question", input: { questions: [] } }),
   ).resolves.toEqual({
     block: true,
-    reason: "Autoplan progress review must not ask the user new questions.",
+    reason:
+      "Autoplan progress review must not ask the user new questions outside declared checkpoint or integration moments.",
   });
 
   const reviewPrompt = String(harness.sentMessages.at(-1)?.content ?? "");
@@ -1824,6 +1827,131 @@ test("/autoplan auto-plans each approved subtask without asking new questions", 
   expect(harness.sentUserMessages[4]).toContain(
     "Current approved high-level task 2: Finalize the rust module wiring",
   );
+});
+
+test("checkpoint moments allow ask_user_question during inner autoplan planning and execution", async () => {
+  const harness = createPlanExtensionHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+  });
+
+  await harness.runCommand("autoplan", "Rewrite this in Rust");
+
+  const topLevelPrompt = harness.sentUserMessages[0] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: topLevelPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildCoordinationMetadataPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  await expect(
+    invokeToolCall(harness, { toolName: "ask_user_question", input: { questions: [] } }),
+  ).resolves.toBeUndefined();
+
+  const subtaskPrompt = harness.sentUserMessages[1] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: subtaskPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  await expect(
+    invokeToolCall(harness, { toolName: "ask_user_question", input: { questions: [] } }),
+  ).resolves.toBeUndefined();
+});
+
+test("checkpoint moments allow ask_user_question during autoplan review", async () => {
+  const harness = createPlanExtensionHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+  });
+
+  await harness.runCommand("autoplan", "Rewrite this in Rust");
+
+  const topLevelPrompt = harness.sentUserMessages[0] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: topLevelPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildCoordinationMetadataPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  const subtaskPrompt = harness.sentUserMessages[1] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: subtaskPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  await harness.emit("turn_end", {
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "text",
+          text: buildExecutionResultText({ step: 1, status: "done", scope: "autoplan" }),
+        },
+      ],
+    },
+  });
+  await harness.emit("turn_end", {
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "text",
+          text: buildExecutionResultText({ step: 2, status: "done", scope: "autoplan" }),
+        },
+      ],
+    },
+  });
+
+  await expect(
+    invokeToolCall(harness, { toolName: "ask_user_question", input: { questions: [] } }),
+  ).resolves.toBeUndefined();
 });
 
 test("autoplan review prompts surface stored checkpoint metadata for completed and remaining high-level tasks", async () => {
@@ -2121,12 +2249,15 @@ test("/autoplan retries non-compliant inner subtask plans once and then stops on
     "The previous approved-subtask planning response violated the post-approval autoplan policy.",
   );
   expect(harness.sentUserMessages[2]).toContain(
+    "No declared checkpoint or integration moment is active for this high-level task.",
+  );
+  expect(harness.sentUserMessages[2]).toContain(
     "Infer the best repo-consistent choice and continue.",
   );
   expect(harness.sentUserMessages[2]).toContain("```pi-plan-json");
   expect(harness.uiStub.notifications).toContainEqual({
     message:
-      "Autoplan subtask planning asked for user input or approval. Asking Pi to restate the subtask plan and infer the missing decisions.",
+      "Autoplan subtask planning asked for user input or approval outside a declared checkpoint or integration moment. Asking Pi to restate the subtask plan and infer the missing decisions.",
     level: "warning",
   });
 
@@ -2146,7 +2277,7 @@ test("/autoplan retries non-compliant inner subtask plans once and then stops on
 
   expect(harness.uiStub.notifications).toContainEqual({
     message:
-      "Autoplan subtask planning kept asking for user input or approval after one retry. Stopping autoplan.",
+      "Autoplan subtask planning kept asking for user input or approval outside declared checkpoint or integration moments after one retry. Stopping autoplan.",
     level: "error",
   });
 
@@ -2204,13 +2335,13 @@ test("/autoplan retries non-compliant hidden reviews once and then stops on a re
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: "Finished the first subtask step [DONE:1]" }],
+      content: [{ type: "text", text: buildExecutionResultText({ step: 1, status: "done", scope: "autoplan" }) }],
     },
   });
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: "Finished the second subtask step [DONE:2]" }],
+      content: [{ type: "text", text: buildExecutionResultText({ step: 2, status: "done", scope: "autoplan" }) }],
     },
   });
 
@@ -2232,10 +2363,14 @@ test("/autoplan retries non-compliant hidden reviews once and then stops on a re
   expect(retryReviewPrompt).toContain(
     "The previous autoplan progress review violated the post-approval autoplan policy.",
   );
+  expect(retryReviewPrompt).toContain(
+    "No declared checkpoint or integration moment is active for this review turn.",
+  );
   expect(retryReviewPrompt).toContain("Infer the best repo-consistent choice and continue.");
   expect(retryReviewPrompt).toContain("```pi-plan-json");
   expect(harness.uiStub.notifications).toContainEqual({
-    message: "Autoplan review asked for user input or approval. Asking for a stricter restatement.",
+    message:
+      "Autoplan review asked for user input or approval outside a declared checkpoint or integration moment. Asking for a stricter restatement.",
     level: "warning",
   });
 
@@ -2254,7 +2389,7 @@ test("/autoplan retries non-compliant hidden reviews once and then stops on a re
 
   expect(harness.uiStub.notifications).toContainEqual({
     message:
-      "Autoplan review kept asking for user input or approval after one retry. Stopping autoplan.",
+      "Autoplan review kept asking for user input or approval outside declared checkpoint or integration moments after one retry. Stopping autoplan.",
     level: "error",
   });
 
@@ -2321,6 +2456,9 @@ test("/autoplan retries non-compliant execution turns once and then stops before
     "The previous inner execution response violated the post-approval autoplan policy.",
   );
   expect(harness.sentUserMessages[3]).toContain(
+    "No declared checkpoint or integration moment is active for this inner execution step.",
+  );
+  expect(harness.sentUserMessages[3]).toContain(
     "Retry only step 1: Add a regression test for prompt leakage",
   );
   expect(harness.sentUserMessages[3]).toContain(
@@ -2328,7 +2466,7 @@ test("/autoplan retries non-compliant execution turns once and then stops before
   );
   expect(harness.uiStub.notifications).toContainEqual({
     message:
-      "Autoplan execution asked for user input or approval. Asking Pi to retry the same inner step and infer the missing decisions.",
+      "Autoplan execution asked for user input or approval outside a declared checkpoint or integration moment. Asking Pi to retry the same inner step and infer the missing decisions.",
     level: "warning",
   });
 
@@ -2341,7 +2479,7 @@ test("/autoplan retries non-compliant execution turns once and then stops before
 
   expect(harness.uiStub.notifications).toContainEqual({
     message:
-      "Autoplan execution kept asking for user input or approval after one retry. Stopping autoplan.",
+      "Autoplan execution kept asking for user input or approval outside declared checkpoint or integration moments after one retry. Stopping autoplan.",
     level: "error",
   });
   expect(harness.sentUserMessages).toHaveLength(4);
@@ -2422,13 +2560,13 @@ test("/autoplan preserves the approved top-level plan text across review updates
   await harness.handleTurnEnd({
     message: {
       role: "assistant",
-      content: [{ type: "text", text: "Finished the first subtask step [DONE:1]" }],
+      content: [{ type: "text", text: buildExecutionResultText({ step: 1, status: "done", scope: "autoplan" }) }],
     },
   });
   await harness.handleTurnEnd({
     message: {
       role: "assistant",
-      content: [{ type: "text", text: "Finished the second subtask step [DONE:2]" }],
+      content: [{ type: "text", text: buildExecutionResultText({ step: 2, status: "done", scope: "autoplan" }) }],
     },
   });
 
@@ -2598,7 +2736,7 @@ test("/autoplan keeps executing the current subtask when the second inner todo i
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: "Finished the first subtask step [DONE:1]" }],
+      content: [{ type: "text", text: buildExecutionResultText({ step: 1, status: "done", scope: "autoplan" }) }],
     },
   });
 
@@ -2749,13 +2887,13 @@ test("before_agent_start uses the tagged JSON contract for autoplan reviews", as
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: "Finished the first subtask step [DONE:1]" }],
+      content: [{ type: "text", text: buildExecutionResultText({ step: 1, status: "done", scope: "autoplan" }) }],
     },
   });
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: "Finished the second subtask step [DONE:2]" }],
+      content: [{ type: "text", text: buildExecutionResultText({ step: 2, status: "done", scope: "autoplan" }) }],
     },
   });
 

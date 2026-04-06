@@ -242,6 +242,7 @@ interface AutoPlanReviewState {
   missingOutputRetries: number;
   parseRecoveryAttempted: boolean;
   complianceRecoveryAttempted: boolean;
+  allowsCheckpointInterruptions?: boolean;
 }
 
 interface AutoPlanSubtaskExecutionResumeState {
@@ -263,6 +264,7 @@ class AutoPlanSubtaskWorkflow extends GuidedWorkflow {
   constructor(
     private readonly pi: ExtensionAPI,
     options: ConstructorParameters<typeof GuidedWorkflow>[1],
+    private readonly allowsCheckpointInterruptions: () => boolean,
   ) {
     super(pi, options);
   }
@@ -291,7 +293,7 @@ class AutoPlanSubtaskWorkflow extends GuidedWorkflow {
         lastAssistantText
       ) {
         const complianceIssues = detectAutoPlanOutputComplianceIssues(lastAssistantText);
-        if (complianceIssues.length > 0) {
+        if (complianceIssues.length > 0 && !this.allowsCheckpointInterruptions()) {
           return this.handlePolicyViolation(lastAssistantText, complianceIssues, ctx);
         }
 
@@ -390,7 +392,7 @@ class AutoPlanSubtaskWorkflow extends GuidedWorkflow {
       notify(
         this.pi,
         ctx,
-        "Autoplan subtask planning asked for user input or approval. Asking Pi to restate the subtask plan and infer the missing decisions.",
+        "Autoplan subtask planning asked for user input or approval outside a declared checkpoint or integration moment. Asking Pi to restate the subtask plan and infer the missing decisions.",
         "warning",
       );
       await super.handleSessionShutdown({ reason: "autoplan-subtask-policy-retry" }, ctx);
@@ -583,7 +585,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
         alreadyRunning: "Autoplan is already processing a subtask.",
         sendFailed: "Autoplan stopped: failed to send a subtask prompt.",
       },
-    });
+    }, () => self.isAutoPlanCheckpointMomentForCurrentOuterStep());
   }
 
   async handleTodosCommand(_args: unknown, ctx: ExtensionContext): Promise<void> {
@@ -706,25 +708,31 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   ): Promise<{ block: true; reason: string } | void> {
     const toolName = (event.toolName ?? "").trim().toLowerCase();
     if (this.isAutoPlanPostApprovalActive() && toolName === "ask_user_question") {
-      if (this.autoPlanReview.awaitingResponse) {
+      if (this.autoPlanReview.awaitingResponse && !this.isAutoPlanCheckpointMomentForReview()) {
         return {
           block: true,
-          reason: "Autoplan progress review must not ask the user new questions.",
+          reason: "Autoplan progress review must not ask the user new questions outside declared checkpoint or integration moments.",
         };
       }
 
       const autoPlanSubtaskPhase = this.autoPlanSubtaskWorkflow.getStateSnapshot().phase;
-      if (autoPlanSubtaskPhase === "planning" || autoPlanSubtaskPhase === "approval") {
+      if (
+        (autoPlanSubtaskPhase === "planning" || autoPlanSubtaskPhase === "approval") &&
+        !this.isAutoPlanCheckpointMomentForCurrentOuterStep()
+      ) {
         return {
           block: true,
-          reason: "Autoplan subtask planning must not ask the user new questions.",
+          reason: "Autoplan subtask planning must not ask the user new questions outside declared checkpoint or integration moments.",
         };
       }
 
-      if (autoPlanSubtaskPhase === "executing") {
+      if (
+        autoPlanSubtaskPhase === "executing" &&
+        !this.isAutoPlanCheckpointMomentForCurrentOuterStep()
+      ) {
         return {
           block: true,
-          reason: "Autoplan subtask execution must not ask the user new questions.",
+          reason: "Autoplan subtask execution must not ask the user new questions outside declared checkpoint or integration moments.",
         };
       }
     }
@@ -833,7 +841,10 @@ export class PiPlanWorkflow extends GuidedWorkflow {
 
       if (beforePhase === "executing" && turnText) {
         const complianceIssues = detectAutoPlanOutputComplianceIssues(turnText);
-        if (complianceIssues.length > 0) {
+        if (
+          complianceIssues.length > 0 &&
+          !this.isAutoPlanCheckpointMomentForCurrentOuterStep()
+        ) {
           await this.handleAutoPlanExecutionPolicyViolation(
             ctx,
             resumeState,
@@ -877,7 +888,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       if (result.reason === "autoplan_subtask_policy_violation") {
         await this.stopAutoPlan(
           ctx,
-          "Autoplan subtask planning kept asking for user input or approval after one retry. Stopping autoplan.",
+          "Autoplan subtask planning kept asking for user input or approval outside declared checkpoint or integration moments after one retry. Stopping autoplan.",
           "error",
         );
       } else if (result.reason === "autoplan_subtask_unparseable") {
@@ -1486,6 +1497,26 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     this.autoPlanExecutionCompliance = { attempted: false };
   }
 
+  private hasCheckpointMetadataForOuterStep(step?: number): boolean {
+    if (typeof step !== "number") {
+      return false;
+    }
+
+    return getStepCheckpointMetadata(this.latestPlanMetadata ?? undefined, step).length > 0;
+  }
+
+  private isAutoPlanCheckpointMomentForCurrentOuterStep(): boolean {
+    if (typeof this.autoPlanOuterStep === "number") {
+      return this.hasCheckpointMetadataForOuterStep(this.autoPlanOuterStep);
+    }
+
+    return this.hasCheckpointMetadataForOuterStep(this.getCurrentOuterExecutionItem()?.step);
+  }
+
+  private isAutoPlanCheckpointMomentForReview(): boolean {
+    return this.autoPlanReview.allowsCheckpointInterruptions === true;
+  }
+
   private async maybeStartPendingAutoPlan(
     ctx: ExtensionContext,
     result: GuidedWorkflowResult,
@@ -1574,14 +1605,15 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       return;
     }
 
-    this.markOuterExecutionStepCompleted(this.autoPlanOuterStep);
+    const completedOuterStep = this.autoPlanOuterStep;
+    this.markOuterExecutionStepCompleted(completedOuterStep);
     this.autoPlanOuterStep = undefined;
     this.todoItems = this.buildCompactTodoItems(
       this.getLatestPlanText(),
       this.getExecutionSnapshot().items,
     );
     this.setStatus(ctx);
-    await this.startAutoPlanReview(ctx);
+    await this.startAutoPlanReview(ctx, completedOuterStep);
   }
 
   private tryResumeRecoveredAutoPlanSubtask(
@@ -1635,7 +1667,10 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     return true;
   }
 
-  private async startAutoPlanReview(ctx: ExtensionContext): Promise<void> {
+  private async startAutoPlanReview(
+    ctx: ExtensionContext,
+    completedOuterStep?: number,
+  ): Promise<void> {
     const prompt = this.buildAutoPlanReviewPrompt();
     const requestId = this.nextAutoPlanReviewRequestId();
     const promptWithRequestId = `${prompt}\n\n${buildWorkflowRequestIdMarker(requestId)}`;
@@ -1647,6 +1682,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       missingOutputRetries: 0,
       parseRecoveryAttempted: false,
       complianceRecoveryAttempted: false,
+      allowsCheckpointInterruptions: this.hasCheckpointMetadataForOuterStep(completedOuterStep),
     };
 
     try {
@@ -1727,10 +1763,10 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     }
 
     const complianceIssues = detectAutoPlanOutputComplianceIssues(lastAssistantText);
-    if (complianceIssues.length > 0) {
+    if (complianceIssues.length > 0 && !this.isAutoPlanCheckpointMomentForReview()) {
       return this.retryAutoPlanReview(
         ctx,
-        "Autoplan review asked for user input or approval. Asking for a stricter restatement.",
+        "Autoplan review asked for user input or approval outside a declared checkpoint or integration moment. Asking for a stricter restatement.",
         buildAutoPlanReviewComplianceRecoveryPrompt(lastAssistantText, complianceIssues),
         { complianceRecovery: true },
       );
@@ -1843,7 +1879,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       if (this.autoPlanReview.complianceRecoveryAttempted) {
         await this.stopAutoPlan(
           ctx,
-          "Autoplan review kept asking for user input or approval after one retry. Stopping autoplan.",
+          "Autoplan review kept asking for user input or approval outside declared checkpoint or integration moments after one retry. Stopping autoplan.",
           "error",
         );
         return { kind: "recoverable_error", reason: "autoplan_review_policy_violation" };
@@ -2075,7 +2111,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     ) {
       await this.stopAutoPlan(
         ctx,
-        "Autoplan execution kept asking for user input or approval after one retry. Stopping autoplan.",
+        "Autoplan execution kept asking for user input or approval outside declared checkpoint or integration moments after one retry. Stopping autoplan.",
         "error",
       );
       return;
@@ -2098,7 +2134,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     notify(
       this.pi,
       ctx,
-      "Autoplan execution asked for user input or approval. Asking Pi to retry the same inner step and infer the missing decisions.",
+      "Autoplan execution asked for user input or approval outside a declared checkpoint or integration moment. Asking Pi to retry the same inner step and infer the missing decisions.",
       "warning",
     );
     this.pi.sendUserMessage(prompt, { deliverAs: "followUp" });
@@ -2851,6 +2887,7 @@ function buildAutoPlanSubtaskComplianceRecoveryPrompt(
   const issueSummary = formatAutoPlanComplianceIssues(issues);
   return [
     "The previous approved-subtask planning response violated the post-approval autoplan policy.",
+    "No declared checkpoint or integration moment is active for this high-level task.",
     issueSummary ? `Problem: it ${issueSummary}.` : undefined,
     "Restate the same subtask plan.",
     "Do not ask the user questions.",
@@ -2874,6 +2911,7 @@ function buildAutoPlanReviewComplianceRecoveryPrompt(
   const issueSummary = formatAutoPlanComplianceIssues(issues);
   return [
     "The previous autoplan progress review violated the post-approval autoplan policy.",
+    "No declared checkpoint or integration moment is active for this review turn.",
     issueSummary ? `Problem: it ${issueSummary}.` : undefined,
     "Restate the review.",
     "Do not ask the user questions.",
@@ -2902,6 +2940,7 @@ function buildAutoPlanExecutionComplianceRecoveryPrompt(args: {
 
   return [
     "The previous inner execution response violated the post-approval autoplan policy.",
+    "No declared checkpoint or integration moment is active for this inner execution step.",
     issueSummary ? `Problem: it ${issueSummary}.` : undefined,
     EXECUTION_TRIGGER_PROMPT,
     `Retry only step ${args.currentStep.step}: ${stepDetails.objective}`,
