@@ -1207,6 +1207,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
         wasRevised: this.planWasRevised,
       },
       this.latestStructuredPlan,
+      this.latestPlanMetadata,
     );
     this.setStatus(ctx);
     notify(this.pi, ctx, "Plan critique passed. Review and approve when ready.", "info");
@@ -1225,6 +1226,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
             wasRevised: this.planWasRevised,
           },
           this.latestStructuredPlan,
+          this.latestPlanMetadata,
         ),
     );
 
@@ -1311,6 +1313,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
         wasRevised: this.planWasRevised,
       },
       structuredPlan.value,
+      this.latestPlanMetadata,
     );
     this.setStatus(ctx);
     return true;
@@ -2390,14 +2393,24 @@ function extractCritiqueSummary(text: string): string | undefined {
   return undefined;
 }
 
-function toPlanStep(step: StructuredPlanOutput["steps"][number]): StructuredStepView {
+function toPlanStep(
+  step: NormalizedPlanMetadata["steps"][number],
+  planMetadata: NormalizedPlanMetadata,
+): StructuredStepView {
   return {
     step: step.step,
     objective: step.objective,
-    label: cleanStepText(step.objective),
+    label: step.label,
     targets: [...step.targets],
     validation: [...step.validation],
     risks: [...step.risks],
+    dependsOn: [...step.dependsOn],
+    checkpoints: step.checkpointIds
+      .map((checkpointId) => {
+        const checkpoint = planMetadata.checkpoints.find((candidate) => candidate.id === checkpointId);
+        return checkpoint ? `${checkpoint.title} (${checkpoint.kind})` : checkpointId;
+      })
+      .filter((value) => value.length > 0),
   };
 }
 
@@ -2448,23 +2461,34 @@ interface StructuredStepView {
   targets: string[];
   validation: string[];
   risks: string[];
+  dependsOn: number[];
+  checkpoints: string[];
 }
 
-function buildReviewBadges(planText: string, steps: StructuredStepView[]): string[] {
+function buildReviewBadges(
+  planText: string,
+  steps: StructuredStepView[],
+  planMetadata?: NormalizedPlanMetadata,
+): string[] {
   const badges: string[] = [];
-  const normalized = planText.toLowerCase();
 
   if (steps.length > 0 && steps.length <= 5) {
     badges.push("compact steps");
   }
-  if (/validation/i.test(planText) || /test/i.test(planText)) {
+  if (steps.some((step) => step.validation.length > 0)) {
     badges.push("validation noted");
   }
-  if (/risks? and rollback notes?/i.test(planText) || /rollback/i.test(planText)) {
+  if (steps.some((step) => step.risks.length > 0)) {
     badges.push("rollback noted");
   }
-  if (/uncertainties?\s*\/\s*assumptions/i.test(planText) || /assum/i.test(normalized)) {
+  if ((planMetadata?.assumptions.length ?? 0) > 0) {
     badges.push("assumptions listed");
+  }
+  if ((planMetadata?.checkpoints.length ?? 0) > 0) {
+    badges.push("checkpoints noted");
+  }
+  if (steps.some((step) => step.dependsOn.length > 0)) {
+    badges.push("dependencies tracked");
   }
 
   return badges;
@@ -2488,21 +2512,52 @@ function buildApprovalPreviewStep(step: StructuredStepView): PlanApprovalPreview
     label: step.label,
     targetsSummary: summarizePreviewValues(step.targets),
     validationSummary: summarizePreviewValues(step.validation),
+    dependsOnSummary:
+      step.dependsOn.length > 0 ? step.dependsOn.map((value) => String(value)).join(", ") : undefined,
+    checkpointsSummary: summarizePreviewValues(step.checkpoints),
   };
+}
+
+function summarizeDependencyEdges(planMetadata: NormalizedPlanMetadata): string | undefined {
+  const edges = planMetadata.steps
+    .flatMap((step) => step.dependsOn.map((dependency) => `${step.step} ← ${dependency}`))
+    .filter((value) => value.length > 0);
+  return summarizePreviewValues(edges, 3);
 }
 
 export function buildApprovalReviewState(
   planText: string,
   options: { critiqueSummary?: string; wasRevised?: boolean } = {},
   structuredPlan?: StructuredPlanOutput | null,
+  planMetadata?: NormalizedPlanMetadata | null,
 ): ApprovalReviewState {
-  const steps = resolveStructuredPlan(planText, structuredPlan)?.steps.map(toPlanStep) ?? [];
+  const resolvedPlanMetadata = resolvePlanMetadata(planText, planMetadata, structuredPlan);
+  const steps = resolvedPlanMetadata
+    ? resolvedPlanMetadata.steps.map((step) => toPlanStep(step, resolvedPlanMetadata))
+    : [];
 
   return {
     stepCount: steps.length,
+    strategySummary: resolvedPlanMetadata
+      ? `${resolvedPlanMetadata.taskGeometry} • ${resolvedPlanMetadata.coordinationPattern}`
+      : undefined,
+    assumptionsSummary: resolvedPlanMetadata
+      ? summarizePreviewValues(resolvedPlanMetadata.assumptions, 2)
+      : undefined,
+    dependenciesSummary: resolvedPlanMetadata
+      ? summarizeDependencyEdges(resolvedPlanMetadata)
+      : undefined,
+    checkpointsSummary: resolvedPlanMetadata
+      ? summarizePreviewValues(
+          resolvedPlanMetadata.checkpoints.map(
+            (checkpoint) => `${checkpoint.title} (${checkpoint.kind})`,
+          ),
+          2,
+        )
+      : undefined,
     previewSteps: steps.slice(0, 3).map(buildApprovalPreviewStep),
     critiqueSummary: options.critiqueSummary,
-    badges: buildReviewBadges(planText, steps),
+    badges: buildReviewBadges(planText, steps, resolvedPlanMetadata),
     wasRevised: options.wasRevised ?? false,
   };
 }

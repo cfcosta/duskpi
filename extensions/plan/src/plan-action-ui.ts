@@ -15,11 +15,17 @@ export interface PlanApprovalPreviewStep {
   label: string;
   targetsSummary?: string;
   validationSummary?: string;
+  dependsOnSummary?: string;
+  checkpointsSummary?: string;
 }
 
 export interface PlanApprovalDetails {
   stepCount: number;
   previewSteps: PlanApprovalPreviewStep[];
+  strategySummary?: string;
+  assumptionsSummary?: string;
+  dependenciesSummary?: string;
+  checkpointsSummary?: string;
   critiqueSummary?: string;
   badges?: string[];
   wasRevised?: boolean;
@@ -175,6 +181,18 @@ export class PlanActionComponent {
           ` Review summary • ${this.details.stepCount} step${this.details.stepCount === 1 ? "" : "s"}`,
         ),
       );
+      if (this.details.strategySummary) {
+        addLine(this.theme.fg("dim", ` Strategy: ${this.details.strategySummary}`));
+      }
+      if (this.details.dependenciesSummary) {
+        addLine(this.theme.fg("dim", ` Dependencies: ${this.details.dependenciesSummary}`));
+      }
+      if (this.details.checkpointsSummary) {
+        addLine(this.theme.fg("dim", ` Checkpoints: ${this.details.checkpointsSummary}`));
+      }
+      if (this.details.assumptionsSummary) {
+        addLine(this.theme.fg("dim", ` Assumptions: ${this.details.assumptionsSummary}`));
+      }
       for (const step of this.details.previewSteps.slice(0, 3)) {
         addLine(this.theme.fg("text", `  • ${step.step}. ${step.label}`));
         if (step.targetsSummary) {
@@ -182,6 +200,12 @@ export class PlanActionComponent {
         }
         if (step.validationSummary) {
           addLine(this.theme.fg("dim", `    validate: ${step.validationSummary}`));
+        }
+        if (step.dependsOnSummary) {
+          addLine(this.theme.fg("dim", `    depends on: ${step.dependsOnSummary}`));
+        }
+        if (step.checkpointsSummary) {
+          addLine(this.theme.fg("dim", `    checkpoints: ${step.checkpointsSummary}`));
         }
       }
       if (this.details.previewSteps.length === 0) {

@@ -1081,23 +1081,90 @@ test("buildApprovalReviewState prefers stored structured steps for the approval 
     ),
   ).toEqual({
     stepCount: 2,
+    strategySummary: "shared_artifact • checkpointed_execution",
+    assumptionsSummary: undefined,
+    dependenciesSummary: undefined,
+    checkpointsSummary: undefined,
     previewSteps: [
       {
         step: 1,
         label: "A regression test for prompt leakage",
         targetsSummary: "src/index.test.ts, src/workflow.ts",
         validationSummary: "bun test ./src/index.test.ts, bun run typecheck",
+        dependsOnSummary: undefined,
+        checkpointsSummary: undefined,
       },
       {
         step: 2,
         label: "Approval action UI to show a compact summary",
         targetsSummary: "src/plan-action-ui.ts",
         validationSummary: "bun test ./src/index.test.ts",
+        dependsOnSummary: undefined,
+        checkpointsSummary: undefined,
       },
     ],
     critiqueSummary: "ready",
-    badges: ["compact steps", "validation noted", "assumptions listed"],
+    badges: ["compact steps", "validation noted", "rollback noted"],
     wasRevised: true,
+  });
+});
+
+test("buildApprovalReviewState surfaces coordination strategy from structured metadata", async () => {
+  const { parseTaggedPlanContract } = await import("./output-contract");
+  const { buildApprovalReviewState } = await import("./workflow");
+
+  const planText = buildCoordinationMetadataPlanText();
+  const parsed = parseTaggedPlanContract(planText);
+  expect(parsed.ok).toBe(true);
+  if (!parsed.ok) {
+    return;
+  }
+
+  expect(
+    buildApprovalReviewState(
+      planText,
+      {
+        critiqueSummary: "ready",
+        wasRevised: false,
+      },
+      parsed.value,
+    ),
+  ).toEqual({
+    stepCount: 2,
+    strategySummary: "shared_artifact • checkpointed_execution",
+    assumptionsSummary:
+      "The tagged JSON contract is already validated before review state is built., Approval previews can stay compact while metadata is stored in full.",
+    dependenciesSummary: "2 ← 1",
+    checkpointsSummary:
+      "Review captured metadata (checkpoint), Carry metadata into approval state (integration)",
+    previewSteps: [
+      {
+        step: 1,
+        label: "Normalize the plan metadata capture",
+        targetsSummary: "src/workflow.ts, src/utils.ts",
+        validationSummary: "bun test ./src/index.test.ts",
+        dependsOnSummary: undefined,
+        checkpointsSummary: "Review captured metadata (checkpoint)",
+      },
+      {
+        step: 2,
+        label: "Preserve the stored metadata through approval construction",
+        targetsSummary: "src/workflow.ts",
+        validationSummary: "bun test ./src/index.test.ts",
+        dependsOnSummary: "1",
+        checkpointsSummary: "Carry metadata into approval state (integration)",
+      },
+    ],
+    critiqueSummary: "ready",
+    badges: [
+      "compact steps",
+      "validation noted",
+      "rollback noted",
+      "assumptions listed",
+      "checkpoints noted",
+      "dependencies tracked",
+    ],
+    wasRevised: false,
   });
 });
 

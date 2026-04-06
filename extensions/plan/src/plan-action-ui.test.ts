@@ -72,6 +72,11 @@ function createTui() {
 function createApprovalDetails(): NonNullable<PlanApprovalDetails> {
   return {
     stepCount: 3,
+    strategySummary: "shared_artifact • checkpointed_execution",
+    assumptionsSummary:
+      "The stored metadata stays canonical through approval and execution prompt generation.",
+    dependenciesSummary: "2 dependency edges across steps 2 and 3",
+    checkpointsSummary: "metadata capture checkpoint, approval integration checkpoint",
     previewSteps: [
       {
         step: 1,
@@ -79,6 +84,8 @@ function createApprovalDetails(): NonNullable<PlanApprovalDetails> {
           "A very long regression test for prompt leakage in the guided workflow approval surface",
         targetsSummary: "src/index.test.ts, src/workflow.ts, src/plan-action-ui.ts",
         validationSummary: "bun test ./src/index.test.ts, bun run typecheck",
+        dependsOnSummary: "none",
+        checkpointsSummary: "metadata capture checkpoint",
       },
     ],
     critiqueSummary: "Needs a concise but still fairly long summary to exercise truncation.",
@@ -128,6 +135,12 @@ test("PlanActionComponent caches rendered output per width", () => {
 
   expect(wideSecond).toBe(wideFirst);
   expect(wideFirst.join("\n")).toContain("Review summary • 3 steps");
+  expect(wideFirst.join("\n")).toContain("Strategy: shared_artifact • checkpointed_execution");
+  expect(wideFirst.join("\n")).toContain("Dependencies: 2 dependency edges across steps 2 and 3");
+  expect(wideFirst.join("\n")).toContain("Checkpoints: metadata capture checkpoint, approval integration checkpoint");
+  expect(wideFirst.join("\n")).toContain("Assumptions: The stored metadata stays canonical through approval and execution prompt generation.");
+  expect(wideFirst.join("\n")).toContain("depends on: none");
+  expect(wideFirst.join("\n")).toContain("checkpoints: metadata capture checkpoint");
   expect(narrow).not.toBe(wideFirst);
   expect(narrow.join("\n")).not.toEqual(wideFirst.join("\n"));
   expect(narrow.some((line) => line.includes("…"))).toBe(true);
