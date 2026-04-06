@@ -1,3 +1,11 @@
+import type {
+  StructuredCheckpointKind,
+  StructuredCoordinationPattern,
+  StructuredPlanOutput,
+  StructuredPlanStepKind,
+  StructuredTaskGeometry,
+} from "./output-contract";
+
 const DESTRUCTIVE_PATTERNS = [
   /\brm\b/i,
   /\brmdir\b/i,
@@ -115,6 +123,35 @@ export interface TodoItem {
   skipped?: boolean;
 }
 
+export interface NormalizedPlanCheckpoint {
+  id: string;
+  title: string;
+  kind: StructuredCheckpointKind;
+  step: number;
+  why: string;
+}
+
+export interface NormalizedPlanStepMetadata {
+  step: number;
+  kind: StructuredPlanStepKind;
+  objective: string;
+  label: string;
+  targets: string[];
+  validation: string[];
+  risks: string[];
+  dependsOn: number[];
+  checkpointIds: string[];
+}
+
+export interface NormalizedPlanMetadata {
+  taskGeometry: StructuredTaskGeometry;
+  coordinationPattern: StructuredCoordinationPattern;
+  assumptions: string[];
+  escalationTriggers: string[];
+  checkpoints: NormalizedPlanCheckpoint[];
+  steps: NormalizedPlanStepMetadata[];
+}
+
 function normalizePlanFieldText(text: string): string {
   return text
     .replace(/\*{1,2}([^*]+)\*{1,2}/g, "$1")
@@ -138,6 +175,35 @@ export function cleanStepText(text: string): string {
     cleaned = `${cleaned.slice(0, 77)}...`;
   }
   return cleaned;
+}
+
+export function normalizeStructuredPlanMetadata(
+  structuredPlan: StructuredPlanOutput,
+): NormalizedPlanMetadata {
+  return {
+    taskGeometry: structuredPlan.taskGeometry,
+    coordinationPattern: structuredPlan.coordinationPattern,
+    assumptions: [...structuredPlan.assumptions],
+    escalationTriggers: [...structuredPlan.escalationTriggers],
+    checkpoints: structuredPlan.checkpoints.map((checkpoint) => ({
+      id: checkpoint.id,
+      title: checkpoint.title,
+      kind: checkpoint.kind,
+      step: checkpoint.step,
+      why: checkpoint.why,
+    })),
+    steps: structuredPlan.steps.map((step) => ({
+      step: step.step,
+      kind: step.kind,
+      objective: step.objective,
+      label: cleanStepText(step.objective),
+      targets: [...step.targets],
+      validation: [...step.validation],
+      risks: [...step.risks],
+      dependsOn: [...step.dependsOn],
+      checkpointIds: [...step.checkpointIds],
+    })),
+  };
 }
 
 export function extractDoneSteps(message: string): number[] {

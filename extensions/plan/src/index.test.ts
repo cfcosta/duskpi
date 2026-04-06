@@ -49,7 +49,11 @@ mock.module("@mariozechner/pi-tui", () => ({
 }));
 
 const { default: planExtension } = await import("./index");
-const { PiPlanWorkflow, getApprovedAutoPlanTextForTesting } = await import("./workflow");
+const {
+  PiPlanWorkflow,
+  getApprovedAutoPlanTextForTesting,
+  getStoredPlanMetadataForTesting,
+} = await import("./workflow");
 
 type CommandHandler = (args: string, ctx: ExtensionContext) => Promise<void> | void;
 type EventHandler = (event: unknown, ctx: ExtensionContext) => Promise<unknown> | unknown;
@@ -387,6 +391,72 @@ function buildConflictingRichPlanText(): string {
       },
     ],
   );
+}
+
+function buildCoordinationMetadataPlanText(): string {
+  return [
+    "1) Task understanding",
+    "2) Codebase findings",
+    "3) Approach options / trade-offs",
+    "4) Open questions / assumptions",
+    "5) Plan:",
+    "1. Normalize the plan metadata capture",
+    "2. Preserve the stored metadata through approval construction",
+    "6) Ready to execute when approved.",
+    "",
+    buildTaggedJsonBlock({
+      version: 2,
+      kind: "plan",
+      taskGeometry: "shared_artifact",
+      coordinationPattern: "checkpointed_execution",
+      assumptions: [
+        "The tagged JSON contract is already validated before review state is built.",
+        "Approval previews can stay compact while metadata is stored in full.",
+      ],
+      escalationTriggers: [
+        "Checkpoint validation fails after execution prompt generation.",
+        "A dependency step is missing from the tracked todo list.",
+      ],
+      checkpoints: [
+        {
+          id: "checkpoint-capture",
+          title: "Review captured metadata",
+          kind: "checkpoint",
+          step: 1,
+          why: "Confirm the stored metadata matches the parsed contract before approval.",
+        },
+        {
+          id: "integration-approval",
+          title: "Carry metadata into approval state",
+          kind: "integration",
+          step: 2,
+          why: "Approval construction must keep the same normalized metadata available.",
+        },
+      ],
+      steps: [
+        {
+          step: 1,
+          kind: "implement",
+          objective: "Normalize the plan metadata capture",
+          targets: ["src/workflow.ts", "src/utils.ts"],
+          validation: ["bun test ./src/index.test.ts"],
+          risks: ["Metadata normalization can drift from the original structured plan fields."],
+          dependsOn: [],
+          checkpointIds: ["checkpoint-capture"],
+        },
+        {
+          step: 2,
+          kind: "integrate",
+          objective: "Preserve the stored metadata through approval construction",
+          targets: ["src/workflow.ts"],
+          validation: ["bun test ./src/index.test.ts"],
+          risks: ["Approval-state construction can accidentally discard normalized metadata."],
+          dependsOn: [1],
+          checkpointIds: ["integration-approval"],
+        },
+      ],
+    }),
+  ].join("\n");
 }
 
 function buildLongPlanText(stepCount = 8): string {
@@ -998,6 +1068,129 @@ test("buildApprovalReviewState prefers stored structured steps for the approval 
     badges: ["compact steps", "validation noted", "assumptions listed"],
     wasRevised: true,
   });
+});
+
+test("captured plans preserve normalized coordination metadata", async () => {
+  const harness = createDirectWorkflowHarness();
+
+  await harness.workflow.handleCommand("Capture metadata", harness.ctx as never);
+  const planningPrompt = harness.sentUserMessages[0] ?? "";
+  await harness.handleAgentEnd({
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: planningPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildCoordinationMetadataPlanText() }],
+      },
+    ],
+  });
+
+  expect(getStoredPlanMetadataForTesting(harness.workflow)).toEqual({
+    taskGeometry: "shared_artifact",
+    coordinationPattern: "checkpointed_execution",
+    assumptions: [
+      "The tagged JSON contract is already validated before review state is built.",
+      "Approval previews can stay compact while metadata is stored in full.",
+    ],
+    escalationTriggers: [
+      "Checkpoint validation fails after execution prompt generation.",
+      "A dependency step is missing from the tracked todo list.",
+    ],
+    checkpoints: [
+      {
+        id: "checkpoint-capture",
+        title: "Review captured metadata",
+        kind: "checkpoint",
+        step: 1,
+        why: "Confirm the stored metadata matches the parsed contract before approval.",
+      },
+      {
+        id: "integration-approval",
+        title: "Carry metadata into approval state",
+        kind: "integration",
+        step: 2,
+        why: "Approval construction must keep the same normalized metadata available.",
+      },
+    ],
+    steps: [
+      {
+        step: 1,
+        kind: "implement",
+        objective: "Normalize the plan metadata capture",
+        label: "Normalize the plan metadata capture",
+        targets: ["src/workflow.ts", "src/utils.ts"],
+        validation: ["bun test ./src/index.test.ts"],
+        risks: ["Metadata normalization can drift from the original structured plan fields."],
+        dependsOn: [],
+        checkpointIds: ["checkpoint-capture"],
+      },
+      {
+        step: 2,
+        kind: "integrate",
+        objective: "Preserve the stored metadata through approval construction",
+        label: "Preserve the stored metadata through approval construction",
+        targets: ["src/workflow.ts"],
+        validation: ["bun test ./src/index.test.ts"],
+        risks: ["Approval-state construction can accidentally discard normalized metadata."],
+        dependsOn: [1],
+        checkpointIds: ["integration-approval"],
+      },
+    ],
+  });
+});
+
+test("stored coordination metadata survives approval-state construction and plan reuse", async () => {
+  const harness = createDirectWorkflowHarness({
+    hasUI: true,
+    customSelection: { cancelled: true },
+  });
+
+  await harness.workflow.handleCommand("Capture metadata", harness.ctx as never);
+  const planningPrompt = harness.sentUserMessages[0] ?? "";
+  await harness.handleAgentEnd({
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: planningPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildCoordinationMetadataPlanText() }],
+      },
+    ],
+  });
+
+  const storedBeforeApproval = getStoredPlanMetadataForTesting(harness.workflow);
+  const critiquePrompt = String(harness.sentMessages.at(-1)?.content ?? "");
+  expect(critiquePrompt).toContain("workflow-request-id");
+
+  await harness.handleAgentEnd({
+    messages: [
+      {
+        role: "custom",
+        content: critiquePrompt,
+      },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "text",
+            text: "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+          },
+        ],
+      },
+    ],
+  });
+
+  expect(harness.uiStub.customCalls).toHaveLength(1);
+  expect(getStoredPlanMetadataForTesting(harness.workflow)).toEqual(storedBeforeApproval);
+
+  await harness.handleSessionCompact(SESSION_COMPACT_EVENT);
+
+  expect(getStoredPlanMetadataForTesting(harness.workflow)).toEqual(storedBeforeApproval);
 });
 
 test("plan extension registers the guided workflow listener surface plus todos", () => {

@@ -36,8 +36,10 @@ import {
   markTodoItemsCompleted,
   markTodoItemsSkipped,
   normalizeArg,
+  normalizeStructuredPlanMetadata,
   parseCritiqueVerdict,
   type AutoPlanOutputComplianceIssue,
+  type NormalizedPlanMetadata,
   type TodoItem,
 } from "./utils";
 
@@ -400,6 +402,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   private todoItems: TodoItem[] = [];
   private latestPlanDraft = "";
   private latestStructuredPlan: StructuredPlanOutput | null = null;
+  private latestPlanMetadata: NormalizedPlanMetadata | null = null;
   private approvalReview: ApprovalReviewState | null = null;
   private latestCritiqueSummary = "";
   private planWasRevised = false;
@@ -1293,6 +1296,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     this.resetParseRecoveryState();
     this.latestPlanDraft = planText;
     this.latestStructuredPlan = structuredPlan.value;
+    this.latestPlanMetadata = normalizeStructuredPlanMetadata(structuredPlan.value);
     this.todoItems = extracted;
     this.approvalReview = buildApprovalReviewState(
       planText,
@@ -1396,12 +1400,16 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   private syncLocalLifecycleStateFromGuided(): void {
     const state = this.getStateSnapshot();
     const execution = this.getExecutionSnapshot();
+    const latestPlanText = this.getLatestPlanText();
+    const structuredPlan = resolveStructuredPlan(latestPlanText, this.latestStructuredPlan);
 
     this.planModeEnabled = state.phase === "planning" || state.phase === "approval";
     this.executionMode = state.phase === "executing" && execution.items.length > 0;
     this.executionConstraintNote = execution.note ?? "";
-    this.todoItems = this.buildCompactTodoItems(this.getLatestPlanText(), execution.items);
-    this.latestPlanDraft = this.getLatestPlanText() ?? "";
+    this.latestStructuredPlan = structuredPlan ?? null;
+    this.latestPlanMetadata = structuredPlan ? normalizeStructuredPlanMetadata(structuredPlan) : null;
+    this.todoItems = this.buildCompactTodoItems(latestPlanText, execution.items);
+    this.latestPlanDraft = latestPlanText ?? "";
   }
 
   private resetLocalLifecycleState(): void {
@@ -1426,6 +1434,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   private resetPlanningDraft(): void {
     this.latestPlanDraft = "";
     this.latestStructuredPlan = null;
+    this.latestPlanMetadata = null;
     this.resetApprovalReview();
     this.resetParseRecoveryState();
   }
@@ -2466,6 +2475,30 @@ export function getApprovedAutoPlanTextForTesting(workflow: PiPlanWorkflow): str
   return (
     (workflow as unknown as { autoPlanApprovedPlanText?: string }).autoPlanApprovedPlanText ?? ""
   );
+}
+
+export function getStoredPlanMetadataForTesting(
+  workflow: PiPlanWorkflow,
+): NormalizedPlanMetadata | null {
+  const metadata = (workflow as unknown as { latestPlanMetadata?: NormalizedPlanMetadata | null })
+    .latestPlanMetadata;
+  return metadata
+    ? {
+        taskGeometry: metadata.taskGeometry,
+        coordinationPattern: metadata.coordinationPattern,
+        assumptions: [...metadata.assumptions],
+        escalationTriggers: [...metadata.escalationTriggers],
+        checkpoints: metadata.checkpoints.map((checkpoint) => ({ ...checkpoint })),
+        steps: metadata.steps.map((step) => ({
+          ...step,
+          targets: [...step.targets],
+          validation: [...step.validation],
+          risks: [...step.risks],
+          dependsOn: [...step.dependsOn],
+          checkpointIds: [...step.checkpointIds],
+        })),
+      }
+    : null;
 }
 
 function summarizeExecutionValues(values: string[]): string | undefined {
