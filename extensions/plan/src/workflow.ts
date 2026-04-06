@@ -1411,22 +1411,35 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     notify(this.pi, ctx, "Plan critique passed. Review and approve when ready.", "info");
 
     if (!ctx.hasUI) {
+      notifyHeadlessApprovalInstructions(this.pi, ctx);
       return { cancelled: true };
     }
 
-    const selection = await selectPlanNextActionWithInlineNote(
-      ctx.ui as never,
-      this.approvalReview ??
-        buildApprovalReviewState(
-          args.planText,
-          {
-            critiqueSummary: this.latestCritiqueSummary || undefined,
-            wasRevised: this.planWasRevised,
-          },
-          this.latestStructuredPlan,
-          this.latestPlanMetadata,
-        ),
-    );
+    let selection;
+    try {
+      selection = await selectPlanNextActionWithInlineNote(
+        ctx.ui as never,
+        this.approvalReview ??
+          buildApprovalReviewState(
+            args.planText,
+            {
+              critiqueSummary: this.latestCritiqueSummary || undefined,
+              wasRevised: this.planWasRevised,
+            },
+            this.latestStructuredPlan,
+            this.latestPlanMetadata,
+          ),
+      );
+    } catch (error) {
+      notify(
+        this.pi,
+        ctx,
+        `Plan approval UI failed to open (${formatUiFailure(error)}). Approval is still pending.`,
+        "warning",
+      );
+      notifyHeadlessApprovalInstructions(this.pi, ctx);
+      return { cancelled: true };
+    }
 
     if (selection.action === "continue") {
       this.resetPlanningDraft();
@@ -2941,6 +2954,15 @@ function notify(
   });
 }
 
+function notifyHeadlessApprovalInstructions(pi: ExtensionAPI, ctx: ExtensionContext): void {
+  notify(
+    pi,
+    ctx,
+    "Approval is pending. If the interactive approval menu is unavailable, use one of: /plan approve, /plan continue <note>, /plan regenerate, /plan exit.",
+    "info",
+  );
+}
+
 function getAssistantTextFromMessage(message: unknown): string {
   const candidate = message as {
     role?: unknown;
@@ -3348,6 +3370,14 @@ function buildParseRecoveryPrompt(
 
 function formatPlanningContractParseFailure(parseError: PlanningContractParseError): string {
   return parseError.message.replace(/\s+/g, " ").trim().replace(/[.]+$/, "");
+}
+
+function formatUiFailure(error: unknown): string {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message.trim();
+  }
+
+  return "unknown UI error";
 }
 
 function buildWorkflowRequestIdMarker(requestId: string): string {

@@ -3775,6 +3775,17 @@ test("a second unparseable planning draft stays read-only and fails visibly with
   ).toBe(true);
 });
 
+test("non-ui /plan approval publishes fallback command instructions", async () => {
+  const harness = createPlanExtensionHarness();
+
+  await enterNonUiApprovalState(harness);
+
+  await expectLatestNonUiStatusMessage(
+    harness,
+    "Approval is pending. If the interactive approval menu is unavailable, use one of: /plan approve, /plan continue <note>, /plan regenerate, /plan exit.",
+  );
+});
+
 test("non-ui /plan approve restores normal tools and sends the execution prompt", async () => {
   const harness = createPlanExtensionHarness();
 
@@ -3921,6 +3932,28 @@ test("non-ui /plan continue without a note shows an error and leaves approval pe
   expect(harness.sentUserMessages[1]).toContain(
     "Complete only step 1: Add a regression test for prompt leakage",
   );
+});
+
+test("approval falls back to slash commands when the custom UI cannot open", async () => {
+  const harness = createPlanExtensionHarness({ hasUI: true });
+  harness.uiStub.ui.custom = async () => {
+    throw new Error("tmux ui unavailable");
+  };
+
+  await enterApprovalState(harness);
+
+  expect(harness.uiStub.notifications).toContainEqual({
+    message: "Plan approval UI failed to open (tmux ui unavailable). Approval is still pending.",
+    level: "warning",
+  });
+  expect(harness.uiStub.notifications).toContainEqual({
+    message:
+      "Approval is pending. If the interactive approval menu is unavailable, use one of: /plan approve, /plan continue <note>, /plan regenerate, /plan exit.",
+    level: "info",
+  });
+
+  await harness.runCommand("plan", "status");
+  await expectPlanStatus(harness, "Plan mode: ON (read-only planning)");
 });
 
 test("outside approval non-ui /plan commands still behave like normal planning tasks", async () => {
