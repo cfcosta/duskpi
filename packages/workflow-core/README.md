@@ -4,12 +4,12 @@ Shared runtime package for the workflow extensions bundled in this repo.
 
 This package is now the shared execution home for the migrated workflow family. It exposes three layers that build on each other instead of forcing every extension to keep its own orchestration shell.
 
-| Runtime / helper            | Used by                                | Best fit                                                                                                   |
-| --------------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `PhaseWorkflow`             | `/owasp-fix`                           | fixed multi-phase analysis and execution flows that still use the older runtime                            |
-| `GuidedWorkflow`            | vendored `/plan` in `extensions/plan`  | read-only planning, hidden critique/revision turns, approval callbacks, and step-by-step execution         |
-| `GuidedExecutionWorkflow`   | `/bugfix`, `/refactor`, `/test-audit`  | guided planning plus approved-plan parsing, execution-unit handoff, execution-result prompts, and scheduling |
-| execution helpers           | `/bugfix`, `/refactor`, `/test-audit`  | shared `ExecutionManager`, `ExecutionScheduler`, `WorkerRunner`, and `JjWorkspaceManager` building blocks |
+| Runtime / helper          | Used by                               | Best fit                                                                                                     |
+| ------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `PhaseWorkflow`           | `/owasp-fix`                          | fixed multi-phase analysis and execution flows that still use the older runtime                              |
+| `GuidedWorkflow`          | vendored `/plan` in `extensions/plan` | read-only planning, hidden critique/revision turns, approval callbacks, and step-by-step execution           |
+| `GuidedExecutionWorkflow` | `/bugfix`, `/refactor`, `/test-audit` | guided planning plus approved-plan parsing, execution-unit handoff, execution-result prompts, and scheduling |
+| execution helpers         | `/bugfix`, `/refactor`, `/test-audit` | shared `ExecutionManager`, `ExecutionScheduler`, `WorkerRunner`, and `JjWorkspaceManager` building blocks    |
 
 ## Main exports
 

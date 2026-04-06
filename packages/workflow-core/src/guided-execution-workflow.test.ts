@@ -168,7 +168,8 @@ function textMessage(text: string) {
 test("GuidedExecutionWorkflow executes a single approved unit and surfaces the run-result prompt", async () => {
   const { api, sentUserMessages } = createApi();
   const { ctx } = createContext();
-  const executeCalls: Array<{ id: string; step?: number; totalSteps?: number; summary?: string }> = [];
+  const executeCalls: Array<{ id: string; step?: number; totalSteps?: number; summary?: string }> =
+    [];
 
   const workflow = new GuidedExecutionWorkflow(
     api,
@@ -177,7 +178,12 @@ test("GuidedExecutionWorkflow executes a single approved unit and surfaces the r
         ...buildWorkflowOptions().execution,
         executor: {
           async executeUnit({ executionUnit, step, totalSteps, approvedPlanSummary }) {
-            executeCalls.push({ id: executionUnit.id, step, totalSteps, summary: approvedPlanSummary });
+            executeCalls.push({
+              id: executionUnit.id,
+              step,
+              totalSteps,
+              summary: approvedPlanSummary,
+            });
             return {
               unitId: executionUnit.id,
               status: "completed" as const,
@@ -212,9 +218,10 @@ test("GuidedExecutionWorkflow executes a single approved unit and surfaces the r
     pendingRequestId: undefined,
     awaitingResponse: false,
   });
-  assert.deepEqual(workflow.getExecutionSnapshot().items.map((item) => item.text), [
-    "guided-shell: Adopt GuidedWorkflow",
-  ]);
+  assert.deepEqual(
+    workflow.getExecutionSnapshot().items.map((item) => item.text),
+    ["guided-shell: Adopt GuidedWorkflow"],
+  );
   assert.equal(sentUserMessages.at(-1), "RUN RESULT Integrated guided-shell");
 });
 
@@ -275,10 +282,10 @@ test("GuidedExecutionWorkflow uses the shared scheduler path for multi-unit plan
     { id: "unit-a", step: 1, totalSteps: 2 },
     { id: "unit-b", step: 2, totalSteps: 2 },
   ]);
-  assert.deepEqual(workflow.getExecutionSnapshot().items.map((item) => item.text), [
-    "unit-a: Unit A",
-    "unit-b: Unit B",
-  ]);
+  assert.deepEqual(
+    workflow.getExecutionSnapshot().items.map((item) => item.text),
+    ["unit-a: Unit A", "unit-b: Unit B"],
+  );
   assert.equal(sentUserMessages.at(-1), "SCHEDULE RESULT completed unit-a,unit-b");
 });
 

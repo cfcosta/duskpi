@@ -41,13 +41,16 @@ function createWorkspaceManagerMock() {
 }
 
 function createWorkerRunnerMock(
-  resultOrError: CompletedExecutionWorkerResult<TestValidation> | {
-    unitId: string;
-    status: "blocked" | "failed";
-    summary: string;
-    blockers: string[];
-    validations: TestValidation[];
-  } | Error,
+  resultOrError:
+    | CompletedExecutionWorkerResult<TestValidation>
+    | {
+        unitId: string;
+        status: "blocked" | "failed";
+        summary: string;
+        blockers: string[];
+        validations: TestValidation[];
+      }
+    | Error,
   calls: Array<{ workspaceRoot: string; prompt: string; timeoutMs?: number }>,
 ) {
   return {
@@ -171,7 +174,10 @@ test("execution manager escalates worker runner failures", async () => {
   const manager = new ExecutionManager<TestExecutionUnit, TestValidation>({
     repoRoot: "/repo",
     workspaceManager,
-    workerRunner: createWorkerRunnerMock(new Error("Worker result parse failed: missing block"), []),
+    workerRunner: createWorkerRunnerMock(
+      new Error("Worker result parse failed: missing block"),
+      [],
+    ),
     renderWorkerPrompt() {
       return "Worker prompt";
     },

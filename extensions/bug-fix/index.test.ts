@@ -32,14 +32,16 @@ function assertGuidedWorkflowListenerSurface(
   ]);
 }
 
-function buildApprovedPlanText(units?: Array<{
-  id: string;
-  title: string;
-  objective: string;
-  targets: string[];
-  validations: string[];
-  dependsOn: string[];
-}>): string {
+function buildApprovedPlanText(
+  units?: Array<{
+    id: string;
+    title: string;
+    objective: string;
+    targets: string[];
+    validations: string[];
+    dependsOn: string[];
+  }>,
+): string {
   return [
     "Approved bug-fix plan",
     "",
@@ -49,18 +51,16 @@ function buildApprovedPlanText(units?: Array<{
         version: 1,
         kind: "approved_bug_fix_plan",
         summary: "Fix the verified bug list with dependency-aware execution units.",
-        executionUnits:
-          units ??
-          [
-            {
-              id: "null-guard",
-              title: "Guard null dereference",
-              objective: "Prevent the parser crash when a null token is received.",
-              targets: ["src/parser.ts"],
-              validations: ["bun test extensions/bug-fix/index.test.ts"],
-              dependsOn: [],
-            },
-          ],
+        executionUnits: units ?? [
+          {
+            id: "null-guard",
+            title: "Guard null dereference",
+            objective: "Prevent the parser crash when a null token is received.",
+            targets: ["src/parser.ts"],
+            validations: ["bun test extensions/bug-fix/index.test.ts"],
+            dependsOn: [],
+          },
+        ],
       },
       null,
       2,
@@ -105,31 +105,35 @@ function createHarness(options?: {
   const notifications: Array<{ message: string; level: NotifyLevel }> = [];
   const statuses: Array<string | undefined> = [];
   const widgets: Array<string | undefined> = [];
-  const executionCalls: Array<{ id: string; step?: number; totalSteps?: number; summary?: string }> = [];
+  const executionCalls: Array<{
+    id: string;
+    step?: number;
+    totalSteps?: number;
+    summary?: string;
+  }> = [];
 
   let failSendCount = options?.failSendCount ?? 0;
 
-  const executionManager: BugFixExecutionManagerLike =
-    options?.executionManager ?? {
-      async executeUnit(input) {
-        executionCalls.push({
-          id: input.executionUnit.id,
-          step: input.step,
-          totalSteps: input.totalSteps,
-          summary: input.approvedPlanSummary,
-        });
-        return {
-          unitId: input.executionUnit.id,
-          status: "completed",
-          summary: `Integrated ${input.executionUnit.id}`,
-          changedFiles: [...input.executionUnit.targets],
-          validations: input.executionUnit.validations.map((command) => ({
-            command,
-            outcome: "passed" as const,
-          })),
-        };
-      },
-    };
+  const executionManager: BugFixExecutionManagerLike = options?.executionManager ?? {
+    async executeUnit(input) {
+      executionCalls.push({
+        id: input.executionUnit.id,
+        step: input.step,
+        totalSteps: input.totalSteps,
+        summary: input.approvedPlanSummary,
+      });
+      return {
+        unitId: input.executionUnit.id,
+        status: "completed",
+        summary: `Integrated ${input.executionUnit.id}`,
+        changedFiles: [...input.executionUnit.targets],
+        validations: input.executionUnit.validations.map((command) => ({
+          command,
+          outcome: "passed" as const,
+        })),
+      };
+    },
+  };
 
   const api = {
     sendMessage(message: { content?: unknown; customType?: string }) {
@@ -391,7 +395,8 @@ test("analysis phases block write-capable tools and only allow safe bash", async
   assert.equal(multiEditResult?.block, true);
   assert.deepEqual(mutatingBashResult, {
     block: true,
-    reason: "Guided workflow planning phase blocked a potentially mutating bash command: rm -rf tmp",
+    reason:
+      "Guided workflow planning phase blocked a potentially mutating bash command: rm -rf tmp",
   });
   assert.equal(readOnlyBashResult, undefined);
 });

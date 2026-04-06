@@ -141,9 +141,7 @@ export function parseTaggedBugFixPlan(text: string): BugFixPlanParseResult {
   };
 }
 
-export function validateApprovedBugFixPlan(
-  value: unknown,
-): ValidationResult<ApprovedBugFixPlan> {
+export function validateApprovedBugFixPlan(value: unknown): ValidationResult<ApprovedBugFixPlan> {
   if (!isRecord(value)) {
     return invalidSchema("Tagged JSON block must be an object.");
   }

@@ -9,13 +9,16 @@ import {
 import type { RefactorExecutionUnit } from "./contract";
 import type { RefactorExecutionRunResult, RefactorUnitExecutor } from "./execution-manager";
 
-export interface RefactorExecutionSchedulerOptions
-  extends ExecutionSchedulerOptions<RefactorExecutionUnit, RefactorExecutionRunResult["validations"][number]> {
+export interface RefactorExecutionSchedulerOptions extends ExecutionSchedulerOptions<
+  RefactorExecutionUnit,
+  RefactorExecutionRunResult["validations"][number]
+> {
   executor: RefactorUnitExecutor;
 }
 
-export interface RefactorExecutionScheduleResult
-  extends ExecutionScheduleResult<RefactorExecutionRunResult["validations"][number]> {
+export interface RefactorExecutionScheduleResult extends ExecutionScheduleResult<
+  RefactorExecutionRunResult["validations"][number]
+> {
   layers: ScheduledExecutionLayer<RefactorExecutionRunResult["validations"][number]>[];
 }
 

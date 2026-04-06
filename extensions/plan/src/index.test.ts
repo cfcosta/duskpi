@@ -62,6 +62,7 @@ interface HarnessOptions {
   customSelection?: { cancelled: boolean; action?: string; note?: string };
   extraTools?: string[];
   extraToolInfos?: Array<{ name: string; capabilities?: ToolCapabilities }>;
+  thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 }
 
 function createUiStub(customSelection?: { cancelled: boolean; action?: string; note?: string }) {
@@ -128,6 +129,8 @@ function createPlanExtensionHarness(options: HarnessOptions = {}) {
   const shortcuts = new Map<string, { description?: string; handler: ShortcutHandler }>();
   const sentUserMessages: string[] = [];
   const sentMessages: Array<{ customType?: string; content?: unknown; display?: boolean }> = [];
+  const thinkingLevelUpdates: string[] = [];
+  let thinkingLevel = options.thinkingLevel ?? "medium";
   const allTools = [
     { name: "read", capabilities: { readOnly: true } },
     { name: "bash", capabilities: { executesShell: true } },
@@ -178,6 +181,13 @@ function createPlanExtensionHarness(options: HarnessOptions = {}) {
     setActiveTools(tools: string[]) {
       activeTools = [...tools];
     },
+    getThinkingLevel() {
+      return thinkingLevel;
+    },
+    setThinkingLevel(level: typeof thinkingLevel) {
+      thinkingLevel = level;
+      thinkingLevelUpdates.push(level);
+    },
     sendUserMessage(content: string) {
       sentUserMessages.push(content);
     },
@@ -224,7 +234,9 @@ function createPlanExtensionHarness(options: HarnessOptions = {}) {
     shortcuts,
     sentMessages,
     sentUserMessages,
+    thinkingLevelUpdates,
     getActiveTools: () => [...activeTools],
+    getThinkingLevel: () => thinkingLevel,
     runCommand,
     runShortcut,
     emit,
@@ -236,6 +248,8 @@ function createDirectWorkflowHarness(options: HarnessOptions = {}) {
   const sentUserMessages: string[] = [];
   const sentMessages: Array<{ customType?: string; content?: unknown; display?: boolean }> = [];
   const shortcuts = new Map<string, { description?: string; handler: ShortcutHandler }>();
+  const thinkingLevelUpdates: string[] = [];
+  let thinkingLevel = options.thinkingLevel ?? "medium";
   const allTools = [
     { name: "read", capabilities: { readOnly: true } },
     { name: "bash", capabilities: { executesShell: true } },
@@ -270,6 +284,13 @@ function createDirectWorkflowHarness(options: HarnessOptions = {}) {
     setActiveTools(tools: string[]) {
       activeTools = [...tools];
     },
+    getThinkingLevel() {
+      return thinkingLevel;
+    },
+    setThinkingLevel(level: typeof thinkingLevel) {
+      thinkingLevel = level;
+      thinkingLevelUpdates.push(level);
+    },
     sendUserMessage(content: string) {
       sentUserMessages.push(content);
     },
@@ -294,7 +315,9 @@ function createDirectWorkflowHarness(options: HarnessOptions = {}) {
     shortcuts,
     sentMessages,
     sentUserMessages,
+    thinkingLevelUpdates,
     getActiveTools: () => [...activeTools],
+    getThinkingLevel: () => thinkingLevel,
     runShortcut,
     handleAutoPlanCommand: async (args: string) =>
       workflow.handleAutoPlanCommand(args, ctx as never),
@@ -2479,6 +2502,134 @@ test("/autoplan subtask planning accepts a valid tagged JSON plan and advances t
   );
 });
 
+test("/autoplan inner execution lowers thinking by one level", async () => {
+  const harness = createPlanExtensionHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+    thinkingLevel: "xhigh",
+  });
+
+  await harness.runCommand("autoplan", "Rewrite this in Rust");
+
+  const topLevelPrompt = harness.sentUserMessages[0] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: topLevelPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  expect(harness.getThinkingLevel()).toBe("xhigh");
+
+  const subtaskPrompt = harness.sentUserMessages[1] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: subtaskPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  expect(harness.getThinkingLevel()).toBe("high");
+  expect(harness.thinkingLevelUpdates).toEqual(["high"]);
+});
+
+test("/autoplan inner execution restores the original thinking level after the subtask completes", async () => {
+  const harness = createPlanExtensionHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+    thinkingLevel: "high",
+  });
+
+  await harness.runCommand("autoplan", "Rewrite this in Rust");
+
+  const topLevelPrompt = harness.sentUserMessages[0] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: topLevelPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  const subtaskPrompt = harness.sentUserMessages[1] ?? "";
+  await harness.emit("agent_end", {
+    messages: [
+      {
+        role: "user",
+        content: [{ type: "text", text: subtaskPrompt }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: buildPlanText() }],
+      },
+    ],
+  });
+  await emitMatchedHiddenResponse(
+    harness,
+    "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
+  );
+
+  expect(harness.getThinkingLevel()).toBe("medium");
+
+  await harness.emit("turn_end", {
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "text",
+          text: buildExecutionResultText({ step: 1, status: "done", scope: "autoplan" }),
+        },
+      ],
+    },
+  });
+
+  expect(harness.getThinkingLevel()).toBe("medium");
+
+  await harness.emit("turn_end", {
+    message: {
+      role: "assistant",
+      content: [
+        {
+          type: "text",
+          text: buildExecutionResultText({ step: 2, status: "done", scope: "autoplan" }),
+        },
+      ],
+    },
+  });
+
+  expect(harness.getThinkingLevel()).toBe("high");
+  expect(harness.thinkingLevelUpdates).toEqual(["medium", "high"]);
+});
+
 test("/autoplan retries subtask planning once when the tagged JSON block is missing", async () => {
   const harness = createPlanExtensionHarness({
     hasUI: true,
@@ -3619,6 +3770,47 @@ test("non-ui /plan approve restores normal tools and sends the execution prompt"
   expect(harness.sentUserMessages[1]).toContain(
     "Complete only step 1: Add a regression test for prompt leakage",
   );
+});
+
+test("approved /plan execution lowers thinking by one level", async () => {
+  const harness = createPlanExtensionHarness({ thinkingLevel: "xhigh" });
+
+  await enterNonUiApprovalState(harness);
+  await harness.runCommand("plan", "approve");
+
+  expect(harness.getThinkingLevel()).toBe("high");
+  expect(harness.thinkingLevelUpdates).toEqual(["high"]);
+});
+
+test("approved /plan execution restores the original thinking level after the last step", async () => {
+  const harness = createPlanExtensionHarness({
+    hasUI: true,
+    customSelection: { cancelled: false, action: "approve" },
+    thinkingLevel: "high",
+  });
+
+  await enterExecutionState(harness);
+
+  expect(harness.getThinkingLevel()).toBe("medium");
+
+  await harness.emit("turn_end", {
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: buildExecutionResultText({ step: 1, status: "done" }) }],
+    },
+  });
+
+  expect(harness.getThinkingLevel()).toBe("medium");
+
+  await harness.emit("turn_end", {
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: buildExecutionResultText({ step: 2, status: "done" }) }],
+    },
+  });
+
+  expect(harness.getThinkingLevel()).toBe("high");
+  expect(harness.thinkingLevelUpdates).toEqual(["medium", "high"]);
 });
 
 test("non-ui /plan continue with a note sends a planning follow-up prompt", async () => {

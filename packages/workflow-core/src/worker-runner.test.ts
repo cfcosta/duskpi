@@ -69,7 +69,7 @@ test("worker runner launches pi with json mode arguments and the provided prompt
 
 test("worker runner returns the parsed worker result from assistant output", async () => {
   const { exec } = createExecMock({
-    stdout: buildJsonModeStdout("```tag\n{\"status\":\"completed\"}\n```"),
+    stdout: buildJsonModeStdout('```tag\n{"status":"completed"}\n```'),
   });
   const runner = new WorkerRunner({
     exec,

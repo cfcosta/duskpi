@@ -26,7 +26,8 @@ function createPlan(overrides?: Partial<ApprovedTestAuditPlan>): ApprovedTestAud
       {
         id: "rewrite-tautological-parser-test",
         title: "Rewrite tautological parser test",
-        objective: "Replace the false-confidence parser test with one that fails on a realistic fault.",
+        objective:
+          "Replace the false-confidence parser test with one that fails on a realistic fault.",
         targets: ["src/parser.test.ts"],
         validations: ["bun test extensions/test-audit/index.test.ts"],
         dependsOn: [],
@@ -43,7 +44,8 @@ test("parseTaggedTestAuditPlan parses a valid approved test-audit plan", () => {
         {
           id: "rewrite-tautological-parser-test",
           title: "Rewrite tautological parser test",
-          objective: "Replace the false-confidence parser test with one that fails on a realistic fault.",
+          objective:
+            "Replace the false-confidence parser test with one that fails on a realistic fault.",
           targets: ["src/parser.test.ts", "src/parser.ts"],
           validations: ["bun test extensions/test-audit/index.test.ts"],
           dependsOn: [],
@@ -51,7 +53,8 @@ test("parseTaggedTestAuditPlan parses a valid approved test-audit plan", () => {
         {
           id: "add-error-path-coverage",
           title: "Add error-path coverage",
-          objective: "Add a missing regression test for parser error propagation after the rewrite lands.",
+          objective:
+            "Add a missing regression test for parser error propagation after the rewrite lands.",
           targets: ["src/parser.test.ts"],
           validations: ["bun test extensions/test-audit/index.test.ts"],
           dependsOn: ["rewrite-tautological-parser-test"],
@@ -67,7 +70,10 @@ test("parseTaggedTestAuditPlan parses a valid approved test-audit plan", () => {
     return;
   }
 
-  assert.equal(result.value.summary, "Improve verified test gaps through explicit execution units.");
+  assert.equal(
+    result.value.summary,
+    "Improve verified test gaps through explicit execution units.",
+  );
   assert.equal(result.value.executionUnits.length, 2);
   assert.deepEqual(result.value.executionUnits[1]?.dependsOn, ["rewrite-tautological-parser-test"]);
   assert.match(result.rawJson, /approved_test_audit_plan/);
@@ -131,7 +137,8 @@ test("orderExecutionUnits preserves dependency order", () => {
         {
           id: "rewrite-tautological-parser-test",
           title: "Rewrite tautological parser test",
-          objective: "Replace the false-confidence parser test with one that fails on a realistic fault.",
+          objective:
+            "Replace the false-confidence parser test with one that fails on a realistic fault.",
           targets: ["src/parser.test.ts"],
           validations: ["bun test extensions/test-audit/index.test.ts"],
           dependsOn: [],
@@ -152,7 +159,8 @@ test("parseTaggedTestAuditPlan rejects unknown dependencies", () => {
       {
         id: "rewrite-tautological-parser-test",
         title: "Rewrite tautological parser test",
-        objective: "Replace the false-confidence parser test with one that fails on a realistic fault.",
+        objective:
+          "Replace the false-confidence parser test with one that fails on a realistic fault.",
         targets: ["src/parser.test.ts"],
         validations: ["bun test extensions/test-audit/index.test.ts"],
         dependsOn: ["missing-unit"],

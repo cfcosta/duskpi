@@ -11,10 +11,7 @@ import {
   type TestAuditExecutionManagerLike,
   type TestAuditExecutionSchedulerLike,
 } from "./workflow";
-import {
-  TEST_AUDIT_WORKER_RESULT_JSON_BLOCK_TAG,
-  parseTaggedWorkerResult,
-} from "./worker-result";
+import { TEST_AUDIT_WORKER_RESULT_JSON_BLOCK_TAG, parseTaggedWorkerResult } from "./worker-result";
 import { buildPrompt, loadPrompts } from "./prompting";
 
 type NotifyLevel = "info" | "warning" | "error";
@@ -35,14 +32,16 @@ function assertGuidedWorkflowListenerSurface(
   ]);
 }
 
-function buildApprovedPlanText(units?: Array<{
-  id: string;
-  title: string;
-  objective: string;
-  targets: string[];
-  validations: string[];
-  dependsOn: string[];
-}>): string {
+function buildApprovedPlanText(
+  units?: Array<{
+    id: string;
+    title: string;
+    objective: string;
+    targets: string[];
+    validations: string[];
+    dependsOn: string[];
+  }>,
+): string {
   return [
     "Approved test-audit plan",
     "",
@@ -52,19 +51,17 @@ function buildApprovedPlanText(units?: Array<{
         version: 1,
         kind: "approved_test_audit_plan",
         summary: "Improve verified test gaps with dependency-aware execution units.",
-        executionUnits:
-          units ??
-          [
-            {
-              id: "rewrite-tautological-parser-test",
-              title: "Rewrite tautological parser test",
-              objective:
-                "Replace the false-confidence parser test with one that fails on a realistic fault.",
-              targets: ["src/parser.test.ts"],
-              validations: ["bun test extensions/test-audit/index.test.ts"],
-              dependsOn: [],
-            },
-          ],
+        executionUnits: units ?? [
+          {
+            id: "rewrite-tautological-parser-test",
+            title: "Rewrite tautological parser test",
+            objective:
+              "Replace the false-confidence parser test with one that fails on a realistic fault.",
+            targets: ["src/parser.test.ts"],
+            validations: ["bun test extensions/test-audit/index.test.ts"],
+            dependsOn: [],
+          },
+        ],
       },
       null,
       2,
@@ -109,32 +106,35 @@ function createHarness(options?: {
   const notifications: Array<{ message: string; level: NotifyLevel }> = [];
   const statuses: Array<string | undefined> = [];
   const widgets: Array<string | undefined> = [];
-  const executionCalls: Array<{ id: string; step?: number; totalSteps?: number; summary?: string }> =
-    [];
+  const executionCalls: Array<{
+    id: string;
+    step?: number;
+    totalSteps?: number;
+    summary?: string;
+  }> = [];
 
   let failSendCount = options?.failSendCount ?? 0;
 
-  const executionManager: TestAuditExecutionManagerLike =
-    options?.executionManager ?? {
-      async executeUnit(input) {
-        executionCalls.push({
-          id: input.executionUnit.id,
-          step: input.step,
-          totalSteps: input.totalSteps,
-          summary: input.approvedPlanSummary,
-        });
-        return {
-          unitId: input.executionUnit.id,
-          status: "completed",
-          summary: `Integrated ${input.executionUnit.id}`,
-          changedFiles: [...input.executionUnit.targets],
-          validations: input.executionUnit.validations.map((command) => ({
-            command,
-            outcome: "passed" as const,
-          })),
-        };
-      },
-    };
+  const executionManager: TestAuditExecutionManagerLike = options?.executionManager ?? {
+    async executeUnit(input) {
+      executionCalls.push({
+        id: input.executionUnit.id,
+        step: input.step,
+        totalSteps: input.totalSteps,
+        summary: input.approvedPlanSummary,
+      });
+      return {
+        unitId: input.executionUnit.id,
+        status: "completed",
+        summary: `Integrated ${input.executionUnit.id}`,
+        changedFiles: [...input.executionUnit.targets],
+        validations: input.executionUnit.validations.map((command) => ({
+          command,
+          outcome: "passed" as const,
+        })),
+      };
+    },
+  };
 
   const api = {
     sendMessage(message: { content?: unknown; customType?: string }) {
@@ -332,7 +332,10 @@ test("workflow executes approved test-audit units through the guided execution r
       summary: "Improve verified test gaps with dependency-aware execution units.",
     },
   ]);
-  assert.match(sentMessages.at(-1) ?? "", /Execution manager processed approved test-audit unit 1\/1/);
+  assert.match(
+    sentMessages.at(-1) ?? "",
+    /Execution manager processed approved test-audit unit 1\/1/,
+  );
   assert.match(sentMessages.at(-1) ?? "", /Unit ID: rewrite-tautological-parser-test/);
   assert.match(sentMessages.at(-1) ?? "", /emit an execution_result tagged JSON block/i);
 });
@@ -423,9 +426,18 @@ test("workflow uses dependency-layer scheduling for independent execution units"
       summary: "Improve verified test gaps with dependency-aware execution units.",
     },
   ]);
-  assert.match(sentMessages.at(-1) ?? "", /Execution scheduler processed 2 approved test-audit units/);
-  assert.match(sentMessages.at(-1) ?? "", /Step 1 \(rewrite-tautological-parser-test\): emit execution_result status "done"/);
-  assert.match(sentMessages.at(-1) ?? "", /Step 2 \(add-error-path-coverage\): emit execution_result status "done"/);
+  assert.match(
+    sentMessages.at(-1) ?? "",
+    /Execution scheduler processed 2 approved test-audit units/,
+  );
+  assert.match(
+    sentMessages.at(-1) ?? "",
+    /Step 1 \(rewrite-tautological-parser-test\): emit execution_result status "done"/,
+  );
+  assert.match(
+    sentMessages.at(-1) ?? "",
+    /Step 2 \(add-error-path-coverage\): emit execution_result status "done"/,
+  );
 });
 
 test("workflow resets after an execution_result turn update", async () => {
@@ -487,7 +499,8 @@ test("analysis phases block write-capable tools and only allow safe bash", async
   assert.equal(multiEditResult?.block, true);
   assert.deepEqual(mutatingBashResult, {
     block: true,
-    reason: "Guided workflow planning phase blocked a potentially mutating bash command: rm -rf tmp",
+    reason:
+      "Guided workflow planning phase blocked a potentially mutating bash command: rm -rf tmp",
   });
   assert.equal(readOnlyBashResult, undefined);
 });

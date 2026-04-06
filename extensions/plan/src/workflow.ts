@@ -277,6 +277,17 @@ type ApprovalReviewState = PlanApprovalDetails;
 type PendingPiPlanResponseKind = "planning" | "critique" | "revision";
 type AutoPlanMode = "off" | "bootstrap" | "executing";
 type AutoPlanReviewOutcome = "continue" | "complete" | "retry";
+type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+
+type ThinkingLevelAwareExtensionAPI = ExtensionAPI & {
+  getThinkingLevel?: () => ThinkingLevel;
+  setThinkingLevel?: (level: ThinkingLevel) => void;
+};
+
+interface ExecutionThinkingOverride {
+  restoreLevel: ThinkingLevel;
+  appliedLevel: ThinkingLevel;
+}
 
 interface AutoPlanReviewState {
   pendingRequestId?: string;
@@ -303,6 +314,7 @@ interface AutoPlanExecutionComplianceState {
 class AutoPlanSubtaskWorkflow extends GuidedWorkflow {
   private parseRecoveryAttempted = false;
   private complianceRecoveryAttempted = false;
+  private executionThinkingOverride?: ExecutionThinkingOverride;
 
   constructor(
     private readonly pi: ExtensionAPI,
@@ -349,12 +361,25 @@ class AutoPlanSubtaskWorkflow extends GuidedWorkflow {
       }
     }
 
-    return super.handleAgentEnd(event, ctx);
+    const result = await super.handleAgentEnd(event, ctx);
+    if (this.getStateSnapshot().phase === "executing") {
+      this.applyLowerExecutionThinkingLevel();
+    }
+    return result;
+  }
+
+  async handleTurnEnd(event: TurnEndEvent, ctx: ExtensionContext): Promise<void> {
+    const previousPhase = this.getStateSnapshot().phase;
+    await super.handleTurnEnd(event, ctx);
+    if (previousPhase === "executing" && this.getStateSnapshot().phase !== "executing") {
+      this.restoreExecutionThinkingLevel();
+    }
   }
 
   async handleSessionShutdown(event: SessionShutdownEvent, ctx: ExtensionContext): Promise<void> {
     this.parseRecoveryAttempted = false;
     this.complianceRecoveryAttempted = false;
+    this.restoreExecutionThinkingLevel();
     await super.handleSessionShutdown(event, ctx);
   }
 
@@ -403,11 +428,59 @@ class AutoPlanSubtaskWorkflow extends GuidedWorkflow {
     internals.latestCritiqueText = undefined;
     internals.executionItems = state.items.map((item) => ({ ...item }));
     internals.executionNote = state.note;
+    this.applyLowerExecutionThinkingLevel();
   }
 
   private hasPendingPlanningRequest(): boolean {
     const state = this.getStateSnapshot();
     return state.phase !== "idle" && state.awaitingResponse;
+  }
+
+  private applyLowerExecutionThinkingLevel(): void {
+    if (this.executionThinkingOverride) {
+      return;
+    }
+
+    const api = this.pi as ThinkingLevelAwareExtensionAPI;
+    const getThinkingLevel = api.getThinkingLevel?.bind(api);
+    const setThinkingLevel = api.setThinkingLevel?.bind(api);
+    if (!getThinkingLevel || !setThinkingLevel) {
+      return;
+    }
+
+    const restoreLevel = getThinkingLevel();
+    const appliedLevel = lowerThinkingLevel(restoreLevel);
+    if (!restoreLevel || appliedLevel === restoreLevel) {
+      return;
+    }
+
+    setThinkingLevel(appliedLevel);
+    this.executionThinkingOverride = {
+      restoreLevel,
+      appliedLevel,
+    };
+  }
+
+  private restoreExecutionThinkingLevel(): void {
+    const override = this.executionThinkingOverride;
+    if (!override) {
+      return;
+    }
+
+    this.executionThinkingOverride = undefined;
+
+    const api = this.pi as ThinkingLevelAwareExtensionAPI;
+    const getThinkingLevel = api.getThinkingLevel?.bind(api);
+    const setThinkingLevel = api.setThinkingLevel?.bind(api);
+    if (!setThinkingLevel) {
+      return;
+    }
+
+    if (getThinkingLevel && getThinkingLevel() !== override.appliedLevel) {
+      return;
+    }
+
+    setThinkingLevel(override.restoreLevel);
   }
 
   private async handleUnparseablePlanningDraft(
@@ -477,6 +550,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   private dashboardExpanded = false;
   private dashboardFullscreenOpen = false;
   private parseRecoveryAttempted = false;
+  private executionThinkingOverride?: ExecutionThinkingOverride;
   private autoPlanMode: AutoPlanMode = "off";
   private autoPlanGoal = "";
   private autoPlanApprovedPlanText = "";
@@ -1375,6 +1449,9 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       this.autoPlanMode = "executing";
       this.autoPlanApprovedPlanText = this.getLatestPlanText()?.trim() ?? "";
     }
+    if (!this.autoPlanPendingStart && this.executionMode) {
+      this.applyLowerExecutionThinkingLevel();
+    }
     this.resetApprovalReview();
     this.resetParseRecoveryState();
     this.exitPlanMode(ctx, "Plan approved. Entering YOLO mode for execution.");
@@ -1575,6 +1652,51 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   private resetExecutionState(): void {
     this.executionMode = false;
     this.executionConstraintNote = "";
+    this.restoreExecutionThinkingLevel();
+  }
+
+  private applyLowerExecutionThinkingLevel(): void {
+    const api = this.pi as ThinkingLevelAwareExtensionAPI;
+    const getThinkingLevel = api.getThinkingLevel?.bind(api);
+    const setThinkingLevel = api.setThinkingLevel?.bind(api);
+    if (!getThinkingLevel || !setThinkingLevel) {
+      return;
+    }
+
+    const restoreLevel = getThinkingLevel();
+    const appliedLevel = lowerThinkingLevel(restoreLevel);
+    if (!restoreLevel || appliedLevel === restoreLevel) {
+      this.executionThinkingOverride = undefined;
+      return;
+    }
+
+    setThinkingLevel(appliedLevel);
+    this.executionThinkingOverride = {
+      restoreLevel,
+      appliedLevel,
+    };
+  }
+
+  private restoreExecutionThinkingLevel(): void {
+    const override = this.executionThinkingOverride;
+    if (!override) {
+      return;
+    }
+
+    this.executionThinkingOverride = undefined;
+
+    const api = this.pi as ThinkingLevelAwareExtensionAPI;
+    const getThinkingLevel = api.getThinkingLevel?.bind(api);
+    const setThinkingLevel = api.setThinkingLevel?.bind(api);
+    if (!setThinkingLevel) {
+      return;
+    }
+
+    if (getThinkingLevel && getThinkingLevel() !== override.appliedLevel) {
+      return;
+    }
+
+    setThinkingLevel(override.restoreLevel);
   }
 
   private isAutoPlanPostApprovalActive(): boolean {
@@ -2329,8 +2451,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     }
 
     if (previousPhase === "executing" && previousExecution.items.length > 0) {
-      this.executionMode = false;
-      this.executionConstraintNote = "";
+      this.resetExecutionState();
       this.setStatus(ctx);
       const skippedAny = previousExecution.items.some((item) => item.skipped);
       notify(
@@ -2736,6 +2857,23 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     if (reason) {
       notify(this.pi, ctx, reason);
     }
+  }
+}
+
+function lowerThinkingLevel(level: ThinkingLevel): ThinkingLevel {
+  switch (level) {
+    case "xhigh":
+      return "high";
+    case "high":
+      return "medium";
+    case "medium":
+      return "low";
+    case "low":
+      return "minimal";
+    case "minimal":
+      return "off";
+    default:
+      return "off";
   }
 }
 

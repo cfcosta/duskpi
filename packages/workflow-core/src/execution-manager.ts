@@ -12,11 +12,7 @@ export interface WorkspaceManagerLike {
 }
 
 export interface WorkerRunnerLike<Result> {
-  run(input: {
-    workspaceRoot: string;
-    prompt: string;
-    timeoutMs?: number;
-  }): Promise<Result>;
+  run(input: { workspaceRoot: string; prompt: string; timeoutMs?: number }): Promise<Result>;
 }
 
 export interface WorkerPromptRenderInput<Unit> {
@@ -94,9 +90,10 @@ export interface ExecutionUnitExecutor<Unit, Validation = unknown> {
   executeUnit(input: ExecuteUnitInput<Unit>): Promise<ExecutionRunResult<Validation>>;
 }
 
-export class ExecutionManager<Unit extends ExecutionUnitLike, Validation = unknown>
-  implements ExecutionUnitExecutor<Unit, Validation>
-{
+export class ExecutionManager<
+  Unit extends ExecutionUnitLike,
+  Validation = unknown,
+> implements ExecutionUnitExecutor<Unit, Validation> {
   private readonly workspaceBaseDir: string;
   private readonly buildWorkspaceName: (executionUnit: Unit, step: number) => string;
 
@@ -145,7 +142,8 @@ export class ExecutionManager<Unit extends ExecutionUnitLike, Validation = unkno
         return {
           unitId: workerResult.unitId,
           status: "failed",
-          summary: integrationResult?.summary ?? `Integration blocked for '${workerResult.unitId}'.`,
+          summary:
+            integrationResult?.summary ?? `Integration blocked for '${workerResult.unitId}'.`,
           blockers: integrationResult!.conflicts!,
           validations: workerResult.validations,
         };

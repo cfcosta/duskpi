@@ -27,7 +27,9 @@ export interface ExecutePlanInput<Unit extends ExecutionUnitLike> {
   timeoutMs?: number;
 }
 
-export function buildExecutionLayers<Unit extends ExecutionUnitLike>(executionUnits: Unit[]): Unit[][] {
+export function buildExecutionLayers<Unit extends ExecutionUnitLike>(
+  executionUnits: Unit[],
+): Unit[][] {
   const remainingDependencies = new Map<string, Set<string>>();
   const dependents = new Map<string, string[]>();
   const originalIndexes = new Map<string, number>();

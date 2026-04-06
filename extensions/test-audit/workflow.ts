@@ -30,7 +30,9 @@ import {
 export type TestAuditExecutionRunResult = ExecutionRunResult<TestAuditWorkerValidation>;
 
 export interface TestAuditExecutionManagerLike {
-  executeUnit(input: ExecuteUnitInput<TestAuditExecutionUnit>): Promise<TestAuditExecutionRunResult>;
+  executeUnit(
+    input: ExecuteUnitInput<TestAuditExecutionUnit>,
+  ): Promise<TestAuditExecutionRunResult>;
 }
 
 export interface TestAuditExecutionSchedulerLike {
@@ -73,7 +75,8 @@ function buildRefinementPrompt(prompts: PromptBundle, planText: string, note?: s
     prompts,
     reports: {
       finder: "Preserve the approved finder findings unless the refinement requires changing them.",
-      skeptic: "Preserve or revise the skeptic objections only as needed to satisfy the refinement.",
+      skeptic:
+        "Preserve or revise the skeptic objections only as needed to satisfy the refinement.",
       arbiter: planText,
     },
     refinement:
@@ -355,7 +358,8 @@ export class TestAuditWorkflow extends GuidedExecutionWorkflow<
             : { ok: false as const, message: parsed.message };
         },
       }),
-      renderWorkerPrompt: (input) => buildWorkerPrompt({ prompts: this.requirePrompts(), ...input }),
+      renderWorkerPrompt: (input) =>
+        buildWorkerPrompt({ prompts: this.requirePrompts(), ...input }),
       integrate: async ({ workerResult }) => ({
         summary: workerResult.summary,
         changedFiles: workerResult.changedFiles,

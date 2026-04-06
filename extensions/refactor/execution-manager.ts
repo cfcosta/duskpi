@@ -51,17 +51,18 @@ export class RefactorExecutionManager
   implements RefactorUnitExecutor
 {
   constructor(options: RefactorExecutionManagerOptions) {
-    const sharedOptions: ExecutionManagerOptions<RefactorExecutionUnit, RefactorWorkerValidation> = {
-      repoRoot: options.repoRoot,
-      workspaceManager: options.workspaceManager,
-      workerRunner: options.workerRunner,
-      renderWorkerPrompt: (input: WorkerPromptRenderInput<RefactorExecutionUnit>) =>
-        options.renderWorkerPrompt(input),
-      integrate: options.integrate,
-      workspaceBaseDir:
-        options.workspaceBaseDir ?? path.join(options.repoRoot, ".refactor-workspaces"),
-      buildWorkspaceName: (executionUnit, step) => buildWorkspaceName(executionUnit, step),
-    };
+    const sharedOptions: ExecutionManagerOptions<RefactorExecutionUnit, RefactorWorkerValidation> =
+      {
+        repoRoot: options.repoRoot,
+        workspaceManager: options.workspaceManager,
+        workerRunner: options.workerRunner,
+        renderWorkerPrompt: (input: WorkerPromptRenderInput<RefactorExecutionUnit>) =>
+          options.renderWorkerPrompt(input),
+        integrate: options.integrate,
+        workspaceBaseDir:
+          options.workspaceBaseDir ?? path.join(options.repoRoot, ".refactor-workspaces"),
+        buildWorkspaceName: (executionUnit, step) => buildWorkspaceName(executionUnit, step),
+      };
 
     super(sharedOptions);
   }

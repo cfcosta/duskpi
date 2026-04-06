@@ -1,5 +1,13 @@
-import { ExecutionScheduler, type ExecutePlanInput, type ExecutionScheduleResult } from "./execution-scheduler";
-import type { ExecutionRunResult, ExecutionUnitExecutor, ExecutionUnitLike } from "./execution-manager";
+import {
+  ExecutionScheduler,
+  type ExecutePlanInput,
+  type ExecutionScheduleResult,
+} from "./execution-scheduler";
+import type {
+  ExecutionRunResult,
+  ExecutionUnitExecutor,
+  ExecutionUnitLike,
+} from "./execution-manager";
 import type {
   AgentEndEvent,
   BeforeAgentStartEvent,
@@ -34,8 +42,10 @@ export type ExecutionPlanParseResult<Unit> =
       message: string;
     };
 
-export interface GuidedExecutionApprovalOptions
-  extends Omit<GuidedWorkflowApprovalOptions, "onApprove"> {
+export interface GuidedExecutionApprovalOptions extends Omit<
+  GuidedWorkflowApprovalOptions,
+  "onApprove"
+> {
   onApprove?: GuidedWorkflowApprovalOptions["onApprove"];
 }
 
@@ -92,9 +102,10 @@ export interface GuidedExecutionWorkflowOptions<
   };
 }
 
-export class GuidedExecutionWorkflow<Unit extends ExecutionUnitLike, Validation = unknown>
-  implements GuidedWorkflowController
-{
+export class GuidedExecutionWorkflow<
+  Unit extends ExecutionUnitLike,
+  Validation = unknown,
+> implements GuidedWorkflowController {
   private readonly workflow: GuidedWorkflow;
   private latestExecutionRun?: ExecutionRunResult<Validation>;
   private latestExecutionSchedule?: ExecutionScheduleResult<Validation>;
@@ -181,10 +192,7 @@ export class GuidedExecutionWorkflow<Unit extends ExecutionUnitLike, Validation 
             });
           }
 
-          if (
-            this.latestExecutionRun &&
-            this.latestExecutionRun.unitId === executionUnit.id
-          ) {
+          if (this.latestExecutionRun && this.latestExecutionRun.unitId === executionUnit.id) {
             return this.options.execution.buildExecutionRunResultPrompt({
               result: this.latestExecutionRun,
               step: currentStep.step,
