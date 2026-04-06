@@ -12,7 +12,10 @@ import {
   parseTaggedRefactorPlan,
   type RefactorExecutionUnit,
 } from "./contract";
-import { buildPrompt, type PromptBundle } from "./prompting";
+import { RefactorExecutionManager, type RefactorExecutionRunResult } from "./execution-manager";
+import { buildPrompt, buildWorkerPrompt, type PromptBundle } from "./prompting";
+import { RefactorWorkerRunner } from "./worker-runner";
+import { JjWorkspaceManager } from "./workspace-manager";
 
 const VERDICT_PATTERN = /(?:^|\n)\s*(?:1\)\s*)?Verdict:\s*(PASS|REFINE|REJECT)\b/i;
 
@@ -22,13 +25,48 @@ function formatExecutionItemText(executionUnit: RefactorExecutionUnit): string {
     : `${executionUnit.id}: ${executionUnit.title}`;
 }
 
+function buildExecutionManagerPrompt(
+  result: RefactorExecutionRunResult,
+  step: number,
+  totalSteps: number,
+): string {
+  const lines = [
+    `Execution manager processed approved refactor unit ${step}/${totalSteps}.`,
+    `Unit ID: ${result.unitId}`,
+    `Status: ${result.status}`,
+    `Summary: ${result.summary}`,
+  ];
+
+  if (result.status === "completed") {
+    lines.push("Changed files:", ...result.changedFiles.map((file) => `- ${file}`));
+  } else {
+    lines.push("Blockers:", ...result.blockers.map((blocker) => `- ${blocker}`));
+  }
+
+  lines.push(
+    "Validations:",
+    ...result.validations.map((validation) => {
+      const details = validation.details ? ` (${validation.details})` : "";
+      return `- ${validation.command}: ${validation.outcome}${details}`;
+    }),
+    result.status === "completed"
+      ? `Respond with an execution_result tagged JSON block for step ${step} using status \"done\".`
+      : `Respond with an execution_result tagged JSON block for step ${step} using status \"skipped\" and include the failure summary.`,
+  );
+
+  return lines.join("\n");
+}
+
 export class RefactorWorkflow extends GuidedWorkflow {
   private prompts?: PromptBundle;
   private startupError?: Error;
+  private repoRoot?: string;
+  private latestExecutionRun?: RefactorExecutionRunResult;
 
   constructor(
-    api: ExtensionAPI,
+    private readonly api: ExtensionAPI,
     private readonly promptProvider: () => PromptLoadResult<PromptBundle>,
+    private readonly executionManager?: RefactorExecutionManager,
   ) {
     super(api, {
       id: "refactor",
@@ -100,6 +138,26 @@ export class RefactorWorkflow extends GuidedWorkflow {
 
           return { cancelled: true };
         },
+        onApprove: async ({ planText }, ctx) => {
+          this.latestExecutionRun = undefined;
+          const parsed = parseTaggedRefactorPlan(planText);
+          if (!parsed.ok) {
+            return;
+          }
+
+          const orderedUnits = orderExecutionUnits(parsed.value);
+          if (orderedUnits.length !== 1) {
+            return;
+          }
+
+          const executionManager = this.getExecutionManager(ctx.cwd);
+          this.latestExecutionRun = await executionManager.executeUnit({
+            executionUnit: orderedUnits[0]!,
+            approvedPlanSummary: parsed.value.summary,
+            step: 1,
+            totalSteps: 1,
+          });
+        },
       },
       execution: {
         extractItems: ({ planText }) => {
@@ -123,6 +181,14 @@ export class RefactorWorkflow extends GuidedWorkflow {
           const executionUnit = orderedUnits[currentStep.step - 1];
           if (!executionUnit) {
             return `Execute approved refactor step ${currentStep.step}: ${currentStep.text}`;
+          }
+
+          if (this.latestExecutionRun && this.latestExecutionRun.unitId === executionUnit.id) {
+            return buildExecutionManagerPrompt(
+              this.latestExecutionRun,
+              currentStep.step,
+              items.length,
+            );
           }
 
           return [
@@ -158,6 +224,8 @@ export class RefactorWorkflow extends GuidedWorkflow {
     args: unknown,
     ctx: Parameters<GuidedWorkflow["handleCommand"]>[1],
   ): Promise<GuidedWorkflowResult> {
+    this.repoRoot = ctx.cwd;
+    this.latestExecutionRun = undefined;
     this.reloadPrompts();
 
     if (!this.prompts) {
@@ -189,6 +257,29 @@ export class RefactorWorkflow extends GuidedWorkflow {
     }
 
     return this.prompts;
+  }
+
+  private getExecutionManager(repoRootOverride?: string): RefactorExecutionManager {
+    if (this.executionManager) {
+      return this.executionManager;
+    }
+
+    const repoRoot = repoRootOverride ?? this.repoRoot;
+    if (!repoRoot) {
+      throw new Error("Refactor execution manager requires a repo root.");
+    }
+
+    return new RefactorExecutionManager({
+      repoRoot,
+      workspaceManager: new JjWorkspaceManager({ repoRoot, exec: this.api.exec.bind(this.api) }),
+      workerRunner: new RefactorWorkerRunner({ exec: this.api.exec.bind(this.api) }),
+      renderWorkerPrompt: (input) =>
+        buildWorkerPrompt({ prompts: this.requirePrompts(), ...input }),
+      integrate: async ({ workerResult }) => ({
+        summary: workerResult.summary,
+        changedFiles: workerResult.changedFiles,
+      }),
+    });
   }
 
   private parseCritiqueVerdict(text: string): GuidedCritiqueVerdict | undefined {

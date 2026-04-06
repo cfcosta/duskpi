@@ -5,6 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import refactor from "./index";
 import { REFACTOR_PLAN_JSON_BLOCK_TAG } from "./contract";
+import type { RefactorExecutionManager } from "./execution-manager";
 import { RefactorWorkflow } from "./workflow";
 import { buildPrompt, buildWorkerPrompt, loadPrompts } from "./prompting";
 
@@ -30,6 +31,7 @@ function createHarness(options?: {
   failSendCount?: number;
   selectChoice?: string;
   editorValue?: string;
+  executionManager?: RefactorExecutionManager;
 }) {
   const sentMessages: string[] = [];
   const sentCustomMessages: Array<{ customType?: string; content?: unknown; display?: boolean }> =
@@ -52,9 +54,13 @@ function createHarness(options?: {
     sendMessage(message: { customType?: string; content?: unknown; display?: boolean }) {
       sentCustomMessages.push(message);
     },
+    async exec() {
+      return { stdout: "", stderr: "", code: 0, killed: false };
+    },
   };
 
   const ctx = {
+    cwd: "/repo",
     ui: {
       notify(message: string, level: NotifyLevel) {
         notifications.push({ message, level });
@@ -82,7 +88,11 @@ function createHarness(options?: {
     worker: "WORKER",
   };
 
-  const workflow = new RefactorWorkflow(api as never, () => ({ ok: true, prompts }));
+  const workflow = new RefactorWorkflow(
+    api as never,
+    () => ({ ok: true, prompts }),
+    options?.executionManager,
+  );
 
   return {
     workflow,
@@ -124,6 +134,34 @@ function buildApprovedPlanText() {
             objective: "Introduce a machine-checkable refactor plan contract.",
             targets: ["extensions/refactor/contract.ts"],
             validations: ["bun test extensions/refactor/contract.test.ts"],
+            dependsOn: [],
+          },
+        ],
+      },
+      null,
+      2,
+    ),
+    "\`\`\`",
+  ].join("\n");
+}
+
+function buildSingleUnitApprovedPlanText() {
+  return [
+    "Approved refactor program",
+    "",
+    `\`\`\`${REFACTOR_PLAN_JSON_BLOCK_TAG}`,
+    JSON.stringify(
+      {
+        version: 1,
+        kind: "approved_refactor_plan",
+        summary: "Execute one approved refactor unit.",
+        executionUnits: [
+          {
+            id: "guided-shell",
+            title: "Adopt GuidedWorkflow",
+            objective: "Move /refactor planning to GuidedWorkflow.",
+            targets: ["extensions/refactor/workflow.ts"],
+            validations: ["bun test extensions/refactor/index.test.ts"],
             dependsOn: [],
           },
         ],
@@ -342,6 +380,86 @@ test("workflow approval hands off ordered execution items and dispatches the fir
   assert.match(sentMessages.at(-1) ?? "", /Execute approved refactor unit 1\/2\./);
   assert.match(sentMessages.at(-1) ?? "", /Unit ID: contract-core/);
   assert.match(sentMessages.at(-1) ?? "", /Dependencies: none/);
+});
+
+test("workflow surfaces single-unit execution manager success through the first execution prompt", async () => {
+  const executionManager = {
+    async executeUnit() {
+      return {
+        unitId: "guided-shell",
+        status: "completed" as const,
+        summary: "Integrated guided-shell",
+        changedFiles: ["extensions/refactor/workflow.ts"],
+        validations: [
+          {
+            command: "bun test extensions/refactor/index.test.ts",
+            outcome: "passed" as const,
+          },
+        ],
+      };
+    },
+  };
+  const { workflow, ctx, sentMessages, sentCustomMessages } = createHarness({
+    selectChoice: "Approve refactor plan",
+    executionManager: executionManager as never,
+  });
+
+  await workflow.handleCommand("", ctx);
+  await workflow.handleAgentEnd(
+    {
+      messages: [
+        { role: "user", content: [{ type: "text", text: sentMessages[0]! }] },
+        textMessage("mapper-report"),
+      ],
+    },
+    ctx,
+  );
+
+  await workflow.handleAgentEnd(
+    {
+      messages: [
+        { role: "custom", content: String(sentCustomMessages[0]?.content ?? "") },
+        textMessage(`1) Verdict: REFINE
+2) Issues:
+- split a step`),
+      ],
+    },
+    ctx,
+  );
+
+  await workflow.handleAgentEnd(
+    {
+      messages: [
+        { role: "custom", content: String(sentCustomMessages[1]?.content ?? "") },
+        textMessage(buildSingleUnitApprovedPlanText()),
+      ],
+    },
+    ctx,
+  );
+
+  const result = await workflow.handleAgentEnd(
+    {
+      messages: [
+        { role: "custom", content: String(sentCustomMessages[2]?.content ?? "") },
+        textMessage(`1) Verdict: PASS
+2) Issues:
+- none`),
+      ],
+    },
+    ctx,
+  );
+
+  assert.deepEqual(result, { kind: "ok" });
+  assert.match(
+    sentMessages.at(-1) ?? "",
+    /Execution manager processed approved refactor unit 1\/1\./,
+  );
+  assert.match(sentMessages.at(-1) ?? "", /Status: completed/);
+  assert.match(sentMessages.at(-1) ?? "", /Integrated guided-shell/);
+  assert.match(
+    sentMessages.at(-1) ?? "",
+    /Respond with an execution_result tagged JSON block for step 1 using status "done"/,
+  );
 });
 
 test("workflow blocks rerun while active", async () => {
