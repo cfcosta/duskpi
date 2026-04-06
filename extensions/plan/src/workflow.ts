@@ -150,6 +150,12 @@ const YOLO_MODE_SYSTEM_PROMPT = `
 const EXECUTION_TRIGGER_PROMPT =
   "Plan approved. Switch to implementation mode and execute the latest plan now.";
 
+const EXECUTION_RESULT_TAGGED_JSON_CONTRACT_SUMMARY = [
+  `After implementing or validating the step, include a fenced \`\`\`${PLAN_OUTPUT_JSON_BLOCK_TAG}\` JSON block.`,
+  `Use: { "version": ${RUNTIME_PLAN_CONTRACT_VERSION}, "kind": "execution_result", "scope": "plan" | "autoplan", "step": N, "status": "done" | "skipped", "summary": "...", "changedTargets": [...], "validationsRun": [...], "checkpointsReached": [...], "outerStep": N? }.`,
+  "Use status 'skipped' when the step is already satisfied or would otherwise require a fake no-op commit.",
+].join("\n");
+
 const EXECUTION_COMMIT_RULES = `
 Execution rules:
 - Execute exactly one todo step per agent turn.
@@ -159,8 +165,8 @@ Execution rules:
 - Use Conventional Commits.
 - Include a detailed commit description covering what changed, why, and the intended outcome.
 - Never batch multiple plan steps into one commit.
-- If the step was implemented, include a [DONE:n] marker after the commit succeeds and stop.
-- If the step is already satisfied or would require a fake/no-op commit, explain why and include [SKIPPED:n] instead, then stop.
+- After the commit, include the required tagged execution_result JSON block for this step and stop.
+- Use status "skipped" when the step is already satisfied or would otherwise require a fake no-op commit.
 - Do not start the next step until the extension prompts you again.
 `.trim();
 
@@ -1374,9 +1380,13 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     planText: string | undefined,
     executionItems: GuidedWorkflowExecutionItem[],
   ): TodoItem[] {
-    const structuredPlan = resolveStructuredPlan(planText, this.latestStructuredPlan);
-    const structuredTodoItems = structuredPlan ? toTodoItemsFromStructuredPlan(structuredPlan) : [];
-    if (structuredTodoItems.length === 0) {
+    const planMetadata = resolvePlanMetadata(
+      planText,
+      this.latestPlanMetadata,
+      this.latestStructuredPlan,
+    );
+    const metadataTodoItems = planMetadata ? toTodoItemsFromPlanMetadata(planMetadata) : [];
+    if (metadataTodoItems.length === 0) {
       return executionItems.map((item) => ({
         step: item.step,
         text: item.text,
@@ -1387,14 +1397,18 @@ export class PiPlanWorkflow extends GuidedWorkflow {
 
     const completedSteps = executionItems.filter((item) => item.completed).map((item) => item.step);
     const skippedSteps = executionItems.filter((item) => item.skipped).map((item) => item.step);
-    markTodoItemsCompleted(structuredTodoItems, completedSteps);
-    markTodoItemsSkipped(structuredTodoItems, skippedSteps);
-    return structuredTodoItems;
+    markTodoItemsCompleted(metadataTodoItems, completedSteps);
+    markTodoItemsSkipped(metadataTodoItems, skippedSteps);
+    return metadataTodoItems;
   }
 
   private buildTopLevelExecutionItems(planText: string): TodoItem[] {
-    const structuredPlan = resolveStructuredPlan(planText, this.latestStructuredPlan);
-    return structuredPlan ? toTodoItemsFromStructuredPlan(structuredPlan) : [];
+    const planMetadata = resolvePlanMetadata(
+      planText,
+      this.latestPlanMetadata,
+      this.latestStructuredPlan,
+    );
+    return planMetadata ? toTodoItemsFromPlanMetadata(planMetadata) : [];
   }
 
   private syncLocalLifecycleStateFromGuided(): void {
@@ -1974,12 +1988,19 @@ export class PiPlanWorkflow extends GuidedWorkflow {
 
     const currentDetails = describeExecutionStep(
       currentStep,
-      resolveStructuredPlan(this.getLatestPlanText(), this.latestStructuredPlan),
+      resolvePlanMetadata(this.getLatestPlanText(), this.latestPlanMetadata, this.latestStructuredPlan),
     );
     const backlog = remaining.map((item) => `${item.step}. ${item.text}`).join("\n");
     return [
       "[APPROVED PLAN EXECUTION]",
       `Current step: ${currentStep.step}. ${currentDetails.objective}`,
+      currentDetails.taskGeometry ? `Task geometry: ${currentDetails.taskGeometry}` : undefined,
+      currentDetails.coordinationPattern
+        ? `Coordination pattern: ${currentDetails.coordinationPattern}`
+        : undefined,
+      currentDetails.dependsOn ? `Depends on steps: ${currentDetails.dependsOn}` : undefined,
+      currentDetails.checkpoints ? `Relevant checkpoints: ${currentDetails.checkpoints}` : undefined,
+      currentDetails.assumptions ? `Approved assumptions: ${currentDetails.assumptions}` : undefined,
       currentDetails.targets ? `Target files/components: ${currentDetails.targets}` : undefined,
       currentDetails.validation ? `Validation method: ${currentDetails.validation}` : undefined,
       currentDetails.risks ? `Risks and rollback notes: ${currentDetails.risks}` : undefined,
@@ -2064,7 +2085,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
 
     const stepDetails = describeExecutionStep(
       currentStep,
-      resolveStructuredPlan(planText, this.latestStructuredPlan),
+      resolvePlanMetadata(planText, this.latestPlanMetadata, this.latestStructuredPlan),
     );
     const autoPlanInnerExecutionActive =
       this.autoPlanMode === "executing" &&
@@ -2075,6 +2096,13 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       `Complete only step ${currentStep.step}: ${stepDetails.objective}`,
       note ? `Honor this user execution note while implementing the step: ${note}` : undefined,
       ...(autoPlanInnerExecutionActive ? this.getApprovedAutoPlanContextLines() : []),
+      stepDetails.taskGeometry ? `Task geometry: ${stepDetails.taskGeometry}` : undefined,
+      stepDetails.coordinationPattern
+        ? `Coordination pattern: ${stepDetails.coordinationPattern}`
+        : undefined,
+      stepDetails.dependsOn ? `Depends on steps: ${stepDetails.dependsOn}` : undefined,
+      stepDetails.checkpoints ? `Relevant checkpoints: ${stepDetails.checkpoints}` : undefined,
+      stepDetails.assumptions ? `Approved assumptions: ${stepDetails.assumptions}` : undefined,
       stepDetails.targets ? `Target files/components: ${stepDetails.targets}` : undefined,
       stepDetails.validation ? `Validation method: ${stepDetails.validation}` : undefined,
       stepDetails.risks ? `Risks and rollback notes: ${stepDetails.risks}` : undefined,
@@ -2084,7 +2112,11 @@ export class PiPlanWorkflow extends GuidedWorkflow {
         : undefined,
       "Implement it, validate it, and create one atomic jujutsu commit for that step before ending the turn.",
       "Use `jj commit <changed paths> -m <message>`, follow Conventional Commits, and include a detailed description.",
-      "If the step is already satisfied or would require a fake/no-op commit, explain why and use [SKIPPED:n] instead of [DONE:n].",
+      EXECUTION_RESULT_TAGGED_JSON_CONTRACT_SUMMARY,
+      `For this execution turn, use scope: ${autoPlanInnerExecutionActive ? "autoplan" : "plan"}.`,
+      autoPlanInnerExecutionActive && typeof this.autoPlanOuterStep === "number"
+        ? `When present, set outerStep to ${this.autoPlanOuterStep}.`
+        : undefined,
       "Do not start the following step in the same turn.",
     ]
       .filter((line): line is string => typeof line === "string")
@@ -2370,9 +2402,13 @@ function toPlanStep(step: StructuredPlanOutput["steps"][number]): StructuredStep
 }
 
 function toTodoItemsFromStructuredPlan(structuredPlan: StructuredPlanOutput): TodoItem[] {
-  return structuredPlan.steps.map((step) => ({
+  return toTodoItemsFromPlanMetadata(normalizeStructuredPlanMetadata(structuredPlan));
+}
+
+function toTodoItemsFromPlanMetadata(planMetadata: NormalizedPlanMetadata): TodoItem[] {
+  return planMetadata.steps.map((step) => ({
     step: step.step,
-    text: cleanStepText(step.objective),
+    text: step.label,
     completed: false,
   }));
 }
@@ -2508,20 +2544,41 @@ function summarizeExecutionValues(values: string[]): string | undefined {
 
 function describeExecutionStep(
   currentStep: Pick<GuidedWorkflowExecutionItem, "step" | "text">,
-  structuredPlan?: StructuredPlanOutput,
+  planMetadata?: NormalizedPlanMetadata,
 ): {
   objective: string;
+  taskGeometry?: string;
+  coordinationPattern?: string;
+  dependsOn?: string;
+  checkpoints?: string;
+  assumptions?: string;
   targets?: string;
   validation?: string;
   risks?: string;
 } {
-  const structuredStep = structuredPlan?.steps.find((step) => step.step === currentStep.step);
+  const metadataStep = planMetadata?.steps.find((step) => step.step === currentStep.step);
+  const checkpointTitles = metadataStep
+    ? metadataStep.checkpointIds
+        .map((checkpointId) => {
+          const checkpoint = planMetadata?.checkpoints.find((candidate) => candidate.id === checkpointId);
+          return checkpoint ? `${checkpoint.title} (${checkpoint.kind})` : checkpointId;
+        })
+        .filter((value) => value.length > 0)
+    : [];
 
   return {
-    objective: structuredStep?.objective ?? currentStep.text,
-    targets: structuredStep ? summarizeExecutionValues(structuredStep.targets) : undefined,
-    validation: structuredStep ? summarizeExecutionValues(structuredStep.validation) : undefined,
-    risks: structuredStep ? summarizeExecutionValues(structuredStep.risks) : undefined,
+    objective: metadataStep?.objective ?? currentStep.text,
+    taskGeometry: planMetadata?.taskGeometry,
+    coordinationPattern: planMetadata?.coordinationPattern,
+    dependsOn:
+      metadataStep && metadataStep.dependsOn.length > 0
+        ? metadataStep.dependsOn.join(", ")
+        : undefined,
+    checkpoints: summarizeExecutionValues(checkpointTitles),
+    assumptions: planMetadata ? summarizeExecutionValues(planMetadata.assumptions) : undefined,
+    targets: metadataStep ? summarizeExecutionValues(metadataStep.targets) : undefined,
+    validation: metadataStep ? summarizeExecutionValues(metadataStep.validation) : undefined,
+    risks: metadataStep ? summarizeExecutionValues(metadataStep.risks) : undefined,
   };
 }
 
@@ -2564,8 +2621,8 @@ function recoverImplicitlyIndentedSubtaskItems(
   planText: string,
   existingItems: GuidedWorkflowExecutionItem[],
 ): TodoItem[] {
-  const structuredPlan = parseTaggedPlanContract(planText);
-  if (!structuredPlan.ok) {
+  const planMetadata = resolvePlanMetadata(planText);
+  if (!planMetadata) {
     return existingItems.map((item) => ({
       step: item.step,
       text: item.text,
@@ -2573,7 +2630,7 @@ function recoverImplicitlyIndentedSubtaskItems(
     }));
   }
 
-  return toTodoItemsFromStructuredPlan(structuredPlan.value).sort(
+  return toTodoItemsFromPlanMetadata(planMetadata).sort(
     (left, right) => left.step - right.step || left.text.localeCompare(right.text),
   );
 }
@@ -2594,6 +2651,27 @@ function buildParseRecoveryPrompt(draftText: string): string {
 
 function buildWorkflowRequestIdMarker(requestId: string): string {
   return `<!-- workflow-request-id:${requestId} -->`;
+}
+
+function resolvePlanMetadata(
+  planText: string | undefined,
+  planMetadata?: NormalizedPlanMetadata | null,
+  structuredPlan?: StructuredPlanOutput | null,
+): NormalizedPlanMetadata | undefined {
+  if (planMetadata) {
+    return planMetadata;
+  }
+
+  if (structuredPlan) {
+    return normalizeStructuredPlanMetadata(structuredPlan);
+  }
+
+  if (!planText) {
+    return undefined;
+  }
+
+  const parsed = parseTaggedPlanContract(planText);
+  return parsed.ok ? normalizeStructuredPlanMetadata(parsed.value) : undefined;
 }
 
 function validatePendingPlanningResponse(
@@ -2733,7 +2811,7 @@ function buildAutoPlanExecutionComplianceRecoveryPrompt(args: {
   issues: AutoPlanOutputComplianceIssue[];
 }): string {
   const issueSummary = formatAutoPlanComplianceIssues(args.issues);
-  const stepDetails = describeExecutionStep(args.currentStep, resolveStructuredPlan(args.planText));
+  const stepDetails = describeExecutionStep(args.currentStep, resolvePlanMetadata(args.planText));
 
   return [
     "The previous inner execution response violated the post-approval autoplan policy.",
@@ -2744,6 +2822,13 @@ function buildAutoPlanExecutionComplianceRecoveryPrompt(args: {
       ? `Honor this user execution note while implementing the step: ${args.note}`
       : undefined,
     ...args.approvedContextLines,
+    stepDetails.taskGeometry ? `Task geometry: ${stepDetails.taskGeometry}` : undefined,
+    stepDetails.coordinationPattern
+      ? `Coordination pattern: ${stepDetails.coordinationPattern}`
+      : undefined,
+    stepDetails.dependsOn ? `Depends on steps: ${stepDetails.dependsOn}` : undefined,
+    stepDetails.checkpoints ? `Relevant checkpoints: ${stepDetails.checkpoints}` : undefined,
+    stepDetails.assumptions ? `Approved assumptions: ${stepDetails.assumptions}` : undefined,
     stepDetails.targets ? `Target files/components: ${stepDetails.targets}` : undefined,
     stepDetails.validation ? `Validation method: ${stepDetails.validation}` : undefined,
     stepDetails.risks ? `Risks and rollback notes: ${stepDetails.risks}` : undefined,
@@ -2752,7 +2837,8 @@ function buildAutoPlanExecutionComplianceRecoveryPrompt(args: {
     "Infer the best repo-consistent choice and continue.",
     "Implement it, validate it, and create one atomic jujutsu commit for that step before ending the turn.",
     "Use `jj commit <changed paths> -m <message>`, follow Conventional Commits, and include a detailed description.",
-    "If the step is already satisfied or would require a fake/no-op commit, explain why and use [SKIPPED:n] instead of [DONE:n].",
+    EXECUTION_RESULT_TAGGED_JSON_CONTRACT_SUMMARY,
+    "For this execution turn, use scope: autoplan.",
     "Do not start the following step in the same turn.",
     "",
     "Previous response:",

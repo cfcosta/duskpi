@@ -647,6 +647,37 @@ function extractRequestId(prompt: string): string | undefined {
   return match?.[1]?.trim();
 }
 
+function buildExecutionResultText(args: {
+  step: number;
+  status: "done" | "skipped";
+  scope?: "plan" | "autoplan";
+  summary?: string;
+  outerStep?: number;
+}): string {
+  return [
+    "Execution update",
+    "",
+    "```pi-plan-json",
+    JSON.stringify(
+      {
+        version: 2,
+        kind: "execution_result",
+        scope: args.scope ?? "plan",
+        step: args.step,
+        status: args.status,
+        summary: args.summary ?? `Step ${args.step} ${args.status}`,
+        changedTargets: [],
+        validationsRun: [],
+        checkpointsReached: [],
+        ...(typeof args.outerStep === "number" ? { outerStep: args.outerStep } : {}),
+      },
+      null,
+      2,
+    ),
+    "```",
+  ].join("\n");
+}
+
 async function emitMatchedHiddenResponse(
   harness: ReturnType<typeof createPlanExtensionHarness>,
   assistantText: string,
@@ -2282,12 +2313,13 @@ test("/autoplan continues to the next inner step after a skipped subtask step", 
     "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- ready",
   );
 
-  expect(harness.sentUserMessages[2]).toContain("[SKIPPED:n]");
+  expect(harness.sentUserMessages[2]).toContain('"kind": "execution_result"');
+  expect(harness.sentUserMessages[2]).toContain('"status": "done" | "skipped"');
 
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: "Already satisfied [SKIPPED:1]" }],
+      content: [{ type: "text", text: buildExecutionResultText({ step: 1, status: "skipped", scope: "autoplan" }) }],
     },
   });
 
@@ -3400,6 +3432,10 @@ test("approve action can include an execution note and restores normal tools", a
   expect(harness.sentUserMessages[0]).not.toContain(
     "Infer the best repo-consistent choice and continue.",
   );
+  expect(harness.sentUserMessages[0]).toContain("Task geometry: shared_artifact");
+  expect(harness.sentUserMessages[0]).toContain("Coordination pattern: checkpointed_execution");
+  expect(harness.sentUserMessages[0]).toContain('"kind": "execution_result"');
+  expect(harness.sentUserMessages[0]).toContain("For this execution turn, use scope: plan.");
   expect(harness.uiStub.statuses.get("plan")).toBe("📋 0/2");
   expect(harness.uiStub.widgets.get("plan-todos")).toEqual([
     "☐ A regression test for prompt leakage",
@@ -3430,7 +3466,7 @@ test("execution progress surfaces derive from guided execution snapshots", async
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: "Implemented step one [DONE:1]" }],
+      content: [{ type: "text", text: buildExecutionResultText({ step: 1, status: "done" }) }],
     },
   });
 
@@ -3449,7 +3485,7 @@ test("execution progress surfaces derive from guided execution snapshots", async
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: "Implemented step two [DONE:2]" }],
+      content: [{ type: "text", text: buildExecutionResultText({ step: 2, status: "done" }) }],
     },
   });
 
@@ -3462,7 +3498,7 @@ test("execution progress surfaces derive from guided execution snapshots", async
   });
 });
 
-test("SKIPPED markers advance execution and render distinctly in progress UI", async () => {
+test("skipped structured execution results advance execution and render distinctly in progress UI", async () => {
   const harness = createPlanExtensionHarness({
     hasUI: true,
     customSelection: { cancelled: false, action: "approve" },
@@ -3470,12 +3506,13 @@ test("SKIPPED markers advance execution and render distinctly in progress UI", a
 
   await enterExecutionState(harness);
 
-  expect(harness.sentUserMessages[0]).toContain("[SKIPPED:n]");
+  expect(harness.sentUserMessages[0]).toContain('"kind": "execution_result"');
+  expect(harness.sentUserMessages[0]).toContain('"status": "done" | "skipped"');
 
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: "Step already satisfied [SKIPPED:1]" }],
+      content: [{ type: "text", text: buildExecutionResultText({ step: 1, status: "skipped" }) }],
     },
   });
 
@@ -3497,7 +3534,7 @@ test("SKIPPED markers advance execution and render distinctly in progress UI", a
   });
 });
 
-test("execution prompts use stored structured step details and DONE markers advance", async () => {
+test("execution prompts use stored structured step details and approved coordination context", async () => {
   const harness = createPlanExtensionHarness({
     hasUI: true,
     customSelection: { cancelled: false, action: "approve" },
@@ -3508,7 +3545,7 @@ test("execution prompts use stored structured step details and DONE markers adva
     messages: [
       {
         role: "assistant",
-        content: [{ type: "text", text: buildConflictingRichPlanText() }],
+        content: [{ type: "text", text: buildCoordinationMetadataPlanText() }],
       },
     ],
   });
@@ -3519,45 +3556,55 @@ test("execution prompts use stored structured step details and DONE markers adva
 
   expect(harness.sentUserMessages).toHaveLength(1);
   expect(harness.sentUserMessages[0]).toContain(
-    "Complete only step 1: Add a regression test for prompt leakage",
+    "Complete only step 1: Normalize the plan metadata capture",
+  );
+  expect(harness.sentUserMessages[0]).toContain("Task geometry: shared_artifact");
+  expect(harness.sentUserMessages[0]).toContain("Coordination pattern: checkpointed_execution");
+  expect(harness.sentUserMessages[0]).toContain(
+    "Relevant checkpoints: Review captured metadata (checkpoint)",
   );
   expect(harness.sentUserMessages[0]).toContain(
-    "Target files/components: src/index.test.ts; src/workflow.ts",
+    "Approved assumptions: The tagged JSON contract is already validated before review state is built.; Approval previews can stay compact while metadata is stored in full.",
   );
   expect(harness.sentUserMessages[0]).toContain(
-    "Validation method: bun test ./src/index.test.ts; bun run typecheck",
+    "Target files/components: src/workflow.ts; src/utils.ts",
   );
   expect(harness.sentUserMessages[0]).toContain(
-    "Risks and rollback notes: revert the structured execution prompt if agent guidance regresses",
+    "Validation method: bun test ./src/index.test.ts",
   );
-  expect(harness.sentUserMessages[0]).not.toContain("Markdown says the wrong step name");
-  expect(harness.sentUserMessages[0]).not.toContain("wrong/path.ts");
+  expect(harness.sentUserMessages[0]).toContain(
+    "Risks and rollback notes: Metadata normalization can drift from the original structured plan fields.",
+  );
+  expect(harness.sentUserMessages[0]).toContain('"kind": "execution_result"');
+  expect(harness.sentUserMessages[0]).toContain("For this execution turn, use scope: plan.");
 
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: "Implemented step one [DONE:1]" }],
+      content: [{ type: "text", text: buildExecutionResultText({ step: 1, status: "done" }) }],
     },
   });
 
   expect(harness.sentUserMessages).toHaveLength(2);
   expect(harness.sentUserMessages[1]).toContain(
-    "Complete only step 2: Update the approval action UI to show a compact summary",
+    "Complete only step 2: Preserve the stored metadata through approval construction",
   );
-  expect(harness.sentUserMessages[1]).toContain("Target files/components: src/plan-action-ui.ts");
+  expect(harness.sentUserMessages[1]).toContain("Depends on steps: 1");
+  expect(harness.sentUserMessages[1]).toContain(
+    "Relevant checkpoints: Carry metadata into approval state (integration)",
+  );
+  expect(harness.sentUserMessages[1]).toContain("Target files/components: src/workflow.ts");
   expect(harness.sentUserMessages[1]).toContain("Validation method: bun test ./src/index.test.ts");
-  expect(harness.sentUserMessages[1]).not.toContain("Markdown says the wrong second step");
-  expect(harness.sentUserMessages[1]).not.toContain("wrong/second.ts");
   expect(harness.uiStub.statuses.get("plan")).toBe("📋 1/2");
   expect(harness.uiStub.widgets.get("plan-todos")).toEqual([
-    "☑ A regression test for prompt leakage",
-    "☐ Approval action UI to show a compact summary",
+    "☑ Normalize the plan metadata capture",
+    "☐ Preserve the stored metadata through approval construction",
   ]);
 
   await harness.runCommand("todos");
   expect(harness.uiStub.notifications).toContainEqual({
     message:
-      "Plan progress 1/2\n1. ✓ A regression test for prompt leakage\n2. ○ Approval action UI to show a compact summary",
+      "Plan progress 1/2\n1. ✓ Normalize the plan metadata capture\n2. ○ Preserve the stored metadata through approval construction",
     level: "info",
   });
 });
@@ -3606,7 +3653,7 @@ test("todos output and widget stay compact while using stored structured plan da
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: "Implemented step one [DONE:1]" }],
+      content: [{ type: "text", text: buildExecutionResultText({ step: 1, status: "done" }) }],
     },
   });
 
@@ -3711,13 +3758,13 @@ test("final guided execution completion stops prompting and clears /todos state"
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: "Implemented step one [DONE:1]" }],
+      content: [{ type: "text", text: buildExecutionResultText({ step: 1, status: "done" }) }],
     },
   });
   await harness.emit("turn_end", {
     message: {
       role: "assistant",
-      content: [{ type: "text", text: "Implemented step two [DONE:2]" }],
+      content: [{ type: "text", text: buildExecutionResultText({ step: 2, status: "done" }) }],
     },
   });
 
