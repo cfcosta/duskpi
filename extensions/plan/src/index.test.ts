@@ -261,20 +261,31 @@ function appendTaggedPlanContract(
     targets?: string[];
     validation?: string[];
     risks?: string[];
+    kind?: "inspect" | "implement" | "integrate" | "validate";
+    dependsOn?: number[];
+    checkpointIds?: string[];
   }>,
 ): string {
   return [
     ...markdownLines,
     "",
     buildTaggedJsonBlock({
-      version: 1,
+      version: 2,
       kind: "plan",
+      taskGeometry: "shared_artifact",
+      coordinationPattern: "checkpointed_execution",
+      assumptions: [],
+      escalationTriggers: [],
+      checkpoints: [],
       steps: steps.map((step) => ({
         step: step.step,
+        kind: step.kind ?? "implement",
         objective: step.objective,
         targets: step.targets ?? [],
         validation: step.validation ?? [],
         risks: step.risks ?? [],
+        dependsOn: step.dependsOn ?? [],
+        checkpointIds: step.checkpointIds ?? [],
       })),
     }),
   ].join("\n");
@@ -407,6 +418,9 @@ function buildTaggedReviewContinueText(
     targets?: string[];
     validation?: string[];
     risks?: string[];
+    kind?: "inspect" | "implement" | "integrate" | "validate";
+    dependsOn?: number[];
+    checkpointIds?: string[];
   }>,
   markdownLines?: string[],
 ): string {
@@ -420,15 +434,23 @@ function buildTaggedReviewContinueText(
     ]),
     "",
     buildTaggedJsonBlock({
-      version: 1,
+      version: 2,
       kind: "review",
       status: "continue",
+      summary: "Remaining high-level work is still tracked.",
+      taskGeometry: "shared_artifact",
+      coordinationPattern: "checkpointed_execution",
+      assumptions: [],
+      checkpoints: [],
       steps: steps.map((step) => ({
         step: step.step,
+        kind: step.kind ?? "implement",
         objective: step.objective,
         targets: step.targets ?? [],
         validation: step.validation ?? [],
         risks: step.risks ?? [],
+        dependsOn: step.dependsOn ?? [],
+        checkpointIds: step.checkpointIds ?? [],
       })),
     }),
   ].join("\n");
@@ -457,7 +479,7 @@ function buildMalformedTaggedReviewText(): string {
     buildAutoPlanReviewTextWithoutTaggedBlock(),
     "",
     "```pi-plan-json",
-    '{"version": 1,',
+    '{"version": 2,',
     "```",
   ].join("\n");
 }
@@ -480,7 +502,7 @@ function buildMarkdownOnlyPlanText(): string {
 }
 
 function buildMalformedTaggedPlanText(): string {
-  return [buildMarkdownOnlyPlanText(), "", "```pi-plan-json", '{"version": 1,', "```"].join("\n");
+  return [buildMarkdownOnlyPlanText(), "", "```pi-plan-json", '{"version": 2,', "```"].join("\n");
 }
 
 function buildUnparseablePlanText(): string {
@@ -768,115 +790,89 @@ function buildTaggedJsonBlock(payload: unknown): string {
 test("parseTaggedPlanningContract parses a valid tagged JSON plan block", async () => {
   const { parseTaggedPlanningContract } = await import("./output-contract");
 
+  const payload = {
+    version: 2,
+    kind: "plan" as const,
+    taskGeometry: "shared_artifact" as const,
+    coordinationPattern: "checkpointed_execution" as const,
+    assumptions: ["The parser upgrade lands before workflow updates."],
+    escalationTriggers: ["A checkpoint validation fails after integration."],
+    checkpoints: [
+      {
+        id: "checkpoint-1",
+        title: "Review parser contract changes",
+        kind: "checkpoint" as const,
+        step: 1,
+        why: "Lock the schema before downstream changes.",
+      },
+    ],
+    steps: [
+      {
+        step: 1,
+        kind: "implement" as const,
+        objective: "Add a parser module",
+        targets: ["src/output-contract.ts"],
+        validation: ["bun test ./src/index.test.ts"],
+        risks: [],
+        dependsOn: [],
+        checkpointIds: ["checkpoint-1"],
+      },
+    ],
+  };
+
   const result = parseTaggedPlanningContract(
-    [
-      "1) Task understanding",
-      "2) Codebase findings",
-      buildTaggedJsonBlock({
-        version: 1,
-        kind: "plan",
-        steps: [
-          {
-            step: 1,
-            objective: "Add a parser module",
-            targets: ["src/output-contract.ts"],
-            validation: ["bun test ./src/index.test.ts"],
-            risks: [],
-          },
-        ],
-      }),
-    ].join("\n\n"),
+    ["1) Task understanding", "2) Codebase findings", buildTaggedJsonBlock(payload)].join(
+      "\n\n",
+    ),
   );
 
   expect(result).toEqual({
     ok: true,
-    rawJson: JSON.stringify(
-      {
-        version: 1,
-        kind: "plan",
-        steps: [
-          {
-            step: 1,
-            objective: "Add a parser module",
-            targets: ["src/output-contract.ts"],
-            validation: ["bun test ./src/index.test.ts"],
-            risks: [],
-          },
-        ],
-      },
-      null,
-      2,
-    ),
-    value: {
-      version: 1,
-      kind: "plan",
-      steps: [
-        {
-          step: 1,
-          objective: "Add a parser module",
-          targets: ["src/output-contract.ts"],
-          validation: ["bun test ./src/index.test.ts"],
-          risks: [],
-        },
-      ],
-    },
+    rawJson: JSON.stringify(payload, null, 2),
+    value: payload,
   });
 });
 
 test("parseTaggedReviewContract parses a valid tagged JSON continue review block", async () => {
   const { parseTaggedReviewContract } = await import("./output-contract");
 
-  const result = parseTaggedReviewContract(
-    buildTaggedJsonBlock({
-      version: 1,
-      kind: "review",
-      status: "continue",
-      steps: [
-        {
-          step: 1,
-          objective: "Wire structured review parsing",
-          targets: ["src/workflow.ts"],
-          validation: ["bun test ./src/index.test.ts"],
-          risks: ["keep backlog fallback intact"],
-        },
-      ],
-    }),
-  );
+  const payload = {
+    version: 2,
+    kind: "review" as const,
+    status: "continue" as const,
+    summary: "Structured review parsing still needs one workflow update.",
+    taskGeometry: "shared_artifact" as const,
+    coordinationPattern: "checkpointed_execution" as const,
+    assumptions: ["Existing backlog fallback remains available."],
+    checkpoints: [
+      {
+        id: "integration-1",
+        title: "Integrate review parsing",
+        kind: "integration" as const,
+        step: 1,
+        why: "Keep the remaining backlog aligned with repo state.",
+      },
+    ],
+    steps: [
+      {
+        step: 1,
+        kind: "integrate" as const,
+        objective: "Wire structured review parsing",
+        targets: ["src/workflow.ts"],
+        validation: ["bun test ./src/index.test.ts"],
+        risks: ["keep backlog fallback intact"],
+        dependsOn: [],
+        checkpointIds: ["integration-1"],
+      },
+    ],
+  };
+
+  const result = parseTaggedReviewContract(buildTaggedJsonBlock(payload));
 
   expect(result).toEqual({
     ok: true,
-    rawJson: JSON.stringify(
-      {
-        version: 1,
-        kind: "review",
-        status: "continue",
-        steps: [
-          {
-            step: 1,
-            objective: "Wire structured review parsing",
-            targets: ["src/workflow.ts"],
-            validation: ["bun test ./src/index.test.ts"],
-            risks: ["keep backlog fallback intact"],
-          },
-        ],
-      },
-      null,
-      2,
-    ),
-    value: {
-      version: 1,
-      kind: "review",
-      status: "continue",
-      steps: [
-        {
-          step: 1,
-          objective: "Wire structured review parsing",
-          targets: ["src/workflow.ts"],
-          validation: ["bun test ./src/index.test.ts"],
-          risks: ["keep backlog fallback intact"],
-        },
-      ],
-    },
+    rawJson: JSON.stringify(payload, null, 2),
+    value: payload,
   });
 });
 
@@ -894,7 +890,7 @@ test("parseTaggedPlanningContract rejects malformed tagged JSON blocks", async (
   const { parseTaggedPlanningContract } = await import("./output-contract");
 
   const result = parseTaggedPlanningContract(
-    ["```pi-plan-json", '{"version": 1,', "```"].join("\n"),
+    ["```pi-plan-json", '{"version": 2,', "```"].join("\n"),
   );
 
   expect(result.ok).toBe(false);
@@ -911,15 +907,23 @@ test("parseTaggedPlanningContract rejects invalid step payloads", async () => {
   expect(
     parseTaggedPlanningContract(
       buildTaggedJsonBlock({
-        version: 1,
+        version: 2,
         kind: "plan",
+        taskGeometry: "shared_artifact",
+        coordinationPattern: "checkpointed_execution",
+        assumptions: [],
+        escalationTriggers: [],
+        checkpoints: [],
         steps: [
           {
             step: 1,
+            kind: "implement",
             objective: "Add a parser module",
             targets: "src/output-contract.ts",
             validation: ["bun test ./src/index.test.ts"],
             risks: [],
+            dependsOn: [],
+            checkpointIds: [],
           },
         ],
       }),
@@ -937,15 +941,20 @@ test("parseTaggedReviewContract rejects invalid review payloads", async () => {
   expect(
     parseTaggedReviewContract(
       buildTaggedJsonBlock({
-        version: 1,
+        version: 2,
         kind: "review",
         status: "continue",
+        summary: "Still working through the remaining backlog.",
+        taskGeometry: "shared_artifact",
+        coordinationPattern: "checkpointed_execution",
+        assumptions: [],
+        checkpoints: [],
       }),
     ),
   ).toEqual({
     ok: false,
     code: "invalid_schema",
-    message: "Plan steps must be an array.",
+    message: "Review steps must be a non-empty array.",
   });
 });
 
@@ -1025,6 +1034,9 @@ test("one-shot /plan task enables plan mode and starts a correlated planning req
   expect(harness.sentUserMessages).toHaveLength(1);
   expect(harness.sentUserMessages[0]).toContain("Investigate flaky prompt extraction");
   expect(harness.sentUserMessages[0]).toContain("```pi-plan-json");
+  expect(harness.sentUserMessages[0]).toContain("runtime v2 plan payload");
+  expect(harness.sentUserMessages[0]).toContain('"taskGeometry"');
+  expect(harness.sentUserMessages[0]).toContain('"coordinationPattern"');
   expect(extractRequestId(harness.sentUserMessages[0] ?? "")).toBeTruthy();
 });
 
@@ -1044,6 +1056,9 @@ test("/autoplan starts with the normal top-level planning flow", async () => {
   expect(harness.sentUserMessages).toHaveLength(1);
   expect(harness.sentUserMessages[0]).toContain("Rewrite this in Rust");
   expect(harness.sentUserMessages[0]).toContain("```pi-plan-json");
+  expect(harness.sentUserMessages[0]).toContain("runtime v2 plan payload");
+  expect(harness.sentUserMessages[0]).toContain('"taskGeometry"');
+  expect(harness.sentUserMessages[0]).toContain('"coordinationPattern"');
   expect(extractRequestId(harness.sentUserMessages[0] ?? "")).toBeTruthy();
 });
 
@@ -2166,6 +2181,9 @@ test("planning prompt asks Pi to proactively surface change decisions with quest
     "Use ask_user_question to bundle the key uncertainties into 1-4 focused multiple-choice questions",
   );
   expect(harness.sentUserMessages[0]).toContain("```pi-plan-json");
+  expect(harness.sentUserMessages[0]).toContain("runtime v2 plan payload");
+  expect(harness.sentUserMessages[0]).toContain('"taskGeometry"');
+  expect(harness.sentUserMessages[0]).toContain('"coordinationPattern"');
   expect(harness.sentUserMessages[0]).toContain(
     "The response is invalid if the tagged JSON block is missing, malformed, or schema-invalid.",
   );
@@ -2192,6 +2210,9 @@ test("before_agent_start prompt tells plan mode to ask more than one clarifying 
     "Prefer asking over guessing when a change could reasonably go multiple ways.",
   );
   expect((result as { systemPrompt: string }).systemPrompt).toContain("```pi-plan-json");
+  expect((result as { systemPrompt: string }).systemPrompt).toContain("runtime v2 plan payload");
+  expect((result as { systemPrompt: string }).systemPrompt).toContain('"taskGeometry"');
+  expect((result as { systemPrompt: string }).systemPrompt).toContain('"coordinationPattern"');
   expect((result as { systemPrompt: string }).systemPrompt).toContain(
     "The response is invalid if the tagged JSON block is missing, malformed, or schema-invalid.",
   );
@@ -2231,6 +2252,9 @@ test("before_agent_start uses the tagged JSON contract for autoplan subtask plan
     "[AUTOPLAN SUBTASK PLANNING - READ ONLY]",
   );
   expect((result as { systemPrompt: string }).systemPrompt).toContain("```pi-plan-json");
+  expect((result as { systemPrompt: string }).systemPrompt).toContain("runtime v2 plan payload");
+  expect((result as { systemPrompt: string }).systemPrompt).toContain('"taskGeometry"');
+  expect((result as { systemPrompt: string }).systemPrompt).toContain('"coordinationPattern"');
   expect((result as { systemPrompt: string }).systemPrompt).toContain(
     "The response is invalid if the tagged JSON block is missing, malformed, or schema-invalid.",
   );
@@ -2302,8 +2326,9 @@ test("before_agent_start uses the tagged JSON contract for autoplan reviews", as
   );
   expect((result as { systemPrompt: string }).systemPrompt).toContain("```pi-plan-json");
   expect((result as { systemPrompt: string }).systemPrompt).toContain(
-    'For review continue responses, the JSON must be: { "version": 1, "kind": "review", "status": "continue", "steps": [...] }.',
+    "runtime v2 review payload with summary, taskGeometry, coordinationPattern, assumptions, checkpoints, and steps.",
   );
+  expect((result as { systemPrompt: string }).systemPrompt).toContain('"status": "complete"');
 });
 
 test("top-level /plan opens approval only when the tagged JSON plan contract is valid", async () => {
@@ -2881,6 +2906,9 @@ test("critique pass routes orchestration through a hidden custom message after e
   expect(String(harness.sentMessages[0]?.content)).toContain(
     "Critique the latest proposed implementation plan for execution quality.",
   );
+  expect(String(harness.sentMessages[0]?.content)).toContain('"version": 2');
+  expect(String(harness.sentMessages[0]?.content)).toContain('"taskGeometry"');
+  expect(String(harness.sentMessages[0]?.content)).toContain('"coordinationPattern"');
   expect(extractRequestId(String(harness.sentMessages[0]?.content ?? ""))).toBeTruthy();
   expect(harness.uiStub.notifications).toContainEqual({
     message: "Reviewing the plan with a critique pass before approval.",
@@ -2957,6 +2985,9 @@ test("REFINE critique responses route through a hidden revision follow-up", asyn
     "Revise the latest plan using the critique below.",
   );
   expect(String(harness.sentMessages[1]?.content)).toContain("```pi-plan-json");
+  expect(String(harness.sentMessages[1]?.content)).toContain("runtime v2 plan payload");
+  expect(String(harness.sentMessages[1]?.content)).toContain('"taskGeometry"');
+  expect(String(harness.sentMessages[1]?.content)).toContain('"coordinationPattern"');
   expect(extractRequestId(String(harness.sentMessages[1]?.content ?? ""))).toBeTruthy();
   expect(harness.uiStub.notifications).toContainEqual({
     message: "The critique requested plan refinement. Regenerating the plan.",

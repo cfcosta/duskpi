@@ -21,6 +21,7 @@ import {
 } from "./plan-action-ui";
 import {
   PLAN_OUTPUT_JSON_BLOCK_TAG,
+  RUNTIME_PLAN_CONTRACT_VERSION,
   parseTaggedPlanContract,
   parseTaggedReviewContract,
   type StructuredPlanOutput,
@@ -77,16 +78,19 @@ function buildPlanModeBashBlockedReason(command: string): string {
 const PLAN_TAGGED_JSON_CONTRACT_SUMMARY = [
   "After the human-readable markdown plan, include a fenced tagged JSON block.",
   `Use the fence header \`\`\`${PLAN_OUTPUT_JSON_BLOCK_TAG}\` and valid JSON inside it.`,
-  'For planning responses, the JSON must be: { "version": 1, "kind": "plan", "steps": [...] }.',
-  "Each step object must include: step, objective, targets, validation, and risks.",
+  `For planning responses, the JSON must be a runtime v${RUNTIME_PLAN_CONTRACT_VERSION} plan payload.`,
+  `Use: { "version": ${RUNTIME_PLAN_CONTRACT_VERSION}, "kind": "plan", "taskGeometry": "...", "coordinationPattern": "...", "assumptions": [...], "escalationTriggers": [...], "checkpoints": [...], "steps": [...] }.`,
+  "Each step object must include: step, kind, objective, targets, validation, risks, dependsOn, and checkpointIds.",
+  "Each checkpoint object must include: id, title, kind, step, and why.",
   "The response is invalid if the tagged JSON block is missing, malformed, or schema-invalid.",
 ].join("\n");
 
 const REVIEW_TAGGED_JSON_CONTRACT_SUMMARY = [
-  `If work remains, after the human-readable markdown review include a fenced \`\`\`${PLAN_OUTPUT_JSON_BLOCK_TAG}\` JSON block.`,
-  'For review continue responses, the JSON must be: { "version": 1, "kind": "review", "status": "continue", "steps": [...] }.',
-  "For review complete responses, reply with exactly Status: COMPLETE and do not include extra output.",
-  "The response is invalid if the tagged JSON block is missing, malformed, or schema-invalid when work remains.",
+  `After the human-readable markdown review, include a fenced \`\`\`${PLAN_OUTPUT_JSON_BLOCK_TAG}\` JSON block.`,
+  `For review continue responses, the JSON must be a runtime v${RUNTIME_PLAN_CONTRACT_VERSION} review payload with summary, taskGeometry, coordinationPattern, assumptions, checkpoints, and steps.`,
+  `Use: { "version": ${RUNTIME_PLAN_CONTRACT_VERSION}, "kind": "review", "status": "continue", "summary": "...", "taskGeometry": "...", "coordinationPattern": "...", "assumptions": [...], "checkpoints": [...], "steps": [...] }.`,
+  `For review complete responses, use: { "version": ${RUNTIME_PLAN_CONTRACT_VERSION}, "kind": "review", "status": "complete", "summary": "..." }.`,
+  "The response is invalid if the tagged JSON block is missing, malformed, or schema-invalid.",
 ].join("\n");
 
 const PLAN_MODE_SYSTEM_PROMPT = `
