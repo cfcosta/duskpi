@@ -699,6 +699,15 @@ function extractRequestId(prompt: string): string | undefined {
   return match?.[1]?.trim();
 }
 
+function createTestTui() {
+  return {
+    requestRenderCalls: 0,
+    requestRender() {
+      this.requestRenderCalls += 1;
+    },
+  };
+}
+
 function renderStoredWidgetFactory(
   uiStub: ReturnType<typeof createUiStub>,
   key: string,
@@ -708,8 +717,26 @@ function renderStoredWidgetFactory(
     | ((tui: unknown, theme: typeof uiStub.ui.theme) => { render(width: number): string[] })
     | undefined;
   assert.ok(factory, `Expected widget factory for ${key}`);
-  const component = factory({}, uiStub.ui.theme);
+  const component = factory(createTestTui(), uiStub.ui.theme);
   return component.render(width);
+}
+
+async function createLatestCustomComponent(
+  uiStub: ReturnType<typeof createUiStub>,
+  done: (result: unknown) => void = () => {},
+) {
+  const renderer = uiStub.customCalls.at(-1) as
+    | ((
+        tui: unknown,
+        theme: typeof uiStub.ui.theme,
+        keybindings: unknown,
+        done: (result: unknown) => void,
+      ) => unknown | Promise<unknown>)
+    | undefined;
+  assert.ok(renderer, "Expected a stored custom renderer");
+  const tui = createTestTui();
+  const component = await renderer(tui, uiStub.ui.theme, {}, done);
+  return { component, tui };
 }
 
 function buildExecutionResultText(args: {
@@ -1373,7 +1400,19 @@ test("plan extension registers the guided workflow listener surface plus todos",
     "turn_end",
   ]);
   expect(harness.tools.has("ask_user_question")).toBe(true);
-  expect([...harness.shortcuts.keys()]).toEqual([]);
+  expect([...harness.shortcuts.keys()].sort()).toEqual(["ctrl+shift+x", "ctrl+x"]);
+  expect(harness.shortcuts.get("ctrl+x")).toEqual(
+    expect.objectContaining({
+      description: "Expand or collapse the top-level /plan dashboard",
+      handler: expect.any(Function),
+    }),
+  );
+  expect(harness.shortcuts.get("ctrl+shift+x")).toEqual(
+    expect.objectContaining({
+      description: "Open the top-level /plan dashboard in fullscreen",
+      handler: expect.any(Function),
+    }),
+  );
 });
 
 test("plan test harness records rich widget factories with options", () => {
@@ -3892,6 +3931,70 @@ test("top-level /plan approval renders a compact dashboard widget from structure
   expect(rendered).toContain("A regression test for prompt leakage");
   expect(rendered).not.toContain("Markdown says the wrong step name");
   expect(rendered).not.toContain("wrong/path.ts");
+});
+
+test("ctrl+x toggles the top-level /plan dashboard between compact and expanded modes", async () => {
+  const harness = createPlanExtensionHarness({ hasUI: true });
+
+  await enterApprovalState(harness);
+
+  expect(renderStoredWidgetFactory(harness.uiStub, "plan-todos").join("\n")).toContain(
+    "📋 plan approval • 0/2",
+  );
+
+  await harness.runShortcut("ctrl+x");
+  const expanded = renderStoredWidgetFactory(harness.uiStub, "plan-todos", 140).join("\n");
+  expect(expanded).toContain("State: approval • 0/2 complete");
+  expect(expanded).toContain("Scope: /plan");
+  expect(expanded).toContain("☐ 1. A regression test for prompt leakage");
+
+  await harness.runShortcut("ctrl+x");
+  const compact = renderStoredWidgetFactory(harness.uiStub, "plan-todos").join("\n");
+  expect(compact).toContain("📋 plan approval • 0/2");
+  expect(compact).not.toContain("State: approval • 0/2 complete");
+});
+
+test("ctrl+shift+x opens a fullscreen dashboard overlay and escape closes it", async () => {
+  const harness = createPlanExtensionHarness({ hasUI: true });
+
+  await enterApprovalState(harness);
+  const customCallsBefore = harness.uiStub.customCalls.length;
+
+  await harness.runShortcut("ctrl+shift+x");
+
+  expect(harness.uiStub.customCalls).toHaveLength(customCallsBefore + 1);
+  const doneCalls: unknown[] = [];
+  const { component, tui } = await createLatestCustomComponent(harness.uiStub, (result) => {
+    doneCalls.push(result);
+  });
+  const overlay = component as { render(width: number): string[]; handleInput(data: string): void };
+  const rendered = overlay.render(100).join("\n");
+
+  expect(rendered).toContain("plan");
+  expect(rendered).toContain("Structured plan ready for approval.");
+  expect(rendered).toContain("scroll • esc close");
+
+  overlay.handleInput("escape");
+  expect(doneCalls).toEqual([undefined]);
+  expect((tui as { requestRenderCalls: number }).requestRenderCalls).toBe(0);
+});
+
+test("session shutdown clears expanded dashboard state before the next top-level /plan approval", async () => {
+  const harness = createPlanExtensionHarness({ hasUI: true });
+
+  await enterApprovalState(harness);
+  await harness.runShortcut("ctrl+x");
+  expect(renderStoredWidgetFactory(harness.uiStub, "plan-todos", 140).join("\n")).toContain(
+    "State: approval • 0/2 complete",
+  );
+
+  await harness.emit("session_shutdown", { reason: "exit" });
+  expect(harness.uiStub.widgetFactories.get("plan-todos")).toBeUndefined();
+
+  await enterApprovalState(harness);
+  const rendered = renderStoredWidgetFactory(harness.uiStub, "plan-todos").join("\n");
+  expect(rendered).toContain("📋 plan approval • 0/2");
+  expect(rendered).not.toContain("State: approval • 0/2 complete");
 });
 
 test("continue selection sends a correlated planning follow-up and keeps read-only tools", async () => {

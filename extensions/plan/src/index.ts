@@ -15,6 +15,16 @@ export default function planExtension(api: ExtensionAPI): void {
 
   const workflow = new PiPlanWorkflow(api);
 
+  api.registerShortcut("ctrl+x", {
+    description: "Expand or collapse the top-level /plan dashboard",
+    handler: workflow.handleDashboardToggleShortcut.bind(workflow),
+  });
+
+  api.registerShortcut("ctrl+shift+x", {
+    description: "Open the top-level /plan dashboard in fullscreen",
+    handler: workflow.handleDashboardFullscreenShortcut.bind(workflow),
+  });
+
   registerGuidedWorkflowExtension(api, {
     commandName: "plan",
     description: PLAN_COMMAND_DESCRIPTION,

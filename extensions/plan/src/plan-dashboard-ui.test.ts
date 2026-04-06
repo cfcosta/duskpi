@@ -119,6 +119,13 @@ test("renderPlanDashboardLines truncates narrow compact output", () => {
   expect(lines.some((line) => line.includes("…"))).toBe(true);
 });
 
+test("renderPlanDashboardLines omits the inline header for fullscreen mode", () => {
+  const lines = renderPlanDashboardLines(createSnapshot(), "fullscreen", 120, createTheme() as never);
+
+  expect(lines[0]).toContain("State: approval • 2/3 complete");
+  expect(lines.join("\n")).not.toContain("─── plan dashboard ");
+});
+
 test("FullscreenPlanDashboardComponent caches by width and scrolls content", () => {
   const tui = createTui();
   const component = new FullscreenPlanDashboardComponent(

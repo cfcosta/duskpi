@@ -21,7 +21,9 @@ import {
   type PlanApprovalPreviewStep,
 } from "./plan-action-ui";
 import {
+  FullscreenPlanDashboardComponent,
   renderPlanDashboardLines,
+  type PlanDashboardMode,
   type PlanDashboardSnapshot,
   type PlanDashboardStepView,
 } from "./plan-dashboard-ui";
@@ -458,6 +460,8 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   private latestCritiqueSummary = "";
   private planWasRevised = false;
   private executionConstraintNote = "";
+  private dashboardExpanded = false;
+  private dashboardFullscreenOpen = false;
   private parseRecoveryAttempted = false;
   private autoPlanMode: AutoPlanMode = "off";
   private autoPlanGoal = "";
@@ -1076,12 +1080,25 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   }
 
   private clearPlanUiState(ctx: ExtensionContext): void {
+    this.resetDashboardPresentationState();
     if (!ctx.hasUI) {
       return;
     }
 
     ctx.ui.setStatus(STATUS_KEY, undefined);
     ctx.ui.setWidget(TODO_WIDGET_KEY, undefined);
+  }
+
+  async handleDashboardToggleShortcut(ctx: ExtensionContext): Promise<void> {
+    this.toggleTopLevelDashboardExpanded(ctx);
+  }
+
+  async handleDashboardFullscreenShortcut(ctx: ExtensionContext): Promise<void> {
+    if (!ctx.hasUI) {
+      return;
+    }
+
+    await this.openTopLevelDashboardFullscreen(ctx);
   }
 
   private async handleNonUiApprovalCommand(
@@ -1488,6 +1505,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     this.planModeEnabled = false;
     this.restoreTools = null;
     this.todoItems = [];
+    this.resetDashboardPresentationState();
     this.resetExecutionState();
     this.resetPlanningDraft();
     this.clearAutoPlanState();
@@ -1516,6 +1534,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     this.latestPlanDraft = "";
     this.latestStructuredPlan = null;
     this.latestPlanMetadata = null;
+    this.resetDashboardPresentationState();
     this.resetApprovalReview();
     this.resetParseRecoveryState();
   }
@@ -2305,10 +2324,11 @@ export class PiPlanWorkflow extends GuidedWorkflow {
 
     const dashboardSnapshot = this.buildTopLevelPlanDashboardSnapshot();
     if (dashboardSnapshot) {
+      const dashboardMode = this.getTopLevelDashboardMode();
       ctx.ui.setWidget(TODO_WIDGET_KEY, (_tui, theme) => {
         return {
           render: (width: number) => {
-            return renderPlanDashboardLines(dashboardSnapshot, "compact", width, theme);
+            return renderPlanDashboardLines(dashboardSnapshot, dashboardMode, width, theme);
           },
         };
       });
@@ -2377,6 +2397,62 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       this.planModeEnabled ? ctx.ui.theme.fg("warning", "⏸ plan") : undefined,
     );
     this.refreshPlanWidget(ctx);
+  }
+
+  private getTopLevelDashboardMode(): PlanDashboardMode {
+    return this.dashboardExpanded ? "expanded" : "compact";
+  }
+
+  private resetDashboardPresentationState(): void {
+    this.dashboardExpanded = false;
+    this.cleanupDashboardOverlay();
+  }
+
+  private cleanupDashboardOverlay(): void {
+    this.dashboardFullscreenOpen = false;
+  }
+
+  private toggleTopLevelDashboardExpanded(ctx: ExtensionContext): void {
+    const dashboardSnapshot = this.buildTopLevelPlanDashboardSnapshot();
+    if (!dashboardSnapshot) {
+      this.dashboardExpanded = false;
+      this.refreshPlanWidget(ctx);
+      notify(this.pi, ctx, "No structured top-level /plan dashboard is available yet.", "info");
+      return;
+    }
+
+    this.dashboardExpanded = !this.dashboardExpanded;
+    this.refreshPlanWidget(ctx);
+  }
+
+  private async openTopLevelDashboardFullscreen(ctx: ExtensionContext): Promise<void> {
+    const dashboardSnapshot = this.buildTopLevelPlanDashboardSnapshot();
+    if (!dashboardSnapshot) {
+      notify(this.pi, ctx, "No structured top-level /plan dashboard is available yet.", "info");
+      return;
+    }
+
+    this.dashboardFullscreenOpen = true;
+    try {
+      await ctx.ui.custom<void>(
+        (tui, theme, _keybindings, done) => {
+          return new FullscreenPlanDashboardComponent(tui as never, theme, dashboardSnapshot, {
+            onClose: () => done(undefined),
+          });
+        },
+        {
+          overlay: true,
+          overlayOptions: {
+            width: "95%",
+            maxHeight: "90%",
+            anchor: "center",
+          },
+        },
+      );
+    } finally {
+      this.cleanupDashboardOverlay();
+      this.refreshPlanWidget(ctx);
+    }
   }
 
   private buildTopLevelPlanDashboardSnapshot(): PlanDashboardSnapshot | undefined {
@@ -2479,6 +2555,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
 
     this.planModeEnabled = false;
     this.restoreNormalTools();
+    this.resetDashboardPresentationState();
     if (options.resetProgress) {
       this.resetExecutionState();
       this.todoItems = [];
