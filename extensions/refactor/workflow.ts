@@ -1,8 +1,9 @@
 import {
-  GuidedWorkflow,
+  GuidedExecutionWorkflow,
   isSafeReadOnlyCommand,
   parseTrimmedStringArg as parseScopeArg,
   type ExtensionAPI,
+  type ExtensionContext,
   type GuidedCritiqueVerdict,
   type GuidedWorkflowResult,
   type PromptLoadResult,
@@ -12,12 +13,16 @@ import {
   parseTaggedRefactorPlan,
   type RefactorExecutionUnit,
 } from "./contract";
-import { RefactorExecutionManager, type RefactorExecutionRunResult } from "./execution-manager";
+import {
+  RefactorExecutionManager,
+  type RefactorExecutionRunResult,
+} from "./execution-manager";
 import {
   RefactorExecutionScheduler,
   type RefactorExecutionScheduleResult,
 } from "./execution-scheduler";
 import { buildPrompt, buildWorkerPrompt, type PromptBundle } from "./prompting";
+import type { RefactorWorkerValidation } from "./worker-result";
 import { RefactorWorkerRunner } from "./worker-runner";
 import { JjWorkspaceManager } from "./workspace-manager";
 
@@ -111,12 +116,13 @@ function buildExecutionSchedulerPrompt(
   return lines.join("\n");
 }
 
-export class RefactorWorkflow extends GuidedWorkflow {
+export class RefactorWorkflow extends GuidedExecutionWorkflow<
+  RefactorExecutionUnit,
+  RefactorWorkerValidation
+> {
   private prompts?: PromptBundle;
   private startupError?: Error;
   private repoRoot?: string;
-  private latestExecutionRun?: RefactorExecutionRunResult;
-  private latestExecutionSchedule?: RefactorExecutionScheduleResult;
 
   constructor(
     private readonly api: ExtensionAPI,
@@ -194,69 +200,25 @@ export class RefactorWorkflow extends GuidedWorkflow {
 
           return { cancelled: true };
         },
-        onApprove: async ({ planText }, ctx) => {
-          this.latestExecutionRun = undefined;
-          this.latestExecutionSchedule = undefined;
-          const parsed = parseTaggedRefactorPlan(planText);
-          if (!parsed.ok) {
-            return;
-          }
-
-          const orderedUnits = orderExecutionUnits(parsed.value);
-          if (orderedUnits.length === 1) {
-            const executionManager = this.getExecutionManager(ctx.cwd);
-            this.latestExecutionRun = await executionManager.executeUnit({
-              executionUnit: orderedUnits[0]!,
-              approvedPlanSummary: parsed.value.summary,
-              step: 1,
-              totalSteps: 1,
-            });
-            return;
-          }
-
-          const executionScheduler = this.getExecutionScheduler(ctx.cwd);
-          this.latestExecutionSchedule = await executionScheduler.execute({
-            executionUnits: orderedUnits,
-            approvedPlanSummary: parsed.value.summary,
-          });
-        },
       },
       execution: {
-        extractItems: ({ planText }) => {
+        parseApprovedPlan: (planText) => {
           const parsed = parseTaggedRefactorPlan(planText);
           if (!parsed.ok) {
-            return [];
+            return {
+              ok: false as const,
+              message: "Approved refactor plan could not be parsed into execution units.",
+            };
           }
 
-          return orderExecutionUnits(parsed.value).map((executionUnit, index) => ({
-            step: index + 1,
-            text: formatExecutionItemText(executionUnit),
-          }));
+          return {
+            ok: true as const,
+            approvedPlanSummary: parsed.value.summary,
+            executionUnits: orderExecutionUnits(parsed.value),
+          };
         },
-        buildExecutionPrompt: ({ planText, currentStep, items }) => {
-          const parsed = parseTaggedRefactorPlan(planText);
-          if (!parsed.ok) {
-            return "Approved refactor plan could not be parsed into execution units.";
-          }
-
-          const orderedUnits = orderExecutionUnits(parsed.value);
-          const executionUnit = orderedUnits[currentStep.step - 1];
-          if (!executionUnit) {
-            return `Execute approved refactor step ${currentStep.step}: ${currentStep.text}`;
-          }
-
-          if (this.latestExecutionSchedule) {
-            return buildExecutionSchedulerPrompt(this.latestExecutionSchedule, orderedUnits);
-          }
-
-          if (this.latestExecutionRun && this.latestExecutionRun.unitId === executionUnit.id) {
-            return buildExecutionManagerPrompt(
-              this.latestExecutionRun,
-              currentStep.step,
-              items.length,
-            );
-          }
-
+        formatExecutionItemText: (executionUnit) => formatExecutionItemText(executionUnit),
+        buildExecutionUnitPrompt: ({ currentStep, items, executionUnit }) => {
           return [
             `Execute approved refactor unit ${currentStep.step}/${items.length}.`,
             `Unit ID: ${executionUnit.id}`,
@@ -270,6 +232,18 @@ export class RefactorWorkflow extends GuidedWorkflow {
             "Validations:",
             ...executionUnit.validations.map((validation) => `- ${validation}`),
           ].join("\n");
+        },
+        buildExecutionRunResultPrompt: ({ result, step, totalSteps }) => {
+          return buildExecutionManagerPrompt(result, step, totalSteps);
+        },
+        buildExecutionSchedulePrompt: ({ schedule, executionUnits }) => {
+          return buildExecutionSchedulerPrompt(schedule, executionUnits);
+        },
+        executor: {
+          executeUnit: (input) => this.getExecutionManager(this.repoRoot).executeUnit(input),
+        },
+        scheduler: {
+          execute: (input) => this.getExecutionScheduler(this.repoRoot).execute(input),
         },
       },
       planningPolicy: {
@@ -286,13 +260,8 @@ export class RefactorWorkflow extends GuidedWorkflow {
     });
   }
 
-  async handleCommand(
-    args: unknown,
-    ctx: Parameters<GuidedWorkflow["handleCommand"]>[1],
-  ): Promise<GuidedWorkflowResult> {
+  async handleCommand(args: unknown, ctx: ExtensionContext): Promise<GuidedWorkflowResult> {
     this.repoRoot = ctx.cwd;
-    this.latestExecutionRun = undefined;
-    this.latestExecutionSchedule = undefined;
     this.reloadPrompts();
 
     if (!this.prompts) {

@@ -1,4 +1,12 @@
 import * as path from "node:path";
+import {
+  ExecutionManager,
+  type ExecuteUnitInput,
+  type ExecutionManagerIntegrationResult,
+  type ExecutionManagerOptions,
+  type ExecutionRunResult,
+  type WorkerPromptRenderInput,
+} from "../../packages/workflow-core/src/index";
 import type { RefactorExecutionUnit } from "./contract";
 import type { WorkerPromptInput } from "./prompting";
 import type { RefactorWorkerResult, RefactorWorkerValidation } from "./worker-result";
@@ -17,12 +25,6 @@ export interface WorkerRunnerLike {
   }): Promise<RefactorWorkerResult>;
 }
 
-export interface ExecutionManagerIntegrationResult {
-  summary?: string;
-  changedFiles?: string[];
-  conflicts?: string[];
-}
-
 export interface RefactorExecutionManagerOptions {
   repoRoot: string;
   workspaceManager: WorkspaceManagerLike;
@@ -36,112 +38,32 @@ export interface RefactorExecutionManagerOptions {
   workspaceBaseDir?: string;
 }
 
-export type RefactorExecutionRunResult =
-  | {
-      unitId: string;
-      status: "completed";
-      summary: string;
-      changedFiles: string[];
-      validations: RefactorWorkerValidation[];
-    }
-  | {
-      unitId: string;
-      status: "blocked" | "failed";
-      summary: string;
-      blockers: string[];
-      validations: RefactorWorkerValidation[];
-    };
+export type RefactorExecutionRunResult = ExecutionRunResult<RefactorWorkerValidation>;
 
-export interface ExecuteRefactorUnitInput {
-  executionUnit: RefactorExecutionUnit;
-  approvedPlanSummary?: string;
-  step?: number;
-  totalSteps?: number;
-  timeoutMs?: number;
-}
+export interface ExecuteRefactorUnitInput extends ExecuteUnitInput<RefactorExecutionUnit> {}
 
 export interface RefactorUnitExecutor {
   executeUnit(input: ExecuteRefactorUnitInput): Promise<RefactorExecutionRunResult>;
 }
 
-export class RefactorExecutionManager implements RefactorUnitExecutor {
-  private readonly workspaceBaseDir: string;
+export class RefactorExecutionManager
+  extends ExecutionManager<RefactorExecutionUnit, RefactorWorkerValidation>
+  implements RefactorUnitExecutor
+{
+  constructor(options: RefactorExecutionManagerOptions) {
+    const sharedOptions: ExecutionManagerOptions<RefactorExecutionUnit, RefactorWorkerValidation> = {
+      repoRoot: options.repoRoot,
+      workspaceManager: options.workspaceManager,
+      workerRunner: options.workerRunner,
+      renderWorkerPrompt: (input: WorkerPromptRenderInput<RefactorExecutionUnit>) =>
+        options.renderWorkerPrompt(input),
+      integrate: options.integrate,
+      workspaceBaseDir:
+        options.workspaceBaseDir ?? path.join(options.repoRoot, ".refactor-workspaces"),
+      buildWorkspaceName: (executionUnit, step) => buildWorkspaceName(executionUnit, step),
+    };
 
-  constructor(private readonly options: RefactorExecutionManagerOptions) {
-    this.workspaceBaseDir =
-      options.workspaceBaseDir ?? path.join(options.repoRoot, ".refactor-workspaces");
-  }
-
-  async executeUnit(input: ExecuteRefactorUnitInput): Promise<RefactorExecutionRunResult> {
-    const workspaceName = buildWorkspaceName(input.executionUnit, input.step ?? 1);
-    const workspacePath = path.join(this.workspaceBaseDir, workspaceName);
-    let workspace: ManagedWorkspace | undefined;
-
-    try {
-      workspace = await this.options.workspaceManager.createWorkspace(workspaceName, workspacePath);
-      const prompt = this.options.renderWorkerPrompt({
-        executionUnit: input.executionUnit,
-        approvedPlanSummary: input.approvedPlanSummary,
-        step: input.step,
-        totalSteps: input.totalSteps,
-      });
-      const workerResult = await this.options.workerRunner.run({
-        workspaceRoot: workspace.root,
-        prompt,
-        timeoutMs: input.timeoutMs,
-      });
-
-      if (workerResult.status !== "completed") {
-        return {
-          unitId: workerResult.unitId,
-          status: workerResult.status,
-          summary: workerResult.summary,
-          blockers: workerResult.blockers,
-          validations: workerResult.validations,
-        };
-      }
-
-      const integrationResult = await this.options.integrate?.({
-        workspace,
-        executionUnit: input.executionUnit,
-        workerResult,
-      });
-
-      if ((integrationResult?.conflicts?.length ?? 0) > 0) {
-        return {
-          unitId: workerResult.unitId,
-          status: "failed",
-          summary:
-            integrationResult?.summary ?? `Integration blocked for '${workerResult.unitId}'.`,
-          blockers: integrationResult!.conflicts!,
-          validations: workerResult.validations,
-        };
-      }
-
-      return {
-        unitId: workerResult.unitId,
-        status: "completed",
-        summary: integrationResult?.summary ?? workerResult.summary,
-        changedFiles: integrationResult?.changedFiles ?? workerResult.changedFiles,
-        validations: workerResult.validations,
-      };
-    } catch (error) {
-      return {
-        unitId: input.executionUnit.id,
-        status: "failed",
-        summary: `Execution manager failed while running '${input.executionUnit.id}'.`,
-        blockers: [error instanceof Error ? error.message : String(error)],
-        validations: [],
-      };
-    } finally {
-      if (workspace) {
-        try {
-          await this.options.workspaceManager.forgetWorkspace(workspace.name);
-        } catch {
-          // Best-effort cleanup; do not hide the primary execution result in this pass.
-        }
-      }
-    }
+    super(sharedOptions);
   }
 }
 
