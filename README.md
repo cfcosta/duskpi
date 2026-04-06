@@ -11,7 +11,7 @@ If you want a Pi that comes with structured bug-fixing, refactor review, securit
 The default package bundles upstream Pi together with repo-owned resources:
 
 - **Workflow extensions**
-  - `/bug-fix`
+  - `/bugfix`
   - `/owasp-fix`
   - `/test-audit`
   - `/refactor`
@@ -101,7 +101,7 @@ pi
 
 This distribution ships several multi-step extensions that guide Pi through more deliberate workflows.
 
-#### `/bug-fix`
+#### `/bugfix`
 
 Runs an adversarial bug-finding and fixing workflow.
 
@@ -109,8 +109,9 @@ Use it when you want Pi to:
 
 - search for likely defects first
 - challenge its own findings
-- arbitrate which bugs are real
-- then implement fixes
+- arbitrate which bugs are real into explicit execution units
+- execute approved fixes through the shared workflow-core runtime
+- run independent fix units in parallel dependency layers when possible
 
 #### `/owasp-fix`
 
@@ -130,8 +131,9 @@ Use it when you want Pi to:
 
 - inspect what is untested
 - challenge weak test ideas
-- produce a tighter, verified testing plan
-- then implement tests or fixes
+- produce a tighter, verified testing plan with explicit execution units
+- implement approved test improvements through the shared workflow-core runtime
+- run independent test-improvement units in parallel dependency layers when possible
 
 #### `/refactor`
 
@@ -146,9 +148,13 @@ Use it when you want Pi to:
 - execute independent refactor units in parallel dependency layers when possible
 - keep merge/conflict handling manager-owned instead of leaving it to workers
 
-`/bug-fix`, `/owasp-fix`, and `/test-audit` still share the `PhaseWorkflow` runtime in `packages/workflow-core/` for fixed phase-driven analysis and execution flows.
+`packages/workflow-core/` is now the shared execution home for the repo's migrated workflow family.
 
-The bundled `plan` extension and `/refactor` both use the package's `GuidedWorkflow` runtime. That guided path covers read-only planning, hidden critique and revision turns, approval callbacks, step tracking, and session cleanup.
+- `/bugfix`, `/refactor`, and `/test-audit` use `GuidedExecutionWorkflow` plus shared execution helpers from `packages/workflow-core/`
+- `/plan` uses `GuidedWorkflow` for read-only planning, hidden critique/revision turns, approval callbacks, and step tracking
+- `/owasp-fix` remains on `PhaseWorkflow` in this pass
+
+That split keeps shared orchestration in workflow-core while letting each extension keep its own tagged JSON contracts and prompts.
 
 ### 2. Switch into explicit planning mode
 
@@ -240,7 +246,7 @@ When `pi` starts from this package, the wrapper preloads bundled resources so co
 
 That is why commands like these should be present right away:
 
-- `/bug-fix`
+- `/bugfix`
 - `/owasp-fix`
 - `/test-audit`
 - `/refactor`
@@ -276,12 +282,13 @@ Notable entries:
 
 ### `packages/workflow-core/`
 
-Shared runtime package used by both workflow families in this repo.
+Shared runtime package used by the workflow extensions in this repo.
 
 It holds the reusable orchestration pieces for:
 
-- `PhaseWorkflow` for `/bug-fix`, `/owasp-fix`, and `/test-audit`
-- `GuidedWorkflow` for `/plan` and `/refactor`
+- `GuidedExecutionWorkflow` plus shared execution helpers for `/bugfix`, `/refactor`, and `/test-audit`
+- `GuidedWorkflow` for `/plan`
+- `PhaseWorkflow` for `/owasp-fix`
 - registration helpers for both workflow styles
 - prompt loading and message parsing helpers
 - extension-facing API abstractions and local typings

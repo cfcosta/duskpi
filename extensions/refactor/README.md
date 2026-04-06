@@ -2,7 +2,7 @@
 
 ## Current runtime shape
 
-`/refactor` now uses a `GuidedWorkflow` control plane instead of the older `PhaseWorkflow` shell.
+`/refactor` now uses `GuidedExecutionWorkflow` from `packages/workflow-core` instead of the older `PhaseWorkflow` shell.
 
 The implemented flow is:
 
@@ -17,8 +17,8 @@ The implemented flow is:
 
 ## Runtime modules
 
-- `index.ts`: extension bootstrap and command registration
-- `workflow.ts`: `/refactor` GuidedWorkflow shell, approval flow, and execution handoff
+- `index.ts`: extension bootstrap and guided command registration for `/refactor`
+- `workflow.ts`: `/refactor` GuidedExecutionWorkflow shell, approval flow, and execution handoff
 - `contract.ts`: structured approved-plan contract and dependency ordering helpers
 - `prompting.ts`: prompt loading plus mapper/skeptic/arbiter/executor/worker prompt rendering
 - `worker-result.ts`: structured worker-result parsing and validation
@@ -26,7 +26,8 @@ The implemented flow is:
 - `worker-runner.ts`: isolated `pi` subprocess runner for worker execution in workspace roots
 - `execution-manager.ts`: single-unit execution path, integration handling, and conflict gating
 - `execution-scheduler.ts`: dependency-layer batching for parallel worker execution
-- `packages/workflow-core/src/guided-workflow.ts`: shared guided orchestration runtime
+- `packages/workflow-core/src/guided-execution-workflow.ts`: shared guided execution runtime shell
+- `packages/workflow-core/src/guided-workflow.ts`: shared guided planning/runtime substrate
 - `packages/workflow-core/src/prompt-loader.ts`: reusable prompt bundle loader
 - `packages/workflow-core/src/message-content.ts`: reusable message parsing helpers
 
