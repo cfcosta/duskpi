@@ -1,6 +1,7 @@
 import { mock, test, expect } from "bun:test";
 import assert from "node:assert/strict";
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { ToolCapabilities } from "../../../packages/workflow-core/src/index";
 import { parseCritiqueVerdict } from "./utils";
 
 mock.module("@mariozechner/pi-tui", () => ({
@@ -62,6 +63,7 @@ interface HarnessOptions {
   hasUI?: boolean;
   customSelection?: { cancelled: boolean; action?: string; note?: string };
   extraTools?: string[];
+  extraToolInfos?: Array<{ name: string; capabilities?: ToolCapabilities }>;
 }
 
 function createUiStub(customSelection?: { cancelled: boolean; action?: string; note?: string }) {
@@ -104,13 +106,14 @@ function createPlanExtensionHarness(options: HarnessOptions = {}) {
   const sentUserMessages: string[] = [];
   const sentMessages: Array<{ customType?: string; content?: unknown; display?: boolean }> = [];
   const allTools = [
-    { name: "read" },
-    { name: "bash" },
-    { name: "grep" },
-    { name: "find" },
-    { name: "ls" },
-    { name: "edit" },
-    { name: "write" },
+    { name: "read", capabilities: { readOnly: true } },
+    { name: "bash", capabilities: { executesShell: true } },
+    { name: "grep", capabilities: { readOnly: true } },
+    { name: "find", capabilities: { readOnly: true } },
+    { name: "ls", capabilities: { readOnly: true } },
+    { name: "edit", capabilities: { mutatesWorkspace: true } },
+    { name: "write", capabilities: { mutatesWorkspace: true } },
+    ...(options.extraToolInfos ?? []),
     ...(options.extraTools ?? []).map((name) => ({ name })),
   ];
   let activeTools = allTools.map((tool) => tool.name);
@@ -198,14 +201,15 @@ function createDirectWorkflowHarness(options: HarnessOptions = {}) {
   const sentUserMessages: string[] = [];
   const sentMessages: Array<{ customType?: string; content?: unknown; display?: boolean }> = [];
   const allTools = [
-    { name: "read" },
-    { name: "bash" },
-    { name: "grep" },
-    { name: "find" },
-    { name: "ls" },
-    { name: "edit" },
-    { name: "write" },
-    { name: "ask_user_question" },
+    { name: "read", capabilities: { readOnly: true } },
+    { name: "bash", capabilities: { executesShell: true } },
+    { name: "grep", capabilities: { readOnly: true } },
+    { name: "find", capabilities: { readOnly: true } },
+    { name: "ls", capabilities: { readOnly: true } },
+    { name: "edit", capabilities: { mutatesWorkspace: true } },
+    { name: "write", capabilities: { mutatesWorkspace: true } },
+    { name: "ask_user_question", capabilities: { asksUserQuestions: true } },
+    ...(options.extraToolInfos ?? []),
     ...(options.extraTools ?? []).map((name) => ({ name })),
   ];
   let activeTools = allTools.map((tool) => tool.name);
@@ -3347,6 +3351,49 @@ test("planningPolicy keeps write-like and bash blocking active during approval",
   ).toBeUndefined();
 });
 
+test("plan mode prefers capability-marked tools and excludes capability-marked mutating tools", async () => {
+  const harness = createPlanExtensionHarness({
+    extraToolInfos: [
+      { name: "repo_query", capabilities: { readOnly: true } },
+      { name: "danger_apply", capabilities: { mutatesWorkspace: true } },
+    ],
+  });
+
+  await harness.runCommand("plan", "Investigate flaky prompt extraction");
+
+  expect(harness.getActiveTools()).toEqual([
+    "read",
+    "bash",
+    "grep",
+    "find",
+    "ls",
+    "repo_query",
+    "ask_user_question",
+  ]);
+  expect(harness.getActiveTools()).not.toContain("danger_apply");
+  expect(await invokeToolCall(harness, { toolName: "danger_apply" })).toEqual({
+    block: true,
+    reason: "Plan mode is read-only. Approve execution first (choose 'Approve and execute now').",
+  });
+});
+
+test("planningPolicy uses a strict shell fallback for read-only inspection", async () => {
+  const harness = createPlanExtensionHarness();
+
+  await harness.runCommand("plan", "Investigate flaky prompt extraction");
+
+  expect(
+    await invokeToolCall(harness, { toolName: "bash", input: { command: "git status" } }),
+  ).toBeUndefined();
+
+  expect(
+    await invokeToolCall(harness, { toolName: "bash", input: { command: "ls -la | head" } }),
+  ).toEqual({
+    block: true,
+    reason: "Plan mode blocked a potentially mutating bash command: ls -la | head",
+  });
+});
+
 test("correlated /plan requests ignore unmatched agent_end payloads", async () => {
   const harness = createPlanExtensionHarness({ hasUI: true });
 
@@ -3452,9 +3499,9 @@ test("plan mode enables web_search and web_fetch when they are available", async
     "grep",
     "find",
     "ls",
-    "ask_user_question",
     "web_search",
     "web_fetch",
+    "ask_user_question",
   ]);
 });
 

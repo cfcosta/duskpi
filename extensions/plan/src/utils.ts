@@ -42,6 +42,16 @@ const DESTRUCTIVE_PATTERNS = [
   /\b(vim?|nano|emacs|code|subl)\b/i,
 ];
 
+const SHELL_CONTROL_PATTERNS = [
+  /(^|[^|])\|(?!\|)/,
+  /&&/,
+  /;/,
+  /\$\(/,
+  /`/,
+  /<\(/,
+  /\n/,
+];
+
 const SAFE_PATTERNS = [
   /^\s*cat\b/,
   /^\s*head\b/,
@@ -92,9 +102,19 @@ const SAFE_PATTERNS = [
 ];
 
 export function isSafeReadOnlyCommand(command: string): boolean {
-  const isDestructive = DESTRUCTIVE_PATTERNS.some((pattern) => pattern.test(command));
+  const normalized = command.trim();
+  if (normalized.length === 0) {
+    return false;
+  }
+
+  const hasShellControl = SHELL_CONTROL_PATTERNS.some((pattern) => pattern.test(normalized));
+  if (hasShellControl) {
+    return false;
+  }
+
+  const isDestructive = DESTRUCTIVE_PATTERNS.some((pattern) => pattern.test(normalized));
   if (isDestructive) return false;
-  return SAFE_PATTERNS.some((pattern) => pattern.test(command));
+  return SAFE_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
 export function normalizeArg(input: string): string {

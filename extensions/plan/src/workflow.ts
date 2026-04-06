@@ -7,6 +7,7 @@ import {
   type GuidedWorkflowExecutionItem,
   type GuidedWorkflowResult,
   type SessionCompactEvent,
+  type ToolInfo,
   type SessionForkEvent,
   type SessionShutdownEvent,
   type SessionStartEvent,
@@ -69,8 +70,41 @@ const WRITE_LIKE_TOOLS = new Set(["edit", "write", "ast_rewrite"]);
 const PLAN_MODE_WRITE_BLOCKED_REASON =
   "Plan mode is read-only. Approve execution first (choose 'Approve and execute now').";
 
-function isPlanWriteCapableTool(toolName?: string): boolean {
-  return WRITE_LIKE_TOOLS.has((toolName ?? "").trim().toLowerCase());
+function normalizeToolName(toolName?: string): string {
+  return (toolName ?? "").trim().toLowerCase();
+}
+
+function toolSupportsPlanMode(tool: ToolInfo): boolean {
+  const normalizedName = normalizeToolName(tool.name);
+  if (normalizedName.length === 0) {
+    return false;
+  }
+
+  const capabilities = tool.capabilities;
+  if (capabilities) {
+    if (capabilities.mutatesWorkspace) {
+      return false;
+    }
+
+    if (
+      capabilities.readOnly ||
+      capabilities.readsExternalResources ||
+      capabilities.asksUserQuestions ||
+      capabilities.executesShell
+    ) {
+      return true;
+    }
+  }
+
+  return PLAN_TOOL_CANDIDATES.includes(normalizedName as (typeof PLAN_TOOL_CANDIDATES)[number]);
+}
+
+function isPlanWriteCapableTool(toolName?: string, tool?: ToolInfo): boolean {
+  if (tool?.capabilities?.mutatesWorkspace) {
+    return true;
+  }
+
+  return WRITE_LIKE_TOOLS.has(normalizeToolName(toolName));
 }
 
 function isBashToolName(toolName?: string): boolean {
@@ -477,7 +511,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       },
       planningPolicy: {
         isWriteCapableTool(toolName) {
-          return isPlanWriteCapableTool(toolName);
+          return isPlanWriteCapableTool(toolName, self?.getToolInfo(toolName));
         },
         isSafeReadOnlyCommand(command) {
           return isSafeReadOnlyCommand(command);
@@ -557,7 +591,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       },
       planningPolicy: {
         isWriteCapableTool(toolName) {
-          return isPlanWriteCapableTool(toolName);
+          return isPlanWriteCapableTool(toolName, self?.getToolInfo(toolName));
         },
         isSafeReadOnlyCommand(command) {
           return isSafeReadOnlyCommand(command);
@@ -706,7 +740,8 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     event: ToolCallEvent,
     ctx: ExtensionContext,
   ): Promise<{ block: true; reason: string } | void> {
-    const toolName = (event.toolName ?? "").trim().toLowerCase();
+    const toolName = normalizeToolName(event.toolName);
+    const toolInfo = this.getToolInfo(event.toolName);
     if (this.isAutoPlanPostApprovalActive() && toolName === "ask_user_question") {
       if (this.autoPlanReview.awaitingResponse && !this.isAutoPlanCheckpointMomentForReview()) {
         return {
@@ -738,7 +773,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     }
 
     if (this.autoPlanReview.awaitingResponse) {
-      if (isPlanWriteCapableTool(event.toolName)) {
+      if (isPlanWriteCapableTool(event.toolName, toolInfo)) {
         return {
           block: true,
           reason: PLAN_MODE_WRITE_BLOCKED_REASON,
@@ -770,7 +805,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       return super.handleToolCall(event, ctx);
     }
 
-    if (isPlanWriteCapableTool(event.toolName)) {
+    if (isPlanWriteCapableTool(event.toolName, toolInfo)) {
       return {
         block: true,
         reason: PLAN_MODE_WRITE_BLOCKED_REASON,
@@ -1453,8 +1488,17 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     this.clearAutoPlanState();
   }
 
+  private getAllToolInfos(): ToolInfo[] {
+    return this.pi.getAllTools().map((tool) => ({ ...tool }));
+  }
+
   private getAllToolNames(): string[] {
-    return this.pi.getAllTools().map((tool) => tool.name);
+    return this.getAllToolInfos().map((tool) => tool.name);
+  }
+
+  private getToolInfo(toolName?: string): ToolInfo | undefined {
+    const normalizedName = normalizeToolName(toolName);
+    return this.getAllToolInfos().find((tool) => normalizeToolName(tool.name) === normalizedName);
   }
 
   private resetApprovalReview(): void {
@@ -2227,13 +2271,14 @@ export class PiPlanWorkflow extends GuidedWorkflow {
   }
 
   private getPlanTools(): string[] {
-    const available = new Set(this.getAllToolNames());
-    const planTools = PLAN_TOOL_CANDIDATES.filter((tool) => available.has(tool));
+    const planTools = this.getAllToolInfos()
+      .filter((tool) => toolSupportsPlanMode(tool))
+      .map((tool) => tool.name);
     if (planTools.length > 0) {
-      return [...planTools];
+      return [...new Set(planTools)];
     }
 
-    const fallback = this.pi.getActiveTools().filter((tool) => !WRITE_LIKE_TOOLS.has(tool));
+    const fallback = this.pi.getActiveTools().filter((tool) => !WRITE_LIKE_TOOLS.has(normalizeToolName(tool)));
     return [...new Set(fallback)];
   }
 
