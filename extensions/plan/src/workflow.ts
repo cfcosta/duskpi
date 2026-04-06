@@ -2298,7 +2298,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
     this.restoreTools = null;
   }
 
-  private updateTodoWidget(ctx: ExtensionContext): void {
+  private refreshPlanWidget(ctx: ExtensionContext): void {
     if (!ctx.hasUI) {
       return;
     }
@@ -2352,13 +2352,23 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       return;
     }
 
+    const dashboardSnapshot = this.buildTopLevelPlanDashboardSnapshot();
+    if (dashboardSnapshot) {
+      ctx.ui.setStatus(
+        STATUS_KEY,
+        ctx.ui.theme.fg("accent", `📋 0/${dashboardSnapshot.steps.length}`),
+      );
+      this.refreshPlanWidget(ctx);
+      return;
+    }
+
     const progress = this.getExecutionProgressView();
     if (progress.totalSteps > 0) {
       ctx.ui.setStatus(
         STATUS_KEY,
         ctx.ui.theme.fg("accent", `📋 ${progress.completedSteps}/${progress.totalSteps}`),
       );
-      this.updateTodoWidget(ctx);
+      this.refreshPlanWidget(ctx);
       return;
     }
 
@@ -2366,7 +2376,7 @@ export class PiPlanWorkflow extends GuidedWorkflow {
       STATUS_KEY,
       this.planModeEnabled ? ctx.ui.theme.fg("warning", "⏸ plan") : undefined,
     );
-    this.updateTodoWidget(ctx);
+    this.refreshPlanWidget(ctx);
   }
 
   private buildTopLevelPlanDashboardSnapshot(): PlanDashboardSnapshot | undefined {

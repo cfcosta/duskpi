@@ -911,6 +911,7 @@ async function assertPlanStateReset(
   ]);
   expect(harness.uiStub.statuses.get("plan")).toBeUndefined();
   expect(harness.uiStub.widgets.get("plan-todos")).toBeUndefined();
+  expect(harness.uiStub.widgetFactories.get("plan-todos")).toBeUndefined();
 
   await harness.runCommand("plan", "status");
   expect(harness.uiStub.notifications).toContainEqual({
@@ -3882,6 +3883,7 @@ test("top-level /plan approval renders a compact dashboard widget from structure
     "1) Verdict: PASS\n2) Issues:\n- none\n3) Required fixes:\n- none\n4) Summary:\n- structured and ready",
   );
 
+  expect(harness.uiStub.statuses.get("plan")).toBe("📋 0/2");
   expect(harness.uiStub.widgets.get("plan-todos")).toBeUndefined();
   const rendered = renderStoredWidgetFactory(harness.uiStub, "plan-todos").join("\n");
   expect(rendered).toContain("📋 plan approval • 0/2");
@@ -4381,7 +4383,8 @@ test("session boundary events reset transient plan state while approval is pendi
       "ls",
       "ask_user_question",
     ]);
-    expect(harness.uiStub.statuses.get("plan")).toBe("⏸ plan");
+    expect(harness.uiStub.statuses.get("plan")).toBe("📋 0/2");
+    expect(harness.uiStub.widgetFactories.get("plan-todos")).toEqual(expect.any(Function));
 
     await assertPlanStateReset(harness, eventName, event);
   }
@@ -4431,7 +4434,11 @@ test("session compact preserves transient plan state while approval is pending",
     "ls",
     "ask_user_question",
   ]);
-  expect(harness.uiStub.statuses.get("plan")).toBe("⏸ plan");
+  expect(harness.uiStub.statuses.get("plan")).toBe("📋 0/2");
+  expect(harness.uiStub.widgetFactories.get("plan-todos")).toEqual(expect.any(Function));
+  expect(renderStoredWidgetFactory(harness.uiStub, "plan-todos").join("\n")).toContain(
+    "Structured plan ready for approval.",
+  );
 
   await harness.runCommand("plan", "status");
   expect(harness.uiStub.notifications).toContainEqual({
