@@ -65,8 +65,6 @@
           chrome-cdp = pkgs.writeShellScriptBin "chrome-cdp" ''
             exec ${pkgs.bun}/bin/bun ${./skills/chrome-cdp/scripts/cdp.mjs} "$@"
           '';
-
-
         in
         rec {
           inherit chrome-cdp;
