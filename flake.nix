@@ -14,6 +14,10 @@
       url = "github:duckdb/duckdb-skills";
       flake = false;
     };
+    skill-impeccable = {
+      url = "github:pbakaus/impeccable";
+      flake = false;
+    };
     llm-agents = {
       url = "github:numtide/llm-agents.nix";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -93,6 +97,10 @@
               cp -rf ${inputs.skill-userinterface-wiki}/skills/* $out/skills/userinterface-wiki/
 
               cp -rf ${inputs.skill-duckdb-skills}/skills/duckdb-docs $out/skills/duckdb-docs
+
+              cp -rf ${inputs.skill-impeccable}/.pi/skills/* $out/skills/
+              chmod -R u+w $out/skills/frontend-design $out/skills/teach-impeccable
+              rm -rf $out/skills/frontend-design $out/skills/teach-impeccable
 
               cp -rf ${./skills}/chrome-cdp $out/skills/chrome-cdp
               cp -rf ${./skills}/autoresearch-create $out/skills/autoresearch-create

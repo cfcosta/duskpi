@@ -141,6 +141,7 @@
         "llm-agents": "llm-agents",
         "nixpkgs": "nixpkgs",
         "skill-duckdb-skills": "skill-duckdb-skills",
+        "skill-impeccable": "skill-impeccable",
         "skill-userinterface-wiki": "skill-userinterface-wiki",
         "skill-visual-explainer": "skill-visual-explainer"
       }
@@ -158,6 +159,22 @@
       "original": {
         "owner": "duckdb",
         "repo": "duckdb-skills",
+        "type": "github"
+      }
+    },
+    "skill-impeccable": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1775685441,
+        "narHash": "sha256-bUaVfF+4ilcazXnyLWa9nuqUINnH8WgElcTVFYodeTY=",
+        "owner": "pbakaus",
+        "repo": "impeccable",
+        "rev": "e7afda2c5505a8893bc4d05267949b3197b4c00f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "pbakaus",
+        "repo": "impeccable",
         "type": "github"
       }
     },
