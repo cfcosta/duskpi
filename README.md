@@ -234,7 +234,7 @@ The bundled skills cover common high-value tasks:
 - **chrome-cdp** for inspecting and interacting with your live Chrome, Chromium, or Brave session
 - **duckdb-docs** for searching DuckDB and DuckLake documentation from the session
 - **humanizer** for making generated text sound less AI-written
-- **rust-proptest** for Rust property testing
+- **rust-proptest** for Rust property testing with hegel
 - **userinterface-wiki** for UI/UX reviews covering animation, typography, CSS, audio, and interaction patterns
 - **visual-explainer** for turning complex technical material into visual HTML explainers
 

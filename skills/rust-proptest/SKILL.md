@@ -5,12 +5,13 @@ description: Teaches the LLM how to do property tests correctly in rust
 
 ## 0. Purpose
 
-This skill teaches an LLM how to design and implement **high-leverage, reproducible, shrink-friendly property-based tests (PBT)** in Rust using:
+This skill teaches an LLM how to design and implement **high-leverage, reproducible property-based tests (PBT)** in Rust using:
 
-- `proptest` for strategies, shrinking, runner configuration.
-- `test-strategy` for ergonomic `#[derive(Arbitrary)]` and `#[proptest]` tests.
+- `hegeltest` (crate name on crates.io, lib name `hegel`) for generators, shrinking, and test execution.
 
-The goal is not to generate “random tests”, but to encode **executable specifications** using:
+Hegel is built on Hypothesis via the Hegel protocol. It uses a client-server architecture: the Rust library communicates with `hegel-core` (a Python server installed via `uv`) to generate and shrink test data. Shrinking is handled entirely server-side.
+
+The goal is not to generate "random tests", but to encode **executable specifications** using:
 
 - Differential testing (SUT vs reference)
 - Model-based testing (stateful APIs)
@@ -45,19 +46,21 @@ Whenever generating property tests, the LLM MUST output:
    - Oracle style
    - Why it matters
 
-2. **Strategy Plan**
+2. **Generator Plan**
    - Input structure
    - How it avoids rejection
    - Shrink intent
 
 3. **Rust Code**
    - Proper `#[cfg(test)]` or integration tests
-   - `#[derive(Arbitrary)]` where useful
-   - `#[proptest]` with reasonable `cases`
+   - `#[derive(DefaultGenerator)]` where useful
+   - `#[hegel::test]` with reasonable `test_cases`
    - Comments explaining invariants
 
 4. **CI Configuration Guidance**
-   - Recommended `PROPTEST_*` env settings
+   - Hegel auto-detects CI (GitHub Actions, GitLab CI, CircleCI, etc.)
+   - In CI: database is disabled and tests are derandomized by default
+   - Recommend `test_cases` counts via the attribute
 
 ---
 
@@ -65,7 +68,7 @@ Whenever generating property tests, the LLM MUST output:
 
 Use this order of preference:
 
-### 1️⃣ Differential Testing (Highest Leverage)
+### 1. Differential Testing (Highest Leverage)
 
 Compare:
 
@@ -77,17 +80,18 @@ This catches real bugs quickly.
 
 ---
 
-### 2️⃣ Model-Based Testing (Stateful APIs)
+### 2. Model-Based Testing (Stateful APIs)
 
 If the API mutates state:
 
-- Generate sequences of operations
-- Execute both SUT and simple model
+- Use `#[hegel::state_machine]` on an impl block
+- Define `#[rule]` methods for operations
+- Define `#[invariant]` methods for assertions
 - Compare state after each step
 
 ---
 
-### 3️⃣ Round-Trip Properties
+### 3. Round-Trip Properties
 
 Examples:
 
@@ -96,7 +100,7 @@ Examples:
 
 ---
 
-### 4️⃣ Metamorphic Testing
+### 4. Metamorphic Testing
 
 When no oracle exists:
 
@@ -105,7 +109,7 @@ When no oracle exists:
 
 ---
 
-### 5️⃣ Algebraic Laws
+### 5. Algebraic Laws
 
 Use when mathematically meaningful:
 
@@ -118,263 +122,500 @@ Avoid inventing meaningless algebra.
 
 ---
 
-# 4. Strategy Design Rules
+# 4. Generator Design Rules
 
 ## 4.1 Generate Valid Inputs by Construction
 
-❌ Bad:
+Bad:
 
 - Generate arbitrary input
 - Reject unless valid
 
-✅ Good:
+Good:
 
 - Encode invariants in the generator
 
 Example:
 
 ```rust
-fn sorted_unique_vec() -> impl Strategy<Value = Vec<u32>> {
-    prop::collection::btree_set(any::<u32>(), 0..64)
-        .prop_map(|set| set.into_iter().collect())
+use hegel::generators as gs;
+
+#[hegel::composite]
+fn sorted_unique_vec(tc: hegel::TestCase) -> Vec<u32> {
+    let mut v: Vec<u32> = tc.draw(gs::vecs(gs::integers::<u32>()).max_size(64));
+    v.sort();
+    v.dedup();
+    v
 }
 ```
 
-Shrinking preserves validity.
+Shrinking preserves validity because Hypothesis handles it server-side.
 
 ---
 
 ## 4.2 Avoid Rejection Storms
 
-If you use:
+If you use `tc.assume(condition)`, you must justify it.
 
-- `#[filter]`
-- `prop_filter`
-- `prop_assume`
+If rejection count grows, redesign the generator. Hegel will raise a `FilterTooMuch` health check if too many test cases are rejected.
 
-…then you must justify it.
-
-If rejection count grows, redesign the generator.
+You can suppress this with `#[hegel::test(suppress_health_check = [HealthCheck::FilterTooMuch])]`, but prefer fixing the generator instead.
 
 ---
 
 ## 4.3 Shrink Toward Semantic Simplicity
 
-Shrinking should produce:
+Shrinking is handled by the server (Hypothesis). Design generators so that smaller draws naturally correspond to simpler, easier-to-understand inputs.
 
-- Smaller inputs
-- Simpler structures
-- Fewer operations
-- Lower numeric magnitudes
-
-Design strategies so “smaller” = “easier to understand”.
+Use `.min_value()` / `.max_value()` / `.min_size()` / `.max_size()` to bound the search space meaningfully.
 
 ---
 
-## 4.4 Prefer Reusable Strategy Functions
+## 4.4 Prefer Reusable Generator Functions
 
 Do not embed complex generators inline repeatedly.
 
-Instead:
+Instead, use `#[hegel::composite]`:
 
 ```rust
-fn small_vec_u8() -> impl Strategy<Value = Vec<u8>> {
-    prop::collection::vec(any::<u8>(), 0..64)
+#[hegel::composite]
+fn small_vec_u8(tc: hegel::TestCase) -> Vec<u8> {
+    tc.draw(gs::vecs(gs::integers::<u8>()).max_size(64))
 }
 ```
 
-Reuse across tests.
+Reuse across tests via `tc.draw(small_vec_u8())`.
 
 ---
 
-# 5. `test-strategy` Usage Rules
+# 5. Hegel API Usage Rules
 
-## 5.1 Deriving Arbitrary
+## 5.1 Basic Test Structure
+
+Every hegel test takes a `TestCase` parameter and draws values explicitly:
 
 ```rust
-use test_strategy::Arbitrary;
+use hegel::TestCase;
+use hegel::generators as gs;
 
-#[derive(Arbitrary, Debug)]
+#[hegel::test]
+fn test_example(tc: TestCase) {
+    let n: i32 = tc.draw(gs::integers());
+    let s: String = tc.draw(gs::text().max_size(128));
+    // assert properties
+}
+```
+
+`#[hegel::test]` automatically adds `#[test]` — do NOT add `#[test]` yourself.
+
+---
+
+## 5.2 TestCase Methods
+
+- `tc.draw(generator)` — draw a value (requires `T: Debug`)
+- `tc.draw_silent(generator)` — draw without recording (no `T: Debug` needed)
+- `tc.assume(condition)` — reject the current test case if false
+- `tc.note(&str)` — attach debug info shown only on failure replay
+
+---
+
+## 5.3 Deriving DefaultGenerator
+
+For your own types, derive `DefaultGenerator` to enable `gs::default::<T>()`:
+
+```rust
+use hegel::DefaultGenerator;
+use hegel::generators::{self as gs, DefaultGenerator as _};
+
+#[derive(DefaultGenerator, Debug)]
 struct Input {
-    #[strategy(0u32..=10_000)]
     n: u32,
-
-    #[strategy(prop::collection::vec(any::<u8>(), 0..128))]
     bytes: Vec<u8>,
 }
-```
 
----
-
-## 5.2 Dependent Fields
-
-```rust
-#[derive(Arbitrary, Debug)]
-struct RangeInput {
-    lo: u32,
-
-    #[strategy(#lo..=#lo + 100)]
-    hi: u32,
+#[hegel::test]
+fn test_with_input(tc: TestCase) {
+    let i: Input = tc.draw(gs::default::<Input>());
+    // use i.n, i.bytes
 }
 ```
 
-Use `#field` references.
+Note: `hegel::DefaultGenerator` is the derive macro; `hegel::generators::DefaultGenerator` is the trait. Import the trait (as `_`) to call `T::default_generator()`.
+
+Customize specific fields using `T::default_generator()` (not `gs::default()`, which boxes and loses builder methods):
+
+```rust
+let i: Input = tc.draw(
+    Input::default_generator()
+        .n(gs::integers().min_value(0_u32).max_value(10_000))
+        .bytes(gs::vecs(gs::integers::<u8>()).max_size(128))
+);
+```
 
 ---
 
-## 5.3 Weighting Variants
+## 5.4 Enum Generation
 
 ```rust
-#[derive(Arbitrary)]
+#[derive(DefaultGenerator, Debug)]
 enum Mode {
-    #[weight(5)]
     Fast,
-
-    #[weight(1)]
     Slow,
+    Custom { factor: u32 },
+}
+
+#[hegel::test]
+fn test_mode(tc: TestCase) {
+    let mode: Mode = tc.draw(gs::default());
 }
 ```
 
----
-
-## 5.4 Avoid Heavy Filtering
-
-Only use:
+Customize variant generators using `T::default_generator()`:
 
 ```rust
-#[filter(condition)]
+let mode: Mode = tc.draw(
+    Mode::default_generator()
+        .Custom(
+            Mode::default_generator()
+                .default_Custom()
+                .factor(gs::integers().min_value(1_u32).max_value(100))
+        )
+);
 ```
-
-If no structural alternative exists.
 
 ---
 
-## 5.5 Async Tests
+## 5.5 Foreign Type Generation
+
+For types you don't own, use `derive_generator!`:
 
 ```rust
-#[proptest(async = "tokio")]
-async fn prop_async(...) {
-    ...
-}
+hegel::derive_generator!(ForeignStruct {
+    field1: String,
+    field2: u32,
+});
+
+// Now gs::default::<ForeignStruct>() works for uncustomized defaults,
+// and ForeignStruct::default_generator().field1(gen) for customized ones.
 ```
 
 ---
 
-# 6. Runner Configuration & CI Policy
+## 5.6 Dependent Generation
 
-## 6.1 Default Local Run
-
-```bash
-PROPTEST_CASES=256 cargo test
-```
-
----
-
-## 6.2 Extended Nightly
-
-```bash
-PROPTEST_CASES=5000 \
-PROPTEST_MAX_SHRINK_TIME=30000 \
-cargo test
-```
-
----
-
-## 6.3 Important Environment Variables
-
-- `PROPTEST_CASES`
-- `PROPTEST_MAX_LOCAL_REJECTS`
-- `PROPTEST_MAX_GLOBAL_REJECTS`
-- `PROPTEST_MAX_SHRINK_ITERS`
-- `PROPTEST_MAX_SHRINK_TIME`
-- `PROPTEST_MAX_DEFAULT_SIZE_RANGE`
-- `PROPTEST_RNG_SEED`
-- `PROPTEST_FORK`
-- `PROPTEST_TIMEOUT`
-- `PROPTEST_VERBOSE`
-
-Failure persistence directory (`proptest-regressions/`) MUST be committed.
-
----
-
-# 7. Model-Based Stateful Testing Pattern
+Use `#[hegel::composite]` or `hegel::compose!` for values that depend on each other:
 
 ```rust
-#[derive(Clone, Debug)]
-enum Op {
-    Push(u8),
-    Pop,
-}
-
-fn op_strategy() -> impl Strategy<Value = Vec<Op>> {
-    prop::collection::vec(
-        prop_oneof![
-            any::<u8>().prop_map(Op::Push),
-            Just(Op::Pop),
-        ],
-        0..64,
-    )
+#[hegel::composite]
+fn range_input(tc: hegel::TestCase) -> (u32, u32) {
+    let lo: u32 = tc.draw(gs::integers().min_value(0_u32).max_value(1000));
+    let hi: u32 = tc.draw(gs::integers().min_value(lo).max_value(lo + 100));
+    (lo, hi)
 }
 ```
 
-Test pattern:
+Or inline with `compose!`:
 
-1. Create model (`Vec`)
-2. Create SUT
-3. Apply operations to both
-4. Compare after each step
+```rust
+let (lo, hi) = tc.draw(hegel::compose!(|tc| {
+    let lo: u32 = tc.draw(gs::integers().min_value(0_u32).max_value(1000));
+    let hi: u32 = tc.draw(gs::integers().min_value(lo).max_value(lo + 100));
+    (lo, hi)
+}));
+```
 
 ---
 
-# 8. Feature-Aware Coverage Pattern
+## 5.7 Combinators
+
+Choose from multiple generators:
+
+```rust
+let value: i32 = tc.draw(hegel::one_of!(
+    gs::integers::<i32>().min_value(0).max_value(10),
+    gs::integers::<i32>().min_value(100).max_value(110),
+));
+```
+
+Pick from a fixed list:
+
+```rust
+let op: &str = tc.draw(gs::sampled_from(vec!["add", "remove", "update"]));
+```
+
+Optional values:
+
+```rust
+let maybe: Option<i32> = tc.draw(gs::optional(gs::integers()));
+```
+
+Tuples:
+
+```rust
+let (n, b, s) = tc.draw(hegel::tuples!(
+    gs::integers::<i32>(),
+    gs::booleans(),
+    gs::text(),
+));
+```
+
+---
+
+## 5.8 Generator Combinators
+
+All generators support these methods:
+
+```rust
+gen.map(|x| transform(x))         // transform output
+gen.flat_map(|x| another_gen(x))   // dependent generation
+gen.filter(|x| predicate(x))      // filter (retries 3 times, then assume(false))
+gen.boxed()                        // type-erase into BoxedGenerator
+```
+
+---
+
+# 6. Available Generators Reference
+
+## 6.1 Primitives
+
+| Function              | Type              | Builder Methods                                                                                                           |
+| --------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `gs::integers::<T>()` | all integer types | `.min_value(v)`, `.max_value(v)`                                                                                          |
+| `gs::floats::<T>()`   | `f32`, `f64`      | `.min_value(v)`, `.max_value(v)`, `.allow_nan(bool)`, `.allow_infinity(bool)`, `.exclude_min(bool)`, `.exclude_max(bool)` |
+| `gs::booleans()`      | `bool`            | —                                                                                                                         |
+| `gs::just(value)`     | `T`               | —                                                                                                                         |
+| `gs::unit()`          | `()`              | —                                                                                                                         |
+| `gs::durations()`     | `Duration`        | `.min_value(Duration)`, `.max_value(Duration)`                                                                            |
+
+## 6.2 Strings and Text
+
+| Function                  | Type      | Builder Methods                                                     |
+| ------------------------- | --------- | ------------------------------------------------------------------- |
+| `gs::text()`              | `String`  | `.min_size(n)`, `.max_size(n)`, `.alphabet(chars)`, `.codec(s)`     |
+| `gs::characters()`        | `char`    | `.codec(s)`, `.categories(&[&str])`, `.exclude_categories(&[&str])` |
+| `gs::from_regex(pattern)` | `String`  | `.fullmatch(bool)`                                                  |
+| `gs::binary()`            | `Vec<u8>` | `.min_size(n)`, `.max_size(n)`                                      |
+| `gs::emails()`            | `String`  | —                                                                   |
+| `gs::urls()`              | `String`  | —                                                                   |
+| `gs::domains()`           | `String`  | `.max_length(n)`                                                    |
+| `gs::ip_addresses()`      | `String`  | `.v4()`, `.v6()`                                                    |
+
+## 6.3 Collections
+
+| Function                             | Type            | Builder Methods                                 |
+| ------------------------------------ | --------------- | ----------------------------------------------- |
+| `gs::vecs(element_gen)`              | `Vec<T>`        | `.min_size(n)`, `.max_size(n)`, `.unique(bool)` |
+| `gs::hashsets(element_gen)`          | `HashSet<T>`    | `.min_size(n)`, `.max_size(n)`                  |
+| `gs::hashmaps(key_gen, val_gen)`     | `HashMap<K, V>` | `.min_size(n)`, `.max_size(n)`                  |
+| `gs::arrays::<_, _, N>(element_gen)` | `[T; N]`        | —                                               |
+
+## 6.4 Combinators
+
+| Function/Macro                  | Description                         |
+| ------------------------------- | ----------------------------------- | --------- | ------------------------- |
+| `gs::optional(gen)`             | `Option<T>`                         |
+| `gs::sampled_from(vec)`         | pick uniformly from a fixed list    |
+| `gs::one_of(vec_of_boxed_gens)` | choose from multiple generators     |
+| `hegel::one_of!(g1, g2, ...)`   | macro that auto-boxes generators    |
+| `hegel::tuples!(g1, g2, ...)`   | tuple generator (up to 12 elements) |
+| `hegel::compose!(               | tc                                  | { ... })` | inline composed generator |
+| `gs::default::<T>()`            | use type's DefaultGenerator         |
+
+---
+
+# 7. Runner Configuration & CI Policy
+
+## 7.1 Default Local Run
+
+```rust
+#[hegel::test]  // defaults to 100 test cases
+fn test_property(tc: TestCase) { ... }
+```
+
+Override via attribute:
+
+```rust
+#[hegel::test(test_cases = 256)]
+fn test_property(tc: TestCase) { ... }
+```
+
+---
+
+## 7.2 Extended Nightly
+
+```rust
+#[hegel::test(test_cases = 5000)]
+fn test_property_extended(tc: TestCase) { ... }
+```
+
+---
+
+## 7.3 Settings
+
+Configure via attribute or `Settings` object:
+
+```rust
+#[hegel::test(test_cases = 500, derandomize = true)]
+fn test_deterministic(tc: TestCase) { ... }
+
+// Or programmatically:
+hegel::Hegel::new(|tc: hegel::TestCase| {
+    let x = tc.draw(gs::integers::<i32>());
+    assert!(x + 0 == x);
+})
+.settings(hegel::Settings::new().test_cases(500))
+.run();
+```
+
+Available settings:
+
+- `test_cases(n)` — number of test cases (default 100)
+- `verbosity(Verbosity::Normal)` — `Quiet`, `Normal`, `Verbose`, `Debug`
+- `seed(Some(42))` — fixed seed for reproducibility
+- `derandomize(true)` — deterministic seed from test name (auto in CI)
+- `database(None)` — disable on-disk example database
+- `suppress_health_check([...])` — suppress specific health checks
+
+Health checks: `FilterTooMuch`, `TooSlow`, `TestCasesTooLarge`, `LargeInitialTestCase`
+
+---
+
+## 7.4 CI Behavior
+
+Hegel auto-detects CI environments and adjusts defaults:
+
+- Database is disabled (no persistent state between runs)
+- Tests are derandomized (reproducible across runs)
+
+No additional environment variable configuration is needed.
+
+---
+
+# 8. Model-Based Stateful Testing Pattern
+
+Hegel has built-in stateful testing via `#[hegel::state_machine]`:
+
+```rust
+use hegel::TestCase;
+use hegel::generators as gs;
+
+struct StackModel {
+    sut: MyStack,
+    model: Vec<u8>,
+}
+
+#[hegel::state_machine]
+impl StackModel {
+    #[rule]
+    fn push(&mut self, tc: TestCase) {
+        let val: u8 = tc.draw(gs::integers());
+        self.sut.push(val);
+        self.model.push(val);
+    }
+
+    #[rule]
+    fn pop(&mut self, tc: TestCase) {
+        tc.assume(!self.model.is_empty());
+        let sut_val = self.sut.pop();
+        let model_val = self.model.pop();
+        assert_eq!(sut_val, model_val);
+    }
+
+    #[invariant]
+    fn lengths_match(&mut self, _tc: TestCase) {
+        assert_eq!(self.sut.len(), self.model.len());
+    }
+}
+
+#[hegel::test]
+fn test_stack_model(tc: TestCase) {
+    let system = StackModel {
+        sut: MyStack::new(),
+        model: Vec::new(),
+    };
+    hegel::stateful::run(system, tc);
+}
+```
+
+For value pools in stateful tests, use `hegel::stateful::Variables<T>`:
+
+```rust
+use hegel::stateful::{Variables, variables};
+
+struct MyTest {
+    pool: Variables<String>,
+}
+
+#[hegel::state_machine]
+impl MyTest {
+    #[rule]
+    fn add(&mut self, tc: TestCase) {
+        let s = tc.draw(gs::text().min_size(1));
+        self.pool.add(s);
+    }
+
+    #[rule]
+    fn use_value(&mut self, _tc: TestCase) {
+        let val = self.pool.draw();  // assume(false) if empty
+        assert!(!val.is_empty());
+    }
+}
+
+#[hegel::test]
+fn test_pool(tc: TestCase) {
+    let test = MyTest { pool: variables(&tc) };
+    hegel::stateful::run(test, tc);
+}
+```
+
+---
+
+# 9. Feature-Aware Coverage Pattern
 
 When inputs have discrete features:
 
-Generate:
-
 ```rust
-#[derive(Arbitrary, Debug, Clone, Copy, Hash, Eq, PartialEq)]
+#[derive(DefaultGenerator, Debug, Clone, Copy, Hash, Eq, PartialEq)]
 enum Mode { A, B, C }
-```
 
-Track coverage:
+#[hegel::test(test_cases = 1000)]
+fn test_coverage(tc: TestCase) {
+    let mode: Mode = tc.draw(gs::default());
+    let flag: bool = tc.draw(gs::booleans());
 
-```rust
-let mut seen = HashSet::new();
-...
-seen.insert((mode, flag));
-prop_assert!(seen.len() >= MIN_EXPECTED);
+    // exercise code under different mode/flag combinations
+    let result = process(mode, flag);
+    assert!(result.is_valid());
+}
 ```
 
 Use in extended runs only.
 
 ---
 
-# 9. Anti-Patterns
+# 10. Anti-Patterns
 
 1. Tautological properties
 2. Checking trivial invariants only
-3. Massive rejection
+3. Massive rejection (too many `tc.assume(false)` calls)
 4. Non-deterministic test body
-5. Shrink producing invalid structures
-6. Only testing “does not panic”
+5. Only testing "does not panic"
+6. Adding `#[test]` alongside `#[hegel::test]` (hegel adds it automatically)
 
 ---
 
-# 10. Golden Template: Differential Property
+# 11. Golden Template: Differential Property
 
 ```rust
 #[cfg(test)]
 mod tests {
-    use proptest::prelude::*;
-    use test_strategy::{proptest, Arbitrary};
+    use hegel::TestCase;
+    use hegel::DefaultGenerator;
+    use hegel::generators::{self as gs, DefaultGenerator as _};
 
-    #[derive(Arbitrary, Debug)]
+    #[derive(DefaultGenerator, Debug)]
     struct Input {
-        #[strategy(0u32..=10_000)]
         n: u32,
-
-        #[strategy(prop::collection::vec(any::<u8>(), 0..128))]
         bytes: Vec<u8>,
     }
 
@@ -386,34 +627,42 @@ mod tests {
         reference(n, bytes)
     }
 
-    #[proptest(cases = 1000)]
-    fn prop_matches_reference(i: Input) {
-        prop_assert_eq!(sut(i.n, &i.bytes), reference(i.n, &i.bytes));
+    #[hegel::test(test_cases = 1000)]
+    fn prop_matches_reference(tc: TestCase) {
+        let i: Input = tc.draw(
+            Input::default_generator()
+                .n(gs::integers().min_value(0_u32).max_value(10_000))
+                .bytes(gs::vecs(gs::integers::<u8>()).max_size(128))
+        );
+        assert_eq!(sut(i.n, &i.bytes), reference(i.n, &i.bytes));
     }
 }
 ```
 
 ---
 
-# 11. Golden Template: Round-Trip Property
+# 12. Golden Template: Round-Trip Property
 
 ```rust
-#[proptest]
-fn prop_round_trip(data: Vec<u8>) {
+#[hegel::test]
+fn prop_round_trip(tc: hegel::TestCase) {
+    let data: Vec<u8> = tc.draw(gs::vecs(gs::integers::<u8>()));
     let encoded = encode(&data);
     let decoded = decode(&encoded).unwrap();
-    prop_assert_eq!(decoded, data);
+    assert_eq!(decoded, data);
 }
 ```
 
 ---
 
-# 12. Golden Template: Algebraic Law
+# 13. Golden Template: Algebraic Law
 
 ```rust
-#[proptest]
-fn prop_add_commutative(a: i32, b: i32) {
-    prop_assert_eq!(a + b, b + a);
+#[hegel::test]
+fn prop_add_commutative(tc: hegel::TestCase) {
+    let a: i32 = tc.draw(gs::integers());
+    let b: i32 = tc.draw(gs::integers());
+    assert_eq!(a + b, b + a);
 }
 ```
 
@@ -421,19 +670,18 @@ Only use when meaningful.
 
 ---
 
-# 13. Engineering Checklist Before Merging
+# 14. Engineering Checklist Before Merging
 
 - [ ] Do properties encode real behavior?
 - [ ] Are inputs valid by construction?
 - [ ] Is rejection minimal?
 - [ ] Does shrinking produce understandable counterexamples?
-- [ ] Are regression files committed?
-- [ ] Is CI configured with reasonable case counts?
+- [ ] Is CI configured with reasonable `test_cases` counts?
 - [ ] Is test body deterministic?
 
 ---
 
-# 14. Philosophy
+# 15. Philosophy
 
 Property testing is not about randomness.
 
@@ -452,11 +700,12 @@ Design properties like you design APIs:
 
 ---
 
-# 15. Versioning
+# 16. Versioning
 
 This skill assumes:
 
-- `proptest` 1.x
-- `test-strategy` 0.4.x
+- `hegeltest` 0.4.x (crate name on crates.io, lib name `hegel`)
+- Rust edition 2024, minimum rust-version 1.86
+- Runtime: `uv` (auto-installed to `~/.cache/hegel` if not on PATH)
 
 Revisit on major version changes.
