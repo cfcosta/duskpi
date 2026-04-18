@@ -14,10 +14,6 @@
       url = "github:duckdb/duckdb-skills";
       flake = false;
     };
-    skill-impeccable = {
-      url = "github:pbakaus/impeccable";
-      flake = false;
-    };
     pi-mcp-adapter-src = {
       url = "github:nicobailon/pi-mcp-adapter";
       flake = false;
@@ -118,8 +114,6 @@
               cp -rf ${inputs.skill-userinterface-wiki}/skills/* $out/skills/userinterface-wiki/
 
               cp -rf ${inputs.skill-duckdb-skills}/skills/duckdb-docs $out/skills/duckdb-docs
-
-              cp -rf ${inputs.skill-impeccable}/.pi/skills/* $out/skills/
 
               cp -rf ${./skills}/chrome-cdp $out/skills/chrome-cdp
               cp -rf ${./skills}/autoresearch-create $out/skills/autoresearch-create

@@ -159,7 +159,6 @@
         "nixpkgs": "nixpkgs",
         "pi-mcp-adapter-src": "pi-mcp-adapter-src",
         "skill-duckdb-skills": "skill-duckdb-skills",
-        "skill-impeccable": "skill-impeccable",
         "skill-userinterface-wiki": "skill-userinterface-wiki",
         "skill-visual-explainer": "skill-visual-explainer"
       }
@@ -177,22 +176,6 @@
       "original": {
         "owner": "duckdb",
         "repo": "duckdb-skills",
-        "type": "github"
-      }
-    },
-    "skill-impeccable": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1775851026,
-        "narHash": "sha256-RdOrnzW0Qu0ECDmOYomKEd5XymezaRbWqgWEYwSfyc4=",
-        "owner": "pbakaus",
-        "repo": "impeccable",
-        "rev": "00d485659af82982aef0328d0419c49a2716d123",
-        "type": "github"
-      },
-      "original": {
-        "owner": "pbakaus",
-        "repo": "impeccable",
         "type": "github"
       }
     },
