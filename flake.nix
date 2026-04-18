@@ -18,6 +18,10 @@
       url = "github:pbakaus/impeccable";
       flake = false;
     };
+    pi-mcp-adapter-src = {
+      url = "github:nicobailon/pi-mcp-adapter";
+      flake = false;
+    };
     llm-agents = {
       url = "github:numtide/llm-agents.nix";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -69,9 +73,23 @@
           chrome-cdp = pkgs.writeShellScriptBin "chrome-cdp" ''
             exec ${pkgs.bun}/bin/bun ${./skills/chrome-cdp/scripts/cdp.mjs} "$@"
           '';
+
+          pi-mcp-adapter = pkgs.buildNpmPackage {
+            pname = "pi-mcp-adapter";
+            version = "2.4.0";
+            src = inputs.pi-mcp-adapter-src;
+            npmDepsHash = "sha256-9P71EDq++Bmez3QDEbOL+PCtCFI2ajxy345stBOBp8k=";
+            dontNpmBuild = true;
+            installPhase = ''
+              runHook preInstall
+              mkdir -p $out
+              cp -rf . $out/
+              runHook postInstall
+            '';
+          };
         in
         rec {
-          inherit chrome-cdp;
+          inherit chrome-cdp pi-mcp-adapter;
 
           resources = pkgs.stdenv.mkDerivation (_: {
             name = "duskpi-resources";
@@ -82,6 +100,9 @@
 
               cp -rf ${./extensions}/* $out/extensions/
               cp -rf ${./packages}/* $out/packages/
+
+              mkdir -p $out/extensions/pi-mcp-adapter
+              cp -rf ${pi-mcp-adapter}/. $out/extensions/pi-mcp-adapter/
 
               cp -rf ${./prompts}/* $out/prompts/
               cp -rf ${./themes}/* $out/themes/
@@ -152,6 +173,7 @@
                 --add-flags "--extension $out/extensions/plan/index.ts" \
                 --add-flags "--extension $out/extensions/btw/index.ts" \
                 --add-flags "--extension $out/extensions/autoresearch/index.ts" \
+                --add-flags "--extension $out/extensions/pi-mcp-adapter/index.ts" \
                 --add-flags "--skill $out/skills" \
                 --add-flags "--prompt-template $out/prompts" \
                 --add-flags "--theme $out/themes"
