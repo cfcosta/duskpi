@@ -117,6 +117,7 @@
 
               cp -rf ${./skills}/chrome-cdp $out/skills/chrome-cdp
               cp -rf ${./skills}/autoresearch-create $out/skills/autoresearch-create
+              cp -rf ${./skills}/jujutsu $out/skills/jujutsu
 
               substituteInPlace $out/skills/chrome-cdp/SKILL.md \
                 --replace-fail '##CHROME-CDP##' '${chrome-cdp}/bin/chrome-cdp'
