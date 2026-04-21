@@ -333,7 +333,114 @@ Updating the PR after review:
 - **Add a commit:** `jj new BOOKMARK; ...; jj commit -m "fix"; jj bookmark move BOOKMARK --to @-; jj git push`
 - **Rewrite (clean history):** `jj edit COMMIT; ...; jj git push -b BOOKMARK` (force-pushed safely)
 
-## 6.4 Multiple remotes
+## 6.4 Landing changes — the commit protocol
+
+When the user says "land the plane", "commit and ship", or otherwise asks you to finalize work, follow this protocol in order. Don't reverse the steps.
+
+### Step 1 — Quality gates
+
+Run formatters/linters BEFORE the commit so the commit captures the formatted state.
+
+1. If the project has a Nix flake AND the flake declares a `formatter` (grep for `formatter\s*=` in `flake.nix`), use `nix fmt`. This is the canonical entry point — it covers every file type the project formats.
+2. Otherwise, use the language-appropriate tool:
+   - **Rust:** `cargo clippy --all --all-targets` then `cargo fmt`
+   - **Python:** `ruff check --fix` then `ruff format` (and `ty` if configured)
+   - **JavaScript/TypeScript:** the project's configured formatter (often `oxfmt`, `prettier`, or `biome`) plus the build/typecheck (`tsc --noEmit`, `bun run build`, etc.)
+3. If the project uses Nix (any `flake.nix` or `shell.nix` present), wrap the tool invocation: `nix develop -c <command>`. This guarantees the tool versions match the project's pinned environment.
+4. Address any errors the tools report. Don't commit with the linter unhappy.
+
+### Step 2 — Commit with `jj`, never `git`
+
+This project uses jj. Use:
+
+```bash
+jj commit <paths> -m "<title>" -m "<body...>"
+```
+
+or pass a single multiline message via heredoc:
+
+```bash
+jj commit path1 path2 -m "$(cat <<'EOF'
+type(scope): short title in imperative mood
+
+Body paragraph explaining WHAT changed in plain language. One or two
+sentences is usually enough.
+
+Then a paragraph explaining WHY — the problem being solved, the
+constraint forcing the change, the user-visible motivation. This is
+the part that survives in the log years later when the diff is no
+longer self-explanatory.
+
+Close with the goal: "The main goal is to ..." or similar. State the
+outcome the change is in service of.
+EOF
+)"
+```
+
+Pass file paths explicitly — never `jj commit -A` or `jj commit .`. Selective adds protect against accidental inclusion of unrelated edits and secrets. If another agent's changes are sitting in the working copy alongside yours, commit only your paths and leave theirs for that agent.
+
+Don't run `jj log` after a successful commit just to verify — `jj commit`'s exit code and "Working copy now at" output already confirm success.
+
+### Step 3 — Commit message format (Conventional Commits + this repo's body convention)
+
+**Title line:** `type(scope): description`
+
+| Field           | Rule                                                                                                              |
+| --------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `type`          | One of: `feat` (new feature), `fix` (bug), `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`.   |
+| `scope`         | Optional, in parens. Lowercase, narrow (e.g. `skills`, `extensions`, `plan`, `oxfmt`). One word — not a sentence. |
+| `description`   | Imperative mood, lowercase, no trailing period, ≤72 chars total title.                                            |
+| `!` after scope | Use `feat(api)!:` or `feat!:` to flag a breaking change. Equivalent to a `BREAKING CHANGE:` footer.               |
+
+**Body:** blank line after the title, then prose paragraphs wrapped at ~72 chars. The repo's house style for the body is:
+
+1. **One paragraph stating WHAT changed** in plain language. Lead with the verb ("Adds…", "Removes…", "Refactors…", "Switches the…").
+2. **One or more paragraphs explaining WHY** — the surrounding context, the bug being fixed, the upstream change being followed, the prior approach and why it stopped working, the constraint that forced the choice. This is the most-valuable part; the diff already shows the _what_.
+3. **A closing sentence stating the goal** — phrased as "The main goal is to ..." or "The goal is to ..." — naming the outcome the change is in service of.
+4. (Optional) A `Changes:` bullet list at the end when the work touched several distinct surfaces.
+
+**Footers** (optional, blank line before): git-trailer format (`Token: value`), e.g.
+
+- `BREAKING CHANGE: <what breaks and the migration path>` (when applicable)
+- `Co-Authored-By: <name> <email>` (when an agent or pair-author contributed)
+- `Refs: #123` / `Closes: #123` for issue links
+
+### Step 4 — One worked example (this repo's actual style)
+
+```
+feat(extensions): bundle pi-mcp-adapter
+
+Adds nicobailon/pi-mcp-adapter as a bundled Pi extension so the
+distribution ships with token-efficient MCP server access out of
+the box.
+
+The adapter exposes MCP servers through a single proxy tool (`mcp`)
+instead of injecting every server's full tool schema into context,
+letting users connect servers (databases, browsers, APIs) without
+burning thousands of tokens up front.
+
+Wired in via:
+- new `pi-mcp-adapter-src` flake input pinned to upstream HEAD
+- `buildNpmPackage` derivation that installs npm deps offline using
+  a prefetched `npmDepsHash`
+- copied into `$out/extensions/pi-mcp-adapter/` by the resources
+  derivation so `node_modules` and `index.ts` travel together
+- registered in the wrapped `pi` binary via `--extension` so it
+  loads at startup alongside the other bundled extensions
+```
+
+Note the structure: imperative title with scope, lead paragraph (what + headline why), middle paragraph (deeper why / context), bulleted "Changes:" tail. No closing "main goal" line in this one because the lead paragraph already names the outcome — the rule is "make the goal visible," not "use a specific phrase."
+
+### Anti-patterns when landing
+
+- Don't run `git commit` in this repo — it's jj-managed; use `jj commit`.
+- Don't skip quality gates because "the diff looks fine" — committed unformatted code shows up in every subsequent diff.
+- Don't write a one-line commit ("update flake", "fix bug"). The diff might be self-explanatory today; the _why_ won't be in a year.
+- Don't fabricate context — if you don't know why a prior author made a choice, say so or omit, don't invent.
+- Don't claim work you didn't do. If formatting touched files you didn't otherwise edit, mention it briefly; if another agent's WIP is sitting in the working copy, leave it alone and commit only your paths.
+- Don't use `--no-verify` or skip pre-commit hooks unless the user explicitly asks.
+
+## 6.5 Multiple remotes
 
 ```toml
 [git]
@@ -727,10 +834,12 @@ tug = ["bookmark", "move", "--from", "closest_bookmark(@)", "--to", "closest_pus
 # 16. Engineering checklist before reporting "done"
 
 - [ ] Identity is configured (commits not authored as placeholder).
-- [ ] All commits intended for the PR have descriptions.
+- [ ] Quality gates ran clean (`nix fmt` or language-specific — see §6.4 step 1).
+- [ ] All commits intended for the PR have descriptions in the §6.4 Conventional-Commits-with-body format.
 - [ ] Bookmark exists and points at the right commit (`jj bookmark list`).
 - [ ] `jj log -r 'mine() & conflicts()'` is empty.
 - [ ] `jj st` shows the working copy in the expected state.
+- [ ] Used `jj commit <paths>` not `git commit`, and not `jj commit -A`.
 - [ ] If pushing, `jj git push --dry-run` shows the expected change set.
 - [ ] If anything went sideways, `jj op log` was used to trace it.
 
