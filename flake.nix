@@ -123,6 +123,21 @@
               cp -rf ${./skills}/chrome-cdp $out/skills/chrome-cdp
               cp -rf ${./skills}/autoresearch-create $out/skills/autoresearch-create
               cp -rf ${./skills}/jujutsu $out/skills/jujutsu
+              cp -rf ${./skills}/bus-pack $out/skills/bus-pack
+              cp -rf ${./skills}/code-pkm $out/skills/code-pkm
+              cp -rf ${./skills}/debrief $out/skills/debrief
+              cp -rf ${./skills}/diataxis $out/skills/diataxis
+              cp -rf ${./skills}/dichotomy $out/skills/dichotomy
+              cp -rf ${./skills}/dip-or-cul-de-sac $out/skills/dip-or-cul-de-sac
+              cp -rf ${./skills}/growth-hack $out/skills/growth-hack
+              cp -rf ${./skills}/hacker-mindset $out/skills/hacker-mindset
+              cp -rf ${./skills}/lead-magnet $out/skills/lead-magnet
+              cp -rf ${./skills}/mental-models $out/skills/mental-models
+              cp -rf ${./skills}/offer-doctor $out/skills/offer-doctor
+              cp -rf ${./skills}/permission-audit $out/skills/permission-audit
+              cp -rf ${./skills}/prompt-humans $out/skills/prompt-humans
+              cp -rf ${./skills}/taste-loop $out/skills/taste-loop
+              cp -rf ${./skills}/voss $out/skills/voss
 
               substituteInPlace $out/skills/chrome-cdp/SKILL.md \
                 --replace-fail '##CHROME-CDP##' '${chrome-cdp}/bin/chrome-cdp'
