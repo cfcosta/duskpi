@@ -402,8 +402,9 @@ Don't run `jj log` after a successful commit just to verify — `jj commit`'s ex
 **Footers** (optional, blank line before): git-trailer format (`Token: value`), e.g.
 
 - `BREAKING CHANGE: <what breaks and the migration path>` (when applicable)
-- `Co-Authored-By: <name> <email>` (when an agent or pair-author contributed)
 - `Refs: #123` / `Closes: #123` for issue links
+
+**NEVER** add a `Co-Authored-By:` trailer to commits in this repo — not for agents, not for pair-authors, not in any circumstance.
 
 ### Step 4 — One worked example (this repo's actual style)
 
@@ -439,6 +440,7 @@ Note the structure: imperative title with scope, lead paragraph (what + headline
 - Don't fabricate context — if you don't know why a prior author made a choice, say so or omit, don't invent.
 - Don't claim work you didn't do. If formatting touched files you didn't otherwise edit, mention it briefly; if another agent's WIP is sitting in the working copy, leave it alone and commit only your paths.
 - Don't use `--no-verify` or skip pre-commit hooks unless the user explicitly asks.
+- Never add a `Co-Authored-By:` trailer — this repo's commits never credit a co-author, regardless of who or what contributed.
 
 ## 6.5 Multiple remotes
 
