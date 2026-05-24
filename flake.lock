@@ -137,6 +137,23 @@
         "type": "github"
       }
     },
+    "peekaboo-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1779458143,
+        "narHash": "sha256-Q+hROzfeYyOAV4iDvc5ldIn+8Hwecd0kv2Bz1MwOzj0=",
+        "owner": "openclaw",
+        "repo": "Peekaboo",
+        "rev": "d7b665c5df8b4b5c55b99a6e435bd938b431ffe9",
+        "type": "github"
+      },
+      "original": {
+        "owner": "openclaw",
+        "ref": "v3.2.2",
+        "repo": "Peekaboo",
+        "type": "github"
+      }
+    },
     "pi-mcp-adapter-src": {
       "flake": false,
       "locked": {
@@ -157,6 +174,7 @@
       "inputs": {
         "llm-agents": "llm-agents",
         "nixpkgs": "nixpkgs",
+        "peekaboo-src": "peekaboo-src",
         "pi-mcp-adapter-src": "pi-mcp-adapter-src",
         "skill-duckdb-skills": "skill-duckdb-skills",
         "skill-hunk": "skill-hunk",

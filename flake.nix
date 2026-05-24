@@ -18,6 +18,10 @@
       url = "github:modem-dev/hunk";
       flake = false;
     };
+    peekaboo-src = {
+      url = "github:openclaw/Peekaboo/v3.2.2";
+      flake = false;
+    };
     pi-mcp-adapter-src = {
       url = "github:nicobailon/pi-mcp-adapter";
       flake = false;
@@ -87,6 +91,33 @@
               runHook postInstall
             '';
           };
+
+          # macOS-only: prebuilt universal binary from the upstream release.
+          # Peekaboo is a Swift/AppKit macOS automation CLI, so it is only
+          # wired into the darwin build below.
+          peekaboo = pkgs.stdenvNoCC.mkDerivation {
+            pname = "peekaboo";
+            version = "3.2.2";
+            src = pkgs.fetchurl {
+              url = "https://github.com/openclaw/Peekaboo/releases/download/v3.2.2/peekaboo-macos-universal.tar.gz";
+              hash = "sha256-g70CcZCaV1yPlbyF0nHSULSdcoroVNJmK6qdUj9LWmo=";
+            };
+            sourceRoot = "peekaboo-macos-universal";
+            dontBuild = true;
+            dontStrip = true; # signed Mach-O; stripping would break the signature
+            installPhase = ''
+              runHook preInstall
+              install -Dm755 peekaboo $out/bin/peekaboo
+              runHook postInstall
+            '';
+            meta = {
+              description = "macOS automation CLI: screenshots, UI maps, input control, agent runtime";
+              homepage = "https://peekaboo.sh";
+              license = pkgs.lib.licenses.mit;
+              platforms = pkgs.lib.platforms.darwin;
+              mainProgram = "peekaboo";
+            };
+          };
         in
         rec {
           inherit chrome-cdp pi-mcp-adapter;
@@ -139,6 +170,11 @@
               cp -rf ${./skills}/taste-loop $out/skills/taste-loop
               cp -rf ${./skills}/voss $out/skills/voss
 
+              ${pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
+                mkdir -p $out/skills/peekaboo
+                cp -rf ${inputs.peekaboo-src}/skills/peekaboo/* $out/skills/peekaboo/
+              ''}
+
               substituteInPlace $out/skills/chrome-cdp/SKILL.md \
                 --replace-fail '##CHROME-CDP##' '${chrome-cdp}/bin/chrome-cdp'
 
@@ -172,7 +208,8 @@
             paths = [
               inputs.llm-agents.packages.${system}.pi
               resources
-            ];
+            ]
+            ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [ peekaboo ];
             nativeBuildInputs = [ pkgs.makeWrapper ];
             postBuild = ''
               wrapProgram $out/bin/pi \
@@ -195,6 +232,7 @@
             '';
           };
         }
+        // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin { inherit peekaboo; }
       );
     };
 }
