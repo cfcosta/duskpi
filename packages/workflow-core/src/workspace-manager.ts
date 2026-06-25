@@ -1,3 +1,5 @@
+import { mkdir } from "node:fs/promises";
+import * as path from "node:path";
 import type { ExecOptions, ExecResult } from "./extension-api";
 
 const DEFAULT_JJ_TIMEOUT_MS = 15_000;
@@ -25,6 +27,12 @@ export class JjWorkspaceManager {
   }
 
   async createWorkspace(name: string, destinationPath: string): Promise<ManagedWorkspace> {
+    // `jj workspace add` requires the destination's parent directory to already
+    // exist; unlike `git worktree add` it will not create intermediate dirs and
+    // fails with "Cannot access <path>: No such file or directory". Workflows
+    // point workspaces at a base dir (e.g. `.bug-fix-workspaces/`) that does not
+    // exist on a fresh run, so ensure the parent is present first.
+    await mkdir(path.dirname(destinationPath), { recursive: true });
     await this.runJj(["workspace", "add", destinationPath, "--name", name]);
     const root = await this.getWorkspaceRoot(name);
     return { name, root };

@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import * as path from "node:path";
 import type { ExecOptions, ExecResult } from "./extension-api";
 import { JjWorkspaceManager } from "./workspace-manager";
 
@@ -123,6 +126,32 @@ test("forgetWorkspace cleans up the workspace registration", async () => {
       options: { cwd: "/repo", timeout: 15000, signal: undefined },
     },
   ]);
+});
+
+test("createWorkspace creates the destination's parent directory before adding the workspace", async () => {
+  const base = await mkdtemp(path.join(tmpdir(), "workflow-core-ws-"));
+  try {
+    const destination = path.join(base, "missing-base", "workspace-a");
+    const { exec, calls } = createExecMock([{ stdout: "" }, { stdout: `${destination}\n` }]);
+    const manager = new JjWorkspaceManager({ repoRoot: base, exec });
+
+    await manager.createWorkspace("workspace-a", destination);
+
+    // jj workspace add refuses a destination whose parent does not exist, so the
+    // parent must be present before the jj call runs.
+    const parentStat = await stat(path.dirname(destination));
+    assert.equal(parentStat.isDirectory(), true);
+    // The mkdir does not go through exec; the jj call sequence is unchanged.
+    assert.deepEqual(
+      calls.map((call) => ({ command: call.command, args: call.args })),
+      [
+        { command: "jj", args: ["workspace", "add", destination, "--name", "workspace-a"] },
+        { command: "jj", args: ["workspace", "root", "--name", "workspace-a"] },
+      ],
+    );
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
 });
 
 test("createWorkspace surfaces jj failures with stderr details", async () => {
