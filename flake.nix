@@ -22,8 +22,12 @@
       url = "github:openclaw/Peekaboo/v3.2.2";
       flake = false;
     };
+    # Pinned: upstream past this rev gitignores package-lock.json, so the
+    # fetched source ships no lockfile and the buildNpmPackage derivation
+    # below can no longer vendor node_modules. Unpin once the packaging is
+    # reworked to install deps without a committed lockfile.
     pi-mcp-adapter-src = {
-      url = "github:nicobailon/pi-mcp-adapter";
+      url = "github:nicobailon/pi-mcp-adapter/999c735f2eb6f8c9237ad9b76668a93964d8be5c";
       flake = false;
     };
     llm-agents = {
