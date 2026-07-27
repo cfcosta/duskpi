@@ -36,6 +36,8 @@ The default package bundles upstream Pi together with repo-owned resources:
   - `web_search` _(when `KAGI_API_KEY` is set)_
 - **Skills**
   - `autoresearch-create`
+  - `autoresearch-finalize`
+  - `autoresearch-hooks`
   - `chrome-cdp`
   - `duckdb-docs`
   - `humanizer`
@@ -178,15 +180,15 @@ This is useful when you want:
 
 ### 3. Run autonomous optimization loops
 
-The bundled `autoresearch` extension adds:
+The bundled `autoresearch` extension (pulled from upstream [`davebcn87/pi-autoresearch`](https://github.com/davebcn87/pi-autoresearch) as a flake input) adds:
 
 - `/autoresearch`
 - `init_experiment`
 - `run_experiment`
 - `log_experiment`
-- the `autoresearch-create` skill
+- the `autoresearch-create`, `autoresearch-finalize`, and `autoresearch-hooks` skills
 
-Use it when you want Pi to benchmark changes in a loop, keep wins automatically, and preserve experiment history in `autoresearch.jsonl`.
+Use it when you want Pi to benchmark changes in a loop, keep wins automatically, and preserve experiment history in `.auto/log.jsonl`.
 
 ### 4. Ask side questions without interrupting the main task
 
@@ -231,6 +233,8 @@ The bundled skills cover common high-value tasks:
 
 - **attach-db** for attaching DuckDB database files and persisting shared session state
 - **autoresearch-create** for setting up and launching autonomous optimization loops
+- **autoresearch-finalize** for turning a noisy experiment branch into clean, reviewable branches
+- **autoresearch-hooks** for wiring lifecycle hooks around experiment runs
 - **chrome-cdp** for inspecting and interacting with your live Chrome, Chromium, or Brave session
 - **duckdb-docs** for searching DuckDB and DuckLake documentation from the session
 - **humanizer** for making generated text sound less AI-written
@@ -275,7 +279,6 @@ Notable entries:
 - `refactor`
 - `catppuccin`
 - `plan` (repo-local private extension vendored under `extensions/plan`)
-- `autoresearch` (vendored upstream extension under `extensions/autoresearch`)
 - `btw`
 - `web-fetch`
 - `web-search`
@@ -318,7 +321,7 @@ The flake:
 - vendors local extensions, skills, prompts, and themes into one output
 - wraps the final `pi` binary so bundled resources are loaded on startup
 
-`plan` is vendored directly into `extensions/plan`, and `autoresearch` is vendored into `extensions/autoresearch`, so you can modify both locally like the other bundled extensions without treating either copy as an externally pulled package at build time.
+`plan` is vendored directly into `extensions/plan`, so you can modify it locally like the other bundled extensions. `autoresearch` is pulled from the upstream `davebcn87/pi-autoresearch` repo as a flake input at build time — its extension, assets, and skills are copied into the bundled resources, so updating it is a `nix flake update pi-autoresearch-src` away.
 
 ## Why this repo exists
 

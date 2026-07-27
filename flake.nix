@@ -22,6 +22,10 @@
       url = "github:openclaw/Peekaboo/v3.2.2";
       flake = false;
     };
+    pi-autoresearch-src = {
+      url = "github:davebcn87/pi-autoresearch";
+      flake = false;
+    };
     # Pinned: upstream past this rev gitignores package-lock.json, so the
     # fetched source ships no lockfile and the buildNpmPackage derivation
     # below can no longer vendor node_modules. Unpin once the packaging is
@@ -139,6 +143,13 @@
               mkdir -p $out/extensions/pi-mcp-adapter
               cp -rf ${pi-mcp-adapter}/. $out/extensions/pi-mcp-adapter/
 
+              # pi-autoresearch resolves its package root as extensionDir/../..
+              # and reads assets/ from there, so the extension lands in
+              # extensions/autoresearch and its assets at the output root.
+              mkdir -p $out/extensions/autoresearch $out/assets
+              cp -rf ${inputs.pi-autoresearch-src}/extensions/pi-autoresearch/* $out/extensions/autoresearch/
+              cp -rf ${inputs.pi-autoresearch-src}/assets/* $out/assets/
+
               cp -rf ${./prompts}/* $out/prompts/
               cp -rf ${./themes}/* $out/themes/
               cp -rf ${./skills}/rust-proptest $out/skills/rust-proptest
@@ -154,9 +165,9 @@
 
               cp -rf ${inputs.skill-duckdb-skills}/skills/duckdb-docs $out/skills/duckdb-docs
               cp -rf ${inputs.skill-hunk}/skills/hunk-review $out/skills/hunk-review
+              cp -rf ${inputs.pi-autoresearch-src}/skills/* $out/skills/
 
               cp -rf ${./skills}/chrome-cdp $out/skills/chrome-cdp
-              cp -rf ${./skills}/autoresearch-create $out/skills/autoresearch-create
               cp -rf ${./skills}/jujutsu $out/skills/jujutsu
               cp -rf ${./skills}/bus-pack $out/skills/bus-pack
               cp -rf ${./skills}/code-pkm $out/skills/code-pkm

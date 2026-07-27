@@ -137,6 +137,22 @@
         "type": "github"
       }
     },
+    "pi-autoresearch-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1784123435,
+        "narHash": "sha256-yvoKLskgsSJZvPO5rYUNoKVOZfv/OwfDZbIEbBMaAPY=",
+        "owner": "davebcn87",
+        "repo": "pi-autoresearch",
+        "rev": "00062fb9cc425e71d82e75445dc5b6ad31c32f0e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "davebcn87",
+        "repo": "pi-autoresearch",
+        "type": "github"
+      }
+    },
     "pi-mcp-adapter-src": {
       "flake": false,
       "locked": {
@@ -159,6 +175,7 @@
         "llm-agents": "llm-agents",
         "nixpkgs": "nixpkgs",
         "peekaboo-src": "peekaboo-src",
+        "pi-autoresearch-src": "pi-autoresearch-src",
         "pi-mcp-adapter-src": "pi-mcp-adapter-src",
         "skill-duckdb-skills": "skill-duckdb-skills",
         "skill-hunk": "skill-hunk",
