@@ -39,6 +39,7 @@ The default package bundles upstream Pi together with repo-owned resources:
   - `autoresearch-finalize`
   - `autoresearch-hooks`
   - `chrome-cdp`
+  - `code-naming`
   - `duckdb-docs`
   - `humanizer`
   - `rust-proptest`
@@ -236,6 +237,7 @@ The bundled skills cover common high-value tasks:
 - **autoresearch-finalize** for turning a noisy experiment branch into clean, reviewable branches
 - **autoresearch-hooks** for wiring lifecycle hooks around experiment runs
 - **chrome-cdp** for inspecting and interacting with your live Chrome, Chromium, or Brave session
+- **code-naming** for choosing and reviewing names that keep actions as verbs and expose domain intent
 - **duckdb-docs** for searching DuckDB and DuckLake documentation from the session
 - **humanizer** for making generated text sound less AI-written
 - **rust-proptest** for Rust property testing with hegel
