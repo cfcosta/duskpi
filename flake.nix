@@ -14,10 +14,6 @@
       url = "github:duckdb/duckdb-skills";
       flake = false;
     };
-    skill-hunk = {
-      url = "github:modem-dev/hunk";
-      flake = false;
-    };
     peekaboo-src = {
       url = "github:openclaw/Peekaboo/v3.2.2";
       flake = false;
@@ -164,7 +160,6 @@
               cp -rf ${inputs.skill-userinterface-wiki}/skills/* $out/skills/userinterface-wiki/
 
               cp -rf ${inputs.skill-duckdb-skills}/skills/duckdb-docs $out/skills/duckdb-docs
-              cp -rf ${inputs.skill-hunk}/skills/hunk-review $out/skills/hunk-review
               cp -rf ${inputs.pi-autoresearch-src}/skills/* $out/skills/
 
               cp -rf ${./skills}/chrome-cdp $out/skills/chrome-cdp

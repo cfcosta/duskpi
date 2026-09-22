@@ -153,7 +153,6 @@
         "pi-autoresearch-src": "pi-autoresearch-src",
         "pi-mcp-adapter-src": "pi-mcp-adapter-src",
         "skill-duckdb-skills": "skill-duckdb-skills",
-        "skill-hunk": "skill-hunk",
         "skill-userinterface-wiki": "skill-userinterface-wiki",
         "skill-visual-explainer": "skill-visual-explainer"
       }
@@ -171,22 +170,6 @@
       "original": {
         "owner": "duckdb",
         "repo": "duckdb-skills",
-        "type": "github"
-      }
-    },
-    "skill-hunk": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1790038607,
-        "narHash": "sha256-DVtJTF11Zz2ESb+tFDqj8OE7Kg2Yj25186CltXfJpio=",
-        "owner": "modem-dev",
-        "repo": "hunk",
-        "rev": "bc714dedabe8a8351c05101bdbfd07ad88958ec9",
-        "type": "github"
-      },
-      "original": {
-        "owner": "modem-dev",
-        "repo": "hunk",
         "type": "github"
       }
     },
