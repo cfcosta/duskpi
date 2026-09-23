@@ -171,6 +171,7 @@
               cp -rf ${./skills}/diataxis $out/skills/diataxis
               cp -rf ${./skills}/dichotomy $out/skills/dichotomy
               cp -rf ${./skills}/dip-or-cul-de-sac $out/skills/dip-or-cul-de-sac
+              cp -rf ${./skills}/dispatch $out/skills/dispatch
               cp -rf ${./skills}/growth-hack $out/skills/growth-hack
               cp -rf ${./skills}/hacker-mindset $out/skills/hacker-mindset
               cp -rf ${./skills}/lead-magnet $out/skills/lead-magnet

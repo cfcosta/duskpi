@@ -40,6 +40,7 @@ The default package bundles upstream Pi together with repo-owned resources:
   - `autoresearch-hooks`
   - `chrome-cdp`
   - `code-naming`
+  - `dispatch`
   - `duckdb-docs`
   - `humanizer`
   - `rust-proptest`
