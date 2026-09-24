@@ -141,12 +141,15 @@ Never rely on the Codex config defaults.
 
 | Difficulty | Examples                                                   | Model         | Reasoning |
 | ---------- | ---------------------------------------------------------- | ------------- | --------- |
-| Trivial    | One-line change, rename a constant, fix a typo or import   | `gpt-6-luna`  | `medium`  |
-| Simple     | Small, local change in one or two files with obvious shape | `gpt-6-luna`  | `max`     |
+| Trivial    | One-line change, rename a constant, fix a typo or import   | Dispatcher    | —         |
+| Simple     | Small, local change in one or two files with obvious shape | `gpt-6-luna`  | `xhigh`   |
 | Medium     | Feature or fix across a few files, needs some design       | `gpt-6-sol`   | `medium`  |
-| Hard       | Cross-cutting change, subtle logic, unfamiliar code        | `gpt-6-astra` | `medium`  |
-| Harder     | Algorithmic, concurrency, or architecture-level work       | `gpt-6-astra` | `high`    |
-| Hardest    | Very complex work where a mistake is costly or subtle      | `gpt-6-astra` | `xhigh`   |
+| Hard       | Cross-cutting change, subtle logic, unfamiliar code        | `gpt-6-sol`   | `xhigh`   |
+| Harder     | Algorithmic, concurrency, or architecture-level work       | `gpt-6-astra` | `medium`  |
+| Hardest    | Very complex work where a mistake is costly or subtle      | `gpt-6-astra` | `high`    |
+
+Make trivial changes yourself instead of dispatching them. They still get their
+own workspace, naming pass, checks, and commit, and land like any other task.
 
 When unsure between two ratings, pick the higher one. If a worker fails a task
 twice on the same problem, escalate the follow-up one row.
@@ -157,8 +160,9 @@ twice on the same problem, escalate the follow-up one row.
 
 Use an available Codex MCP tool or the `codex exec` CLI. Inspect the MCP tool's
 schema or `codex exec --help` before choosing arguments. Use the user's selected
-interface when specified; otherwise use whichever is available. Implementation
-must go through Codex, including follow-up fixes.
+interface when specified; otherwise use whichever is available. Apart from
+trivial tasks (§3), implementation must go through Codex, including follow-up
+fixes.
 
 Send a bounded brief containing the task's outcome, acceptance criteria,
 workspace path, relevant context, constraints, checks, and resolved skill
