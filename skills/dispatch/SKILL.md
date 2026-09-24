@@ -5,25 +5,87 @@ description: Break a coding task into smaller tasks and dispatch them to Codex t
 
 # Dispatch
 
-Break down the user's current problem, send the tasks to Codex in parallel
-waves, and finish each task with a naming refactor, verification, and its own
-Jujutsu commit. Each task runs in its own Jujutsu workspace; when it is done,
+Design and break down the user's current problem into small, fully specified
+tasks, send them to Codex in parallel waves, and finish each task with a naming
+refactor, verification, and its own Jujutsu commit. Each task runs in its own Jujutsu workspace; when it is done,
 its commit moves into the original workspace and the task workspace is deleted.
 Carry out the workflow; do not stop at a task list or ask the user to run the
 commands.
 
 ## 1. Break down the work
 
-Inspect the repository and turn the requested outcome into small tasks that can
-each be implemented, checked, and committed independently. Give each task:
+Difficulty belongs to the brief, not to the feature. A task needs a strong
+model when the worker has to explore the code, make design decisions, or guess
+at invariants nobody wrote down. Do that work yourself before dispatching, and
+hand workers execution only. The goal is that most tasks run on `gpt-6-luna`
+(§3).
 
-- A concrete outcome and acceptance criteria.
-- The relevant files, constraints, and context.
-- Dependencies on other tasks and the checks that demonstrate completion.
-- A difficulty rating (see §3), which picks its model and reasoning effort.
+### Design first
+
+Read the relevant code and settle the approach before writing any task:
+
+- Where the change lives: files, modules, and the existing symbols it touches.
+- The shape of new code: types, function signatures, data flow, error
+  handling, and names (apply code-naming here, not only after the fact).
+- The existing code each piece should imitate, such as "follow `parse_header`
+  in `src/wire.rs`".
+- The test cases that prove each piece works.
+
+If reading the code yourself is not enough, dispatch read-only tasks that each
+answer one specific question, such as "list every caller of `Store::flush` and
+what it assumes about ordering". They need no workspace: run them in the
+original workspace with a read-only sandbox (`codex exec --cd "$ROOT" --sandbox
+read-only`), and several can run at once.
+Break a large question into several narrow ones rather than one broad design
+task. Then make the design decisions yourself from the answers.
+
+Read-only tasks never go on `gpt-6-astra`. Run them on `gpt-6-luna` on
+`xhigh`, or on `gpt-6-sol` on `medium` when the question spans many files; use
+`gpt-6-sol` on `xhigh` only for the hardest ones. A question that seems to need
+more than that is too broad: split it.
+
+### Split along seams
+
+Split the design into tasks that each carry one concern. Useful seams:
+
+- **Preparation before behavior.** Move, extract, or rename code in a
+  no-behavior-change task, then make the real change in a separate, smaller
+  task.
+- **Interface before implementation.** Add a new type or function signature
+  in one task, then implement each function, variant, or handler in its own
+  task. This works when the new code is not reachable yet, so every commit
+  still builds and passes the checks.
+- **One unit per task.** One function, one module, one endpoint, or one
+  command at a time.
+- **Fan-out by location.** Split a mechanical change across many call sites
+  into one task per file or directory.
+- **Tests as their own task.** When the cases are known, a task can write the
+  tests from a list of cases, and a later task can make them pass.
+- **Wiring last.** Connecting finished pieces to the entry point or config is
+  its own small task.
+
+Every task must leave the tree building and passing the checks. Do not split
+tightly coupled changes into commits that break it.
+
+### Write luna-ready tasks
+
+A task is ready for `gpt-6-luna` when its brief:
+
+- Names the exact files and symbols to change and where new code goes.
+- States every design decision: signatures, types, data shapes, error
+  behavior, and names.
+- Points to existing code to imitate or includes the relevant snippet.
+- Lists the concrete test cases or the exact command that must pass.
+- Needs no reading beyond the files it names.
+- Changes one concern, usually one to three files and well under 100 lines.
+- Says what not to touch.
+
+Give each task:
+
+- The brief above, with outcome and acceptance criteria.
+- Dependencies on other tasks.
+- A difficulty rating (§3), which picks its model and reasoning effort.
 - A short slug for its workspace name, such as `parse-config`.
-
-Avoid splitting tightly coupled changes into incomplete commits.
 
 ### Group tasks into waves
 
@@ -136,7 +198,7 @@ worker finishes.
 
 ## 3. Choose the model by difficulty
 
-Rate each task and pass the matching model and reasoning effort explicitly.
+Pass the matching model and reasoning effort explicitly.
 Never rely on the Codex config defaults.
 
 | Difficulty | Examples                                                   | Model         | Reasoning |
@@ -148,11 +210,23 @@ Never rely on the Codex config defaults.
 | Harder     | Algorithmic, concurrency, or architecture-level work       | `gpt-6-astra` | `medium`  |
 | Hardest    | Very complex work where a mistake is costly or subtle      | `gpt-6-astra` | `high`    |
 
+This table is for tasks that change code. Read-only tasks follow §1 and never
+go on `gpt-6-astra`.
+
 Make trivial changes yourself instead of dispatching them. They still get their
 own workspace, naming pass, checks, and commit, and land like any other task.
 
-When unsure between two ratings, pick the higher one. If a worker fails a task
-twice on the same problem, escalate the follow-up one row.
+Rate each task after splitting it, against its brief. A luna-ready task
+(§1) is Simple, whatever the feature is. Before rating a task above Simple, try
+once more to split it or to settle its open decisions in the brief, and record
+in the task list the reason it cannot go lower, for example "needs judgment
+across the scheduler's locking invariants". Expect most tasks to be Simple. If
+more than about a quarter rate Medium or above, go back to §1 and split
+further.
+
+If a worker fails a task, first check what its brief was missing, fix the
+brief, and retry on the same tier. Escalate one row only when the brief was
+complete and the task itself exceeded the model.
 
 ## 4. Brief the worker and verify each task
 
@@ -164,9 +238,9 @@ interface when specified; otherwise use whichever is available. Apart from
 trivial tasks (§3), implementation must go through Codex, including follow-up
 fixes.
 
-Send a bounded brief containing the task's outcome, acceptance criteria,
-workspace path, relevant context, constraints, checks, and resolved skill
-paths. Tell Codex to:
+Send the task's luna-ready brief (§1): outcome, acceptance criteria, exact
+files and symbols, design decisions, code to imitate, test cases, checks, what
+not to touch, the workspace path, and the resolved skill paths. Tell Codex to:
 
 - Implement only that task, only inside its workspace directory.
 - Apply the code-naming skill to its changes.
