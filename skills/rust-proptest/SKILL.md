@@ -9,7 +9,7 @@ This skill teaches an LLM how to design and implement **high-leverage, reproduci
 
 - `hegeltest` (crate name on crates.io, lib name `hegel`) for generators, shrinking, and test execution.
 
-Hegel is built on Hypothesis via the Hegel protocol. It uses a client-server architecture: the Rust library communicates with `hegel-core` (a Python server installed via `uv`) to generate and shrink test data. Shrinking is handled entirely server-side.
+Hegel is based on Hypothesis. It runs entirely in-process: a native Rust port of the Hypothesis engine generates and shrinks test data. There is no Python dependency, no `hegel-core` server, and no `uv` install. Add it with `cargo add --dev hegeltest`.
 
 The goal is not to generate "random tests", but to encode **executable specifications** using:
 
@@ -149,7 +149,7 @@ fn sorted_unique_vec(tc: hegel::TestCase) -> Vec<u32> {
 }
 ```
 
-Shrinking preserves validity because Hypothesis handles it server-side.
+Shrinking preserves validity: the engine shrinks the underlying choice sequence and re-runs the generator, so every shrunk value still passes through `sort` and `dedup`.
 
 ---
 
@@ -161,11 +161,13 @@ If rejection count grows, redesign the generator. Hegel will raise a `FilterTooM
 
 You can suppress this with `#[hegel::test(suppress_health_check = [HealthCheck::FilterTooMuch])]`, but prefer fixing the generator instead.
 
+Prefer `tc.reject()` over `tc.assume(false)` when the rejection happens inside a `match` arm: it returns `!`, so the compiler knows the rest of the arm is unreachable.
+
 ---
 
 ## 4.3 Shrink Toward Semantic Simplicity
 
-Shrinking is handled by the server (Hypothesis). Design generators so that smaller draws naturally correspond to simpler, easier-to-understand inputs.
+Shrinking is handled by the engine, which shrinks the choices behind each draw. Design generators so that smaller draws naturally correspond to simpler, easier-to-understand inputs.
 
 Use `.min_value()` / `.max_value()` / `.min_size()` / `.max_size()` to bound the search space meaningfully.
 
@@ -215,7 +217,14 @@ fn test_example(tc: TestCase) {
 - `tc.draw(generator)` — draw a value (requires `T: Debug`)
 - `tc.draw_silent(generator)` — draw without recording (no `T: Debug` needed)
 - `tc.assume(condition)` — reject the current test case if false
+- `tc.reject()` — reject unconditionally; returns `!`
 - `tc.note(&str)` — attach debug info shown only on failure replay
+- `tc.target(score: f64)` — steer generation toward inputs that maximise `score` (inside `#[hegel::test]`, the source expression becomes the label; use `tc.target_labelled(score, label)` to set it explicitly)
+- `tc.repeat(|| { ... })` — run a body "logically forever" until the test case ends; each iteration is noted in the failure replay
+
+`TestCase` is `Send` but not `Sync`. You can `tc.clone()` it and draw from the clone on another thread. Each clone draws from its own deterministic stream, and all clones share one outcome. Join every such thread before the test returns.
+
+`#[hegel::test]` rewrites `let x = tc.draw(...)` so that failures print `let x = <value>;` with real variable names.
 
 ---
 
@@ -225,7 +234,7 @@ For your own types, derive `DefaultGenerator` to enable `gs::default::<T>()`:
 
 ```rust
 use hegel::DefaultGenerator;
-use hegel::generators::{self as gs, DefaultGenerator as _};
+use hegel::generators as gs;
 
 #[derive(DefaultGenerator, Debug)]
 struct Input {
@@ -240,13 +249,13 @@ fn test_with_input(tc: TestCase) {
 }
 ```
 
-Note: `hegel::DefaultGenerator` is the derive macro; `hegel::generators::DefaultGenerator` is the trait. Import the trait (as `_`) to call `T::default_generator()`.
+Note: `hegel::DefaultGenerator` is the derive macro; `hegel::generators::DefaultGenerator` is the trait. `gs::default::<T>()` returns `T::Generator` directly (it is not boxed), so builder methods stay available.
 
-Customize specific fields using `T::default_generator()` (not `gs::default()`, which boxes and loses builder methods):
+Customize specific fields by chaining builder methods on `gs::default::<T>()`:
 
 ```rust
 let i: Input = tc.draw(
-    Input::default_generator()
+    gs::default::<Input>()
         .n(gs::integers().min_value(0_u32).max_value(10_000))
         .bytes(gs::vecs(gs::integers::<u8>()).max_size(128))
 );
@@ -270,18 +279,19 @@ fn test_mode(tc: TestCase) {
 }
 ```
 
-Customize variant generators using `T::default_generator()`:
+Customize data-carrying variants with snake_case builder methods named after the variant. Unit variants need no configuration.
+
+- Struct variant `Custom { factor: u32 }`: `.custom(|g| ...)` takes a closure over the variant's generator, which has one builder per field.
+- Tuple variant `Error(i32, String)`: `.error(g0, g1)` takes one generator per field, or `.error_with(|g| g._0(...)._1(...))` uses the closure form.
 
 ```rust
 let mode: Mode = tc.draw(
-    Mode::default_generator()
-        .Custom(
-            Mode::default_generator()
-                .default_Custom()
-                .factor(gs::integers().min_value(1_u32).max_value(100))
-        )
+    gs::default::<Mode>()
+        .custom(|g| g.factor(gs::integers().min_value(1_u32).max_value(100)))
 );
 ```
+
+`#[derive(DefaultGenerator)]` also works on generic types (`struct Point<T> { x: T }` works for any `T: DefaultGenerator`). Lifetime parameters are not supported.
 
 ---
 
@@ -295,8 +305,8 @@ hegel::derive_generator!(ForeignStruct {
     field2: u32,
 });
 
-// Now gs::default::<ForeignStruct>() works for uncustomized defaults,
-// and ForeignStruct::default_generator().field1(gen) for customized ones.
+// Now gs::default::<ForeignStruct>() works, and so does
+// gs::default::<ForeignStruct>().field1(gen) for customized fields.
 ```
 
 ---
@@ -343,6 +353,8 @@ Pick from a fixed list:
 let op: &str = tc.draw(gs::sampled_from(vec!["add", "remove", "update"]));
 ```
 
+`sampled_from` also accepts a slice (`&[T]`) or a reference to an array or `Vec`.
+
 Optional values:
 
 ```rust
@@ -363,7 +375,7 @@ let (n, b, s) = tc.draw(hegel::tuples!(
 
 ## 5.8 Generator Combinators
 
-All generators support these methods:
+All generators support these methods. They live on the `Generator` trait, so bring it into scope with `use hegel::generators::Generator;` (also re-exported as `hegel::Generator`):
 
 ```rust
 gen.map(|x| transform(x))         // transform output
@@ -372,33 +384,68 @@ gen.filter(|x| predicate(x))      // filter (retries 3 times, then assume(false)
 gen.boxed()                        // type-erase into BoxedGenerator
 ```
 
+`.filter()` on a generator with a finite value set (e.g. `sampled_from`) enumerates the valid values once instead of rejection-sampling. An unsatisfiable filter is a usage error.
+
+---
+
+## 5.9 Recursive Generators
+
+Use `gs::deferred::<T>()` to refer to a generator before it is defined:
+
+```rust
+use hegel::generators::{self as gs, Generator};
+
+enum Tree {
+    Leaf(i32),
+    Branch(Box<Tree>, Box<Tree>),
+}
+
+let tree = gs::deferred::<Tree>();
+let leaf = gs::integers::<i32>().map(Tree::Leaf);
+let branch = hegel::tuples!(tree.generator(), tree.generator())
+    .map(|(l, r)| Tree::Branch(Box::new(l), Box::new(r)));
+tree.set(hegel::one_of!(leaf, branch));
+```
+
+---
+
+## 5.10 Misconfiguration Is a Usage Error
+
+Invalid generator arguments (`max_value` below `min_value`, an empty `sampled_from`/`one_of`, a `hashsets` `min_size` larger than the element generator's distinct values, an unknown codec) abort the run with a clear message. They are not reported or shrunk as counterexamples.
+
 ---
 
 # 6. Available Generators Reference
 
 ## 6.1 Primitives
 
-| Function              | Type              | Builder Methods                                                                                                           |
-| --------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `gs::integers::<T>()` | all integer types | `.min_value(v)`, `.max_value(v)`                                                                                          |
-| `gs::floats::<T>()`   | `f32`, `f64`      | `.min_value(v)`, `.max_value(v)`, `.allow_nan(bool)`, `.allow_infinity(bool)`, `.exclude_min(bool)`, `.exclude_max(bool)` |
-| `gs::booleans()`      | `bool`            | —                                                                                                                         |
-| `gs::just(value)`     | `T`               | —                                                                                                                         |
-| `gs::unit()`          | `()`              | —                                                                                                                         |
-| `gs::durations()`     | `Duration`        | `.min_value(Duration)`, `.max_value(Duration)`                                                                            |
+| Function              | Type              | Builder Methods                                                                                                                                     |
+| --------------------- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gs::integers::<T>()` | all integer types | `.min_value(v)`, `.max_value(v)`                                                                                                                    |
+| `gs::floats::<T>()`   | `f32`, `f64`      | `.min_value(v)`, `.max_value(v)`, `.allow_nan(bool)`, `.allow_infinity(bool)`, `.allow_subnormal(bool)`, `.exclude_min(bool)`, `.exclude_max(bool)` |
+| `gs::booleans()`      | `bool`            | —                                                                                                                                                   |
+| `gs::just(value)`     | `T`               | —                                                                                                                                                   |
+| `gs::unit()`          | `()`              | —                                                                                                                                                   |
+| `gs::durations()`     | `Duration`        | `.min_value(Duration)`, `.max_value(Duration)`                                                                                                      |
 
 ## 6.2 Strings and Text
 
-| Function                  | Type      | Builder Methods                                                     |
-| ------------------------- | --------- | ------------------------------------------------------------------- |
-| `gs::text()`              | `String`  | `.min_size(n)`, `.max_size(n)`, `.alphabet(chars)`, `.codec(s)`     |
-| `gs::characters()`        | `char`    | `.codec(s)`, `.categories(&[&str])`, `.exclude_categories(&[&str])` |
-| `gs::from_regex(pattern)` | `String`  | `.fullmatch(bool)`                                                  |
-| `gs::binary()`            | `Vec<u8>` | `.min_size(n)`, `.max_size(n)`                                      |
-| `gs::emails()`            | `String`  | —                                                                   |
-| `gs::urls()`              | `String`  | —                                                                   |
-| `gs::domains()`           | `String`  | `.max_length(n)`                                                    |
-| `gs::ip_addresses()`      | `String`  | `.v4()`, `.v6()`                                                    |
+| Function                  | Type                  | Builder Methods                                                                                                                                                                                                                |
+| ------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `gs::text()`              | `String`              | `.min_size(n)`, `.max_size(n)`, `.alphabet(&str)`, `.codec(s)`, `.min_codepoint(u32)`, `.max_codepoint(u32)`, `.categories(&[&str])`, `.exclude_categories(&[&str])`, `.include_characters(&str)`, `.exclude_characters(&str)` |
+| `gs::characters()`        | `char`                | `.codec(s)`, `.min_codepoint(u32)`, `.max_codepoint(u32)`, `.categories(&[&str])`, `.exclude_categories(&[&str])`, `.include_characters(&str)`, `.exclude_characters(&str)`                                                    |
+| `gs::from_regex(pattern)` | `String`              | `.fullmatch(bool)` (default `true`), `.alphabet(CharactersGenerator)`                                                                                                                                                          |
+| `gs::binary()`            | `Vec<u8>`             | `.min_size(n)`, `.max_size(n)`                                                                                                                                                                                                 |
+| `gs::emails()`            | `String`              | —                                                                                                                                                                                                                              |
+| `gs::urls()`              | `String`              | —                                                                                                                                                                                                                              |
+| `gs::domains()`           | `String`              | `.max_length(n)`                                                                                                                                                                                                               |
+| `gs::ip_addresses()`      | `std::net::IpAddr`    | `.v4()` (→ `Ipv4Addr`), `.v6()` (→ `Ipv6Addr`)                                                                                                                                                                                 |
+| `gs::uuids()`             | `String` (hyphenated) | `.version(1..=5)`                                                                                                                                                                                                              |
+| `gs::date_strings()`      | `String` (ISO format) | —                                                                                                                                                                                                                              |
+| `gs::time_strings()`      | `String` (ISO format) | —                                                                                                                                                                                                                              |
+| `gs::datetime_strings()`  | `String` (ISO format) | —                                                                                                                                                                                                                              |
+
+`codec` accepts `"ascii"` (same as `.max_codepoint(0x7F)`), `"latin-1"`/`"iso-8859-1"` (`.max_codepoint(0xFF)`), and `"utf-8"` (no-op). For typed, boundable dates and times, use the `chrono` or `jiff` extras (§6.5).
 
 ## 6.3 Collections
 
@@ -411,15 +458,25 @@ gen.boxed()                        // type-erase into BoxedGenerator
 
 ## 6.4 Combinators
 
-| Function/Macro                  | Description                         |
-| ------------------------------- | ----------------------------------- | --------- | ------------------------- |
-| `gs::optional(gen)`             | `Option<T>`                         |
-| `gs::sampled_from(vec)`         | pick uniformly from a fixed list    |
-| `gs::one_of(vec_of_boxed_gens)` | choose from multiple generators     |
-| `hegel::one_of!(g1, g2, ...)`   | macro that auto-boxes generators    |
-| `hegel::tuples!(g1, g2, ...)`   | tuple generator (up to 12 elements) |
-| `hegel::compose!(               | tc                                  | { ... })` | inline composed generator |
-| `gs::default::<T>()`            | use type's DefaultGenerator         |
+| Function/Macro                    | Description                                  |
+| --------------------------------- | -------------------------------------------- |
+| `gs::optional(gen)`               | `Option<T>`                                  |
+| `gs::sampled_from(values)`        | pick uniformly from a fixed list             |
+| `gs::one_of(vec_of_boxed_gens)`   | choose from multiple generators              |
+| `hegel::one_of!(g1, g2, ...)`     | macro that auto-boxes generators             |
+| `hegel::tuples!(g1, g2, ...)`     | tuple generator (0 to 12 elements)           |
+| `hegel::compose!(\|tc\| { ... })` | inline composed generator                    |
+| `gs::deferred::<T>()`             | forward reference for recursive generators   |
+| `gs::default::<T>()`              | the type's `DefaultGenerator`, with builders |
+
+## 6.5 Extras (Cargo Features)
+
+| Feature      | Module                      | Provides                                |
+| ------------ | --------------------------- | --------------------------------------- |
+| `chrono`     | `hegel::extras::chrono`     | typed, boundable chrono dates and times |
+| `jiff`       | `hegel::extras::jiff`       | typed, boundable jiff dates and times   |
+| `serde_json` | `hegel::extras::serde_json` | `values()` for bounded JSON trees       |
+| `rand`       | `hegel::extras::rand`       | `rand` integration                      |
 
 ---
 
@@ -467,16 +524,24 @@ hegel::Hegel::new(|tc: hegel::TestCase| {
 .run();
 ```
 
+Every `key = value` pair in the attribute becomes a call to the `Settings` method of the same name. You can also pass a whole `Settings` expression first: `#[hegel::test(my_settings(), seed = Some(42))]`.
+
 Available settings:
 
 - `test_cases(n)` — number of test cases (default 100)
+- `stateful_step_count(n)` — max steps per stateful test case (default 50, minimum 1)
 - `verbosity(Verbosity::Normal)` — `Quiet`, `Normal`, `Verbose`, `Debug`
 - `seed(Some(42))` — fixed seed for reproducibility
 - `derandomize(true)` — deterministic seed from test name (auto in CI)
-- `database(None)` — disable on-disk example database
-- `suppress_health_check([...])` — suppress specific health checks
+- `database(None)` — disable the on-disk example database, or `Some(path)` to relocate it
+- `phases([...])` — subset of `Phase::{Explicit, Reuse, Generate, Target, Shrink}` (default: all)
+- `suppress_health_check([...])` — suppress specific health checks; replaces earlier suppressions instead of adding to them
+- `print_blob(true)` — print a `#[hegel::reproduce_failure("…")]` line on failure (default `false`)
+- `report_multiple_failures(true)` — report each distinct failure instead of only the first (default `false`)
 
-Health checks: `FilterTooMuch`, `TooSlow`, `TestCasesTooLarge`, `LargeInitialTestCase`
+Health checks: `FilterTooMuch`, `TooSlow`, `TestCasesTooLarge`, `LargeInitialTestCase`. `HealthCheck::all()` returns all four.
+
+`Settings::backend(Backend::Urandom)` and `Settings::mode(Mode::SingleTestCase)` exist for Antithesis workloads. Do not use them in ordinary test suites.
 
 ---
 
@@ -488,6 +553,35 @@ Hegel auto-detects CI environments and adjusts defaults:
 - Tests are derandomized (reproducible across runs)
 
 No additional environment variable configuration is needed.
+
+---
+
+## 7.5 Reproducing Failures
+
+- **Example database**: failing examples are saved locally and replayed first on the next run (the `Reuse` phase). The database is not stable across hegel upgrades.
+- **Failure blobs**: with `print_blob = true`, a failure prints a line to paste **below** `#[hegel::test]`:
+
+  ```rust
+  #[hegel::test]
+  #[hegel::reproduce_failure("AAEC…")]
+  fn my_test(tc: TestCase) { ... }
+  ```
+
+  Only the first `reproduce_failure` attribute replays. A blob is valid only for the hegel version that produced it, so do not commit it as a long-lived regression test.
+
+- **Explicit test cases**: to pin a regression permanently, use `#[hegel::explicit_test_case]` with the draw variable names:
+
+  ```rust
+  #[hegel::test]
+  #[hegel::explicit_test_case(x = 42, y = String::from("hello"))]
+  fn my_test(tc: TestCase) {
+      let x: i32 = tc.draw(gs::integers());
+      let y: String = tc.draw(gs::text());
+      // ...
+  }
+  ```
+
+  Each value must have exactly the drawn type (`String::from("hello")`, not `"hello"`), or the test panics with a type mismatch. Repeated draws of the same name take suffixes: `x_1 = 1, x_2 = 2`.
 
 ---
 
@@ -522,7 +616,7 @@ impl StackModel {
     }
 
     #[invariant]
-    fn lengths_match(&mut self, _tc: TestCase) {
+    fn lengths_match(&self, _tc: TestCase) {
         assert_eq!(self.sut.len(), self.model.len());
     }
 }
@@ -537,13 +631,20 @@ fn test_stack_model(tc: TestCase) {
 }
 ```
 
-For value pools in stateful tests, use `hegel::stateful::Variables<T>`:
+`#[rule]` and `#[invariant]` methods can take `&self` or `&mut self`. Invariants run after each successful rule. Set the step count with `#[hegel::test(stateful_step_count = 100)]`.
+
+For value pools in stateful tests, use `hegel::stateful::Pool<T>`. Do not read the pool directly. Draw through one of its two generators so that the choice is recorded and shrinks:
+
+- `pool.values_reusable()` — yields `&T` and leaves the value in the pool
+- `pool.values_consumed()` — yields `T` and removes it from the pool
+
+Both reject the test case when the pool is empty.
 
 ```rust
-use hegel::stateful::{Variables, variables};
+use hegel::stateful::{Pool, pool};
 
 struct MyTest {
-    pool: Variables<String>,
+    pool: Pool<String>,
 }
 
 #[hegel::state_machine]
@@ -555,15 +656,21 @@ impl MyTest {
     }
 
     #[rule]
-    fn use_value(&mut self, _tc: TestCase) {
-        let val = self.pool.draw();  // assume(false) if empty
+    fn use_value(&mut self, tc: TestCase) {
+        let val: &String = tc.draw(self.pool.values_reusable());
+        assert!(!val.is_empty());
+    }
+
+    #[rule]
+    fn remove_value(&mut self, tc: TestCase) {
+        let val: String = tc.draw(self.pool.values_consumed());
         assert!(!val.is_empty());
     }
 }
 
 #[hegel::test]
 fn test_pool(tc: TestCase) {
-    let test = MyTest { pool: variables(&tc) };
+    let test = MyTest { pool: pool(&tc) };
     hegel::stateful::run(test, tc);
 }
 ```
@@ -601,6 +708,7 @@ Use in extended runs only.
 4. Non-deterministic test body
 5. Only testing "does not panic"
 6. Adding `#[test]` alongside `#[hegel::test]` (hegel adds it automatically)
+7. Committing `reproduce_failure` blobs as permanent regression tests (use `explicit_test_case`)
 
 ---
 
@@ -611,7 +719,7 @@ Use in extended runs only.
 mod tests {
     use hegel::TestCase;
     use hegel::DefaultGenerator;
-    use hegel::generators::{self as gs, DefaultGenerator as _};
+    use hegel::generators as gs;
 
     #[derive(DefaultGenerator, Debug)]
     struct Input {
@@ -630,7 +738,7 @@ mod tests {
     #[hegel::test(test_cases = 1000)]
     fn prop_matches_reference(tc: TestCase) {
         let i: Input = tc.draw(
-            Input::default_generator()
+            gs::default::<Input>()
                 .n(gs::integers().min_value(0_u32).max_value(10_000))
                 .bytes(gs::vecs(gs::integers::<u8>()).max_size(128))
         );
@@ -704,8 +812,8 @@ Design properties like you design APIs:
 
 This skill assumes:
 
-- `hegeltest` 0.4.x (crate name on crates.io, lib name `hegel`)
+- `hegeltest` 0.28.x (crate name on crates.io, lib name `hegel`)
 - Rust edition 2024, minimum rust-version 1.86
-- Runtime: `uv` (auto-installed to `~/.cache/hegel` if not on PATH)
+- Runtime: none. The engine is native Rust and runs in-process. There is no Python, `uv`, or `native` feature (that feature was removed; do not enable it).
 
-Revisit on major version changes.
+Hegel is in beta, and minor versions can contain breaking changes. Revisit this skill when you bump the minor version.
