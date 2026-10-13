@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Business Evaluation</title>
+<style>
+:root {
+  --bg: #f7f6f4; --surface: #ffffff; --surface-2: #f0eeeb; --text: #1d1b19; --muted: #6a645e;
+  --border: #dedad5; --accent: #2f5f8f;
+  --m1: #c9502c; --m2: #eba26a; --m3: #e6dfcf; --m4: #8db5da; --m5: #2f6aa6;
+  --m1-ink: #ffffff; --m2-ink: #1d1b19; --m3-ink: #1d1b19; --m4-ink: #1d1b19; --m5-ink: #ffffff;
+  --g0: #f0eeeb; --g1: #f9dfc2; --g2: #f1b46e; --g3: #d97a35; --g4: #a9471a;
+  --fit-d: #7452c0; --fit-e: #2f6aa6; --fit-c: #8a847d;
+  --sev-high: #b23a1d; --sev-medium: #b7791f; --sev-low: #6a645e;
+  --danger-bg: #fbe9e4;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161514; --surface: #1f1e1c; --surface-2: #2a2826; --text: #ece9e4; --muted: #a39d96;
+    --border: #3a3734; --accent: #8db5da;
+    --m1: #b4492a; --m2: #c7864f; --m3: #4a4640; --m4: #4f7aa3; --m5: #8db5da;
+    --m1-ink: #ffffff; --m2-ink: #161514; --m3-ink: #ece9e4; --m4-ink: #ffffff; --m5-ink: #161514;
+    --g0: #2a2826; --g1: #4a3a2a; --g2: #8a5a2c; --g3: #c06a2c; --g4: #e48a4a;
+    --fit-d: #a68ae6; --fit-e: #8db5da; --fit-c: #8a847d;
+    --sev-high: #ef7b5c; --sev-medium: #e0ad55; --sev-low: #a39d96;
+    --danger-bg: #3a2420;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161514; --surface: #1f1e1c; --surface-2: #2a2826; --text: #ece9e4; --muted: #a39d96;
+  --border: #3a3734; --accent: #8db5da;
+  --m1: #b4492a; --m2: #c7864f; --m3: #4a4640; --m4: #4f7aa3; --m5: #8db5da;
+  --m1-ink: #ffffff; --m2-ink: #161514; --m3-ink: #ece9e4; --m4-ink: #ffffff; --m5-ink: #161514;
+  --g0: #2a2826; --g1: #4a3a2a; --g2: #8a5a2c; --g3: #c06a2c; --g4: #e48a4a;
+  --fit-d: #a68ae6; --fit-e: #8db5da; --fit-c: #8a847d;
+  --sev-high: #ef7b5c; --sev-medium: #e0ad55; --sev-low: #a39d96;
+  --danger-bg: #3a2420;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1440px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 26px; margin: 0 0 4px; letter-spacing: -0.01em; }
+h2 { font-size: 18px; margin: 40px 0 12px; }
+.sub { color: var(--muted); margin: 0; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 20px 0; }
+.kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+.kpi b { display: block; font-size: 24px; font-variant-numeric: tabular-nums; }
+.kpi span { color: var(--muted); font-size: 13px; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; background: var(--surface); color: var(--text); padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button[aria-pressed="true"] { background: var(--text); color: var(--bg); }
+.legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--muted); }
+.legend i { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: -3px; margin-right: 4px; border: 1px solid var(--border); }
+.map { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.domain { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; }
+.domain.wide { grid-column: 1 / -1; }
+.domain header { display: flex; gap: 10px; align-items: center; padding: 10px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); font-weight: 600; font-size: 14px; }
+.domain header .code { background: var(--text); color: var(--bg); border-radius: 5px; padding: 1px 7px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 10px; flex: 1; align-content: start; }
+.domain.wide .tiles { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+.tile { position: relative; text-align: left; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px 10px; min-height: 84px; font: inherit; font-size: 13px; line-height: 1.3; cursor: pointer; background: var(--surface); color: var(--text); display: flex; flex-direction: column; gap: 4px; }
+.tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tile .tc { font-size: 11px; opacity: .75; font-variant-numeric: tabular-nums; }
+.tile .tn { font-weight: 600; }
+.tile .tv { margin-top: auto; font-size: 12px; font-variant-numeric: tabular-nums; display: flex; justify-content: space-between; gap: 6px; }
+.tile .fit { font-size: 10px; font-weight: 700; border-radius: 4px; padding: 0 5px; border: 1px solid currentColor; }
+.tile.low-conf { border-style: dashed; border-width: 2px; }
+.tile.unknown { background: repeating-linear-gradient(135deg, var(--surface), var(--surface) 6px, var(--surface-2) 6px, var(--surface-2) 12px); }
+.tile.na { opacity: .45; }
+.danger { outline: 2px solid var(--sev-high); outline-offset: -2px; }
+table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; font-size: 14px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { background: var(--surface-2); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+tr:last-child td { border-bottom: 0; }
+.table-wrap { overflow-x: auto; }
+.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.matrix { display: grid; grid-template-columns: 130px repeat(6, minmax(70px, 1fr)); gap: 4px; min-width: 640px; }
+.matrix div { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 6px; min-height: 48px; font-size: 12px; }
+.matrix .mh { background: transparent; border: 0; color: var(--muted); font-weight: 600; min-height: 0; }
+.matrix .zone-danger { background: var(--danger-bg); }
+.chip { display: inline-block; margin: 2px; padding: 1px 6px; border-radius: 4px; background: var(--surface-2); border: 1px solid var(--border); font-variant-numeric: tabular-nums; cursor: pointer; }
+.memo { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; }
+.memo h3 { font-size: 15px; margin: 18px 0 6px; }
+.memo h3:first-child { margin-top: 0; }
+.verdict { display: inline-block; font-weight: 700; padding: 3px 10px; border-radius: 6px; background: var(--text); color: var(--bg); }
+.sev { font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.sev.high { color: var(--sev-high); } .sev.medium { color: var(--sev-medium); } .sev.low { color: var(--sev-low); }
+dialog { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); max-width: 560px; width: calc(100% - 32px); padding: 20px; }
+dialog::backdrop { background: rgb(0 0 0 / .4); }
+dialog h3 { margin: 0 0 4px; }
+dialog dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 14px 0; font-size: 14px; }
+dialog dt { color: var(--muted); }
+dialog dd { margin: 0; }
+dialog button.close { float: right; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); border-radius: 6px; padding: 4px 10px; cursor: pointer; font: inherit; }
+a { color: var(--accent); }
+footer { margin-top: 40px; color: var(--muted); font-size: 12px; }
+@media (max-width: 1100px) { .map { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) {
+  .map { grid-template-columns: minmax(0, 1fr); }
+  .tiles, .domain.wide .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media print { .toolbar .seg { display: none; } dialog { display: none; } }
+</style>
+</head>
+<body>
+<main>
+  <h1 id="title"></h1>
+  <p class="sub" id="subtitle"></p>
+  <div class="kpis" id="kpis"></div>
+
+  <h2>Capability map</h2>
+  <div class="toolbar">
+    <div class="seg" role="group" aria-label="Color tiles by">
+      <button type="button" data-view="maturity" aria-pressed="true">Maturity</button>
+      <button type="button" data-view="gap" aria-pressed="false">Gap to target</button>
+      <button type="button" data-view="fit" aria-pressed="false">Strategic fit</button>
+    </div>
+    <div class="legend" id="legend"></div>
+  </div>
+  <div class="map" id="map"></div>
+
+  <h2>Priorities</h2>
+  <div class="table-wrap"><table id="priorities"></table></div>
+
+  <h2>Strategic fit × maturity</h2>
+  <p class="sub">Shaded cells are differentiating capabilities at maturity 1–2: the business claims to win on something it does poorly.</p>
+  <div class="table-wrap" style="margin-top:12px"><div class="matrix" id="matrix"></div></div>
+
+  <h2>Due diligence memo</h2>
+  <div class="memo" id="memo"></div>
+
+  <h2>Evidence ledger</h2>
+  <div class="table-wrap"><table id="evidence"></table></div>
+
+  <footer id="footer"></footer>
+</main>
+
+<dialog id="detail"></dialog>
+
+<!-- business-eval: replace the contents of this script tag with the evaluation JSON. -->
+<script id="eval-data" type="application/json">
+{
+  "company": "Example Co.",
+  "industry": "B2B software",
+  "date": "2026-01-01",
+  "purpose": "Template preview",
+  "evaluator": "business-eval",
+  "sources": [
+    { "id": "I1", "kind": "interview", "title": "Founder interview" },
+    { "id": "P1", "kind": "public", "title": "Company website", "url": "https://example.com" }
+  ],
+  "domains": [
+    { "code": "01", "name": "Manage strategy, performance and transformation", "capabilities": [
+      { "code": "01.1", "name": "Cascade the strategy", "maturity": 2, "target": 4, "fit": "essential", "importance": 3, "confidence": "medium", "evidence": ["I1"], "note": "Targets exist only at the leadership level." },
+      { "code": "01.2", "name": "Manage the operating model and organizational transformation", "maturity": null, "target": 3, "fit": "essential", "importance": 2, "confidence": "low", "evidence": [], "note": "No evidence yet." }
+    ]},
+    { "code": "08", "name": "Manage market access and commercial effectiveness", "capabilities": [
+      { "code": "08.3", "name": "Manage pricing, margin and commercial terms", "maturity": 1, "target": 4, "fit": "differentiating", "importance": 3, "confidence": "high", "evidence": ["I1", "P1"], "note": "Discounts approved ad hoc by each rep." }
+    ]}
+  ],
+  "priorities": [
+    { "code": "08.3", "action": "Introduce a discount approval matrix and track price realization.", "horizon": "0–6 months", "rationale": "Differentiating capability at maturity 1." }
+  ],
+  "memo": {
+    "verdict": "Proceed with conditions",
+    "thesis": "One paragraph thesis.",
+    "strengths": [{ "code": "01.1", "text": "Clear leadership goals." }],
+    "redFlags": [{ "code": "08.3", "severity": "high", "text": "No pricing discipline." }],
+    "openQuestions": ["What is the gross margin by segment?"]
+  }
+}
+</script>
+<script>
+(() => {
+  const data = JSON.parse(document.getElementById("eval-data").textContent);
+  const FIT = { differentiating: ["D", "Differentiating", "--fit-d"], essential: ["E", "Essential", "--fit-e"], commodity: ["C", "Commodity", "--fit-c"] };
+  const MATURITY = ["Initial", "Repeatable", "Defined", "Managed", "Optimized"];
+  const WIDE = new Set(["01", "10"]);
+
+  function h(tag, attrs = {}, ...children) {
+    const el = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (v == null || v === false) continue;
+      if (k === "class") el.className = v;
+      else if (k === "style") el.style.cssText = v;
+      else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+      else el.setAttribute(k, v);
+    }
+    for (const c of children.flat()) if (c != null && c !== false) el.append(c.nodeType ? c : String(c));
+    return el;
+  }
+  const safeUrl = u => (typeof u === "string" && /^https?:\/\//i.test(u) ? u : null);
+
+  const caps = data.domains.flatMap(d => d.capabilities.map(c => ({ ...c, domain: d.code })));
+  const byCode = new Map(caps.map(c => [c.code, c]));
+  const scored = caps.filter(c => !c.na && typeof c.maturity === "number");
+  const gapOf = c => (typeof c.maturity === "number" && typeof c.target === "number" ? Math.max(0, c.target - c.maturity) : null);
+  const isDanger = c => c.fit === "differentiating" && typeof c.maturity === "number" && c.maturity <= 2;
+
+  document.title = `${data.company}: Business Evaluation`;
+  document.getElementById("title").textContent = data.company;
+  document.getElementById("subtitle").textContent = [data.industry, data.purpose, data.date].filter(Boolean).join(" · ");
+
+  const avg = scored.length ? (scored.reduce((s, c) => s + c.maturity, 0) / scored.length).toFixed(1) : "–";
+  const flags = (data.memo?.redFlags || []).filter(f => f.severity === "high").length;
+  const kpis = [
+    [`${scored.length} / ${caps.filter(c => !c.na).length}`, "capabilities scored"],
+    [avg, "average maturity (scored only)"],
+    [caps.filter(isDanger).length, "differentiating capabilities at maturity ≤ 2"],
+    [flags, "high-severity red flags"],
+  ];
+  document.getElementById("kpis").append(...kpis.map(([v, l]) => h("div", { class: "kpi" }, h("b", {}, v), h("span", {}, l))));
+
+  function paint(tile, c, view) {
+    tile.style.background = ""; tile.style.color = ""; tile.style.borderLeft = "";
+    if (c.na) return;
+    if (view === "maturity" && typeof c.maturity === "number") {
+      tile.style.background = `var(--m${c.maturity})`; tile.style.color = `var(--m${c.maturity}-ink)`;
+    } else if (view === "gap") {
+      const g = gapOf(c);
+      if (g != null) { tile.style.background = `var(--g${g})`; tile.style.color = g >= 3 ? "#fff" : ""; }
+    } else if (view === "fit" && FIT[c.fit]) {
+      tile.style.borderLeft = `6px solid var(${FIT[c.fit][2]})`;
+    }
+  }
+
+  function legend(view) {
+    const el = document.getElementById("legend"); el.replaceChildren();
+    const item = (bg, label) => h("span", {}, h("i", { style: `background:${bg}` }), label);
+    if (view === "maturity") MATURITY.forEach((m, i) => el.append(item(`var(--m${i + 1})`, `${i + 1} ${m}`)));
+    if (view === "gap") [0, 1, 2, 3, 4].forEach(g => el.append(item(`var(--g${g})`, `gap ${g}`)));
+    if (view === "fit") Object.values(FIT).forEach(([, l, v]) => el.append(item(`var(${v})`, l)));
+    el.append(item("repeating-linear-gradient(135deg,var(--surface),var(--surface) 3px,var(--surface-2) 3px,var(--surface-2) 6px)", "no evidence"));
+    el.append(h("span", {}, "dashed border = low confidence"));
+  }
+
+  const tiles = [];
+  const map = document.getElementById("map");
+  for (const d of data.domains) {
+    const grid = h("div", { class: "tiles" });
+    for (const c of d.capabilities) {
+      const value = c.na ? "N/A" : typeof c.maturity === "number" ? `${c.maturity} → ${c.target ?? "?"}` : `? → ${c.target ?? "?"}`;
+      const fit = FIT[c.fit];
+      const tile = h("button", {
+        type: "button",
+        class: ["tile", c.na && "na", !c.na && typeof c.maturity !== "number" && "unknown", c.confidence === "low" && "low-conf", isDanger(c) && "danger"].filter(Boolean).join(" "),
+        "aria-label": `${c.code} ${c.name}: ${value}`,
+        onclick: () => openDetail(c),
+      },
+        h("span", { class: "tc" }, c.code),
+        h("span", { class: "tn" }, c.name),
+        h("span", { class: "tv" }, h("span", {}, value), fit ? h("span", { class: "fit", title: fit[1] }, fit[0]) : null));
+      tiles.push([tile, c]); grid.append(tile);
+    }
+    map.append(h("section", { class: `domain${WIDE.has(d.code) ? " wide" : ""}` }, h("header", {}, h("span", { class: "code" }, d.code), d.name), grid));
+  }
+
+  function setView(view) {
+    document.querySelectorAll(".seg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.view === view)));
+    tiles.forEach(([t, c]) => paint(t, c, view));
+    legend(view);
+  }
+  document.querySelectorAll(".seg button").forEach(b => b.addEventListener("click", () => setView(b.dataset.view)));
+  setView("maturity");
+
+  const sourceById = new Map((data.sources || []).map(s => [s.id, s]));
+  const dialog = document.getElementById("detail");
+  function openDetail(c) {
+    const ev = (c.evidence || []).map(id => {
+      const s = sourceById.get(id); const url = s && safeUrl(s.url);
+      return h("div", {}, h("b", {}, id), " ", url ? h("a", { href: url, target: "_blank", rel: "noopener" }, s.title) : (s ? s.title : "unknown source"));
+    });
+    dialog.replaceChildren(
+      h("button", { class: "close", type: "button", onclick: () => dialog.close() }, "Close"),
+      h("h3", {}, `${c.code} ${c.name}`),
+      h("dl", {},
+        h("dt", {}, "Maturity"), h("dd", {}, c.na ? "Not applicable" : typeof c.maturity === "number" ? `${c.maturity} (${MATURITY[c.maturity - 1]})` : "Unknown (no evidence)"),
+        h("dt", {}, "Target"), h("dd", {}, c.target != null ? `${c.target} (${MATURITY[c.target - 1]})` : "–"),
+        h("dt", {}, "Strategic fit"), h("dd", {}, FIT[c.fit]?.[1] || "–"),
+        h("dt", {}, "Importance"), h("dd", {}, c.importance != null ? `${c.importance} / 3` : "–"),
+        h("dt", {}, "Confidence"), h("dd", {}, c.confidence || "–")),
+      c.note ? h("p", {}, c.note) : null,
+      ev.length ? h("div", {}, h("h4", { style: "margin:12px 0 6px" }, "Evidence"), ev) : h("p", { class: "sub" }, "No evidence recorded."));
+    dialog.showModal();
+  }
+
+  const pt = document.getElementById("priorities");
+  pt.append(h("thead", {}, h("tr", {}, ["#", "Capability", "Now → target", "Fit", "Action", "Horizon"].map(t => h("th", {}, t)))));
+  pt.append(h("tbody", {}, (data.priorities || []).map((p, i) => {
+    const c = byCode.get(p.code) || { code: p.code, name: "" };
+    return h("tr", {},
+      h("td", { class: "num" }, i + 1),
+      h("td", {}, h("b", {}, c.code), " ", c.name, p.rationale ? h("div", { class: "sub", style: "font-size:13px" }, p.rationale) : null),
+      h("td", { class: "num" }, `${c.maturity ?? "?"} → ${c.target ?? "?"}`),
+      h("td", {}, FIT[c.fit]?.[1] || "–"),
+      h("td", {}, p.action || ""),
+      h("td", { class: "num" }, p.horizon || ""));
+  })));
+
+  const mx = document.getElementById("matrix");
+  mx.append(h("div", { class: "mh" }, ""), ...MATURITY.map((m, i) => h("div", { class: "mh" }, `${i + 1} ${m}`)), h("div", { class: "mh" }, "Unknown"));
+  for (const [key, [, label]] of Object.entries(FIT)) {
+    mx.append(h("div", { class: "mh" }, label));
+    for (const col of [1, 2, 3, 4, 5, null]) {
+      const inCell = caps.filter(c => !c.na && c.fit === key && (col == null ? typeof c.maturity !== "number" : c.maturity === col));
+      const danger = key === "differentiating" && col != null && col <= 2;
+      mx.append(h("div", { class: danger ? "zone-danger" : "" }, inCell.map(c => h("span", { class: "chip", title: c.name, onclick: () => openDetail(c) }, c.code))));
+    }
+  }
+
+  const memo = data.memo || {};
+  const ref = code => { const c = byCode.get(code); return c ? h("b", { title: c.name }, `${code} `) : null; };
+  document.getElementById("memo").append(
+    h("h3", {}, "Verdict"), h("span", { class: "verdict" }, memo.verdict || "–"),
+    h("h3", {}, "Thesis"), h("p", {}, memo.thesis || ""),
+    h("h3", {}, "Strengths"), h("ul", {}, (memo.strengths || []).map(s => h("li", {}, ref(s.code), s.text))),
+    h("h3", {}, "Red flags"), h("ul", {}, (memo.redFlags || []).map(f => h("li", {}, h("span", { class: `sev ${f.severity}` }, f.severity), " ", ref(f.code), f.text))),
+    h("h3", {}, "Open questions"), h("ul", {}, (memo.openQuestions || []).map(q => h("li", {}, q))));
+
+  const et = document.getElementById("evidence");
+  et.append(h("thead", {}, h("tr", {}, ["ID", "Kind", "Source"].map(t => h("th", {}, t)))));
+  et.append(h("tbody", {}, (data.sources || []).map(s => {
+    const url = safeUrl(s.url);
+    return h("tr", {}, h("td", { class: "num" }, s.id), h("td", {}, s.kind), h("td", {}, url ? h("a", { href: url, target: "_blank", rel: "noopener" }, s.title) : s.title));
+  })));
+
+  document.getElementById("footer").textContent = `Evaluated by ${data.evaluator || "business-eval"} on ${data.date}. Capability map adapted from Gartner-style business capability modeling (10 domains, 56 capabilities).`;
+})();
+</script>
+</body>
+</html>

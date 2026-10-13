@@ -165,6 +165,7 @@
               cp -rf ${./skills}/chrome-cdp $out/skills/chrome-cdp
               cp -rf ${./skills}/jujutsu $out/skills/jujutsu
               cp -rf ${./skills}/bus-pack $out/skills/bus-pack
+              cp -rf ${./skills}/business-eval $out/skills/business-eval
               cp -rf ${./skills}/code-naming $out/skills/code-naming
               cp -rf ${./skills}/code-pkm $out/skills/code-pkm
               cp -rf ${./skills}/debrief $out/skills/debrief
