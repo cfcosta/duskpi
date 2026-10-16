@@ -9,6 +9,7 @@ It wraps upstream Pi with a curated set of skills and the Catppuccin themes, so 
 - **Skills**
   - Engineering: `chrome-cdp`, `code-naming`, `dispatch`, `duckdb-docs`, `humanizer`, `jujutsu`, `rust-proptest`, `peekaboo` _(macOS only)_
   - Thinking and business: `bus-pack`, `business-eval`, `code-pkm`, `debrief`, `dichotomy`, `growth-hack`, `lead-magnet`, `mental-models`, `offer-doctor`, `prompt-humans`
+  - [pstack](https://github.com/cursor/plugins/tree/main/pstack): all of poteto's skills, including `poteto-mode`, `architect`, `interrogate`, `unslop`, `how`, `why`, `tdd` and the `principle-*` set
 - **Themes**
   - `catppuccin-latte`
   - `catppuccin-frappe`
@@ -58,13 +59,19 @@ pi
 - **prompt-humans**: audit directives to people against a 5-element context checklist
 - **rust-proptest**: Rust property testing with hegel
 
+### pstack
+
+All skills from `cursor/plugins/pstack` are bundled unmodified, except that `poteto-mode` and `make-bot-ui` get their frontmatter `name` rewritten to the lowercase form Pi requires. The pstack guide is shipped under `docs/guide` so `poteto-help`'s links resolve. Start with `/skill:poteto-mode`; ask `/skill:poteto-help` which skill fits a task.
+
+pstack was written for Cursor. Skills that spawn subagents through Cursor's `Task` tool (`poteto-mode`, `swarm`, `arena`, `interrogate`, `reflect`, `no-comments`) and `setup-pstack`'s model configuration assume Cursor features that Pi does not provide.
+
 ## Startup behavior
 
 The wrapped `pi` binary passes `--skill $out/skills` and `--theme $out/themes`, so bundled skills and themes are discovered on startup.
 
 ## Repository layout
 
-- `skills/`: bundled skill directories. Every directory here is shipped; `duckdb-docs` and `peekaboo` are pulled from upstream flake inputs.
+- `skills/`: bundled skill directories. Every directory here is shipped; `duckdb-docs`, `peekaboo` and the pstack skills are pulled from upstream flake inputs.
 - `themes/`: Catppuccin themes shipped as Pi theme files.
 
 ## Nix design
@@ -73,5 +80,5 @@ The flake:
 
 - pulls upstream Pi from `numtide/llm-agents.nix`
 - builds the `chrome-cdp` CLI and, on macOS, the prebuilt `peekaboo` binary
-- vendors local skills, upstream skills, and themes into one output
+- vendors local skills, upstream skills (duckdb-docs, pstack, peekaboo), and themes into one output
 - wraps the final `pi` binary so bundled resources are loaded on startup

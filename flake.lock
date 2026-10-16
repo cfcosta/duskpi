@@ -112,11 +112,28 @@
         "type": "github"
       }
     },
+    "pstack-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1792170444,
+        "narHash": "sha256-ql2vPKDIHqQxAcxpc2rTnIBv3rlxkE+I4X/Z71mQAoY=",
+        "owner": "cursor",
+        "repo": "plugins",
+        "rev": "2f8377461fd533f5af782e1fd643783b1067b847",
+        "type": "github"
+      },
+      "original": {
+        "owner": "cursor",
+        "repo": "plugins",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
         "llm-agents": "llm-agents",
         "nixpkgs": "nixpkgs",
         "peekaboo-src": "peekaboo-src",
+        "pstack-src": "pstack-src",
         "skill-duckdb-skills": "skill-duckdb-skills"
       }
     },

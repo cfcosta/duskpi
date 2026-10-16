@@ -6,6 +6,10 @@
       url = "github:duckdb/duckdb-skills";
       flake = false;
     };
+    pstack-src = {
+      url = "github:cursor/plugins";
+      flake = false;
+    };
     peekaboo-src = {
       url = "github:openclaw/Peekaboo/v3.2.2";
       flake = false;
@@ -104,10 +108,24 @@
               cp -rf ${./skills}/* $out/skills/
               cp -rf ${inputs.skill-duckdb-skills}/skills/duckdb-docs $out/skills/duckdb-docs
 
+              # pstack (cursor/plugins). poteto-help links to ../../docs/guide,
+              # so the guide lands at the output root next to skills/.
+              cp -rf ${inputs.pstack-src}/pstack/skills/* $out/skills/
+              mkdir -p $out/docs
+              cp -rf ${inputs.pstack-src}/pstack/docs/guide $out/docs/guide
+
               ${pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
                 mkdir -p $out/skills/peekaboo
                 cp -rf ${inputs.peekaboo-src}/skills/peekaboo/* $out/skills/peekaboo/
               ''}
+
+              # Pi requires lowercase hyphenated skill names; two pstack skills
+              # use display names instead.
+              chmod u+w $out/skills/{poteto-mode,make-bot-ui}/SKILL.md
+              substituteInPlace $out/skills/poteto-mode/SKILL.md \
+                --replace-fail 'name: Poteto Mode' 'name: poteto-mode'
+              substituteInPlace $out/skills/make-bot-ui/SKILL.md \
+                --replace-fail 'name: Make Bot UI' 'name: make-bot-ui'
 
               substituteInPlace $out/skills/chrome-cdp/SKILL.md \
                 --replace-fail '##CHROME-CDP##' '${chrome-cdp}/bin/chrome-cdp'
