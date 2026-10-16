@@ -684,25 +684,25 @@ jj restore --from main path/to/file
 
 # 12. Config keys an agent will encounter
 
-| Key                                                           | What                                                                                  |
+| Key | What |
 | ------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ------ | ------------------------------ |
-| `user.name`, `user.email`                                     | identity (REQUIRED)                                                                   |
-| `ui.editor`, `ui.diff-editor`, `ui.merge-editor`              | editors. Resolve order for editor: `$JJ_EDITOR` > `ui.editor` > `$VISUAL` > `$EDITOR` |
-| `ui.pager`, `ui.paginate`                                     | pager. Default `less -FRX`, `auto`. Set `paginate = "never"` for scripts.             |
-| `ui.color`                                                    | `auto`/`always`/`never`/`debug`. Overrides `NO_COLOR`.                                |
-| `ui.conflict-marker-style`                                    | `diff`/`snapshot`/`git`                                                               |
-| `revset-aliases.'immutable_heads()'`                          | Gates rewrites. Default = `trunk()                                                    | tags() | untracked_remote_bookmarks()`. |
-| `revsets.log`                                                 | Default revset for `jj log`                                                           |
-| `git.colocate`                                                | Whether `jj git init/clone` colocate. Default `true`.                                 |
-| `git.fetch`, `git.push`                                       | Default remote(s).                                                                    |
-| `git.private-commits`                                         | Revset jj refuses to push (silent push failures hide here).                           |
-| `git.sign-on-push`                                            | Sign mutable unsigned commits at push time.                                           |
-| `templates.git_push_bookmark`                                 | Bookmark name for `--change` push. Default: `'"push-" ++ change_id.short()'`.         |
-| `signing.behavior`, `signing.backend`, `signing.key`          | GPG/SSH signing.                                                                      |
-| `snapshot.max-new-file-size`                                  | Default 1 MiB; large new files refuse to snapshot.                                    |
-| `snapshot.auto-track`                                         | Fileset of paths auto-tracked.                                                        |
-| `aliases.X`                                                   | Single command alias (list of args).                                                  |
-| `revset-aliases.X`, `template-aliases.X`, `fileset-aliases.X` | Custom names.                                                                         |
+| `user.name`, `user.email` | identity (REQUIRED) |
+| `ui.editor`, `ui.diff-editor`, `ui.merge-editor` | editors. Resolve order for editor: `$JJ_EDITOR` > `ui.editor` > `$VISUAL` > `$EDITOR` |
+| `ui.pager`, `ui.paginate` | pager. Default `less -FRX`, `auto`. Set `paginate = "never"` for scripts. |
+| `ui.color` | `auto`/`always`/`never`/`debug`. Overrides `NO_COLOR`. |
+| `ui.conflict-marker-style` | `diff`/`snapshot`/`git` |
+| `revset-aliases.'immutable_heads()'` | Gates rewrites. Default = `trunk()                                                    | tags() | untracked_remote_bookmarks()`. |
+| `revsets.log` | Default revset for `jj log` |
+| `git.colocate` | Whether `jj git init/clone` colocate. Default `true`. |
+| `git.fetch`, `git.push` | Default remote(s). |
+| `git.private-commits` | Revset jj refuses to push (silent push failures hide here). |
+| `git.sign-on-push` | Sign mutable unsigned commits at push time. |
+| `templates.git_push_bookmark` | Bookmark name for `--change` push. Default: `'"push-" ++ change_id.short()'`. |
+| `signing.behavior`, `signing.backend`, `signing.key` | GPG/SSH signing. |
+| `snapshot.max-new-file-size` | Default 1 MiB; large new files refuse to snapshot. |
+| `snapshot.auto-track` | Fileset of paths auto-tracked. |
+| `aliases.X` | Single command alias (list of args). |
+| `revset-aliases.X`, `template-aliases.X`, `fileset-aliases.X` | Custom names. |
 
 Read/write:
 

@@ -2,32 +2,12 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
-    skill-visual-explainer = {
-      url = "github:nicobailon/visual-explainer";
-      flake = false;
-    };
-    skill-userinterface-wiki = {
-      url = "github:raphaelsalaja/userinterface-wiki";
-      flake = false;
-    };
     skill-duckdb-skills = {
       url = "github:duckdb/duckdb-skills";
       flake = false;
     };
     peekaboo-src = {
       url = "github:openclaw/Peekaboo/v3.2.2";
-      flake = false;
-    };
-    pi-autoresearch-src = {
-      url = "github:davebcn87/pi-autoresearch";
-      flake = false;
-    };
-    # Pinned: upstream past this rev gitignores package-lock.json, so the
-    # fetched source ships no lockfile and the buildNpmPackage derivation
-    # below can no longer vendor node_modules. Unpin once the packaging is
-    # reworked to install deps without a committed lockfile.
-    pi-mcp-adapter-src = {
-      url = "github:nicobailon/pi-mcp-adapter/999c735f2eb6f8c9237ad9b76668a93964d8be5c";
       flake = false;
     };
     llm-agents = {
@@ -82,20 +62,6 @@
             exec ${pkgs.bun}/bin/bun ${./skills/chrome-cdp/scripts/cdp.mjs} "$@"
           '';
 
-          pi-mcp-adapter = pkgs.buildNpmPackage {
-            pname = "pi-mcp-adapter";
-            version = "2.4.0";
-            src = inputs.pi-mcp-adapter-src;
-            npmDepsHash = "sha256-9P71EDq++Bmez3QDEbOL+PCtCFI2ajxy345stBOBp8k=";
-            dontNpmBuild = true;
-            installPhase = ''
-              runHook preInstall
-              mkdir -p $out
-              cp -rf . $out/
-              runHook postInstall
-            '';
-          };
-
           # macOS-only: prebuilt universal binary from the upstream release.
           # Peekaboo is a Swift/AppKit macOS automation CLI, so it is only
           # wired into the darwin build below.
@@ -124,64 +90,19 @@
           };
         in
         rec {
-          inherit chrome-cdp pi-mcp-adapter;
+          inherit chrome-cdp;
 
           resources = pkgs.stdenv.mkDerivation (_: {
             name = "duskpi-resources";
             src = self;
 
             buildPhase = ''
-              mkdir -p $out/{extensions,packages,prompts,skills,themes}
+              mkdir -p $out/{skills,themes}
 
-              cp -rf ${./extensions}/* $out/extensions/
-              cp -rf ${./packages}/* $out/packages/
-
-              mkdir -p $out/extensions/pi-mcp-adapter
-              cp -rf ${pi-mcp-adapter}/. $out/extensions/pi-mcp-adapter/
-
-              # pi-autoresearch resolves its package root as extensionDir/../..
-              # and reads assets/ from there, so the extension lands in
-              # extensions/autoresearch and its assets at the output root.
-              mkdir -p $out/extensions/autoresearch $out/assets
-              cp -rf ${inputs.pi-autoresearch-src}/extensions/pi-autoresearch/* $out/extensions/autoresearch/
-              cp -rf ${inputs.pi-autoresearch-src}/assets/* $out/assets/
-
-              cp -rf ${./prompts}/* $out/prompts/
               cp -rf ${./themes}/* $out/themes/
-              cp -rf ${./skills}/rust-proptest $out/skills/rust-proptest
 
-              mkdir -p $out/skills/humanizer
-              cp -rf ${./skills}/humanizer/* $out/skills/humanizer/
-
-              mkdir -p $out/skills/visual-explainer
-              cp -rf ${inputs.skill-visual-explainer}/* $out/skills/visual-explainer/
-
-              mkdir -p $out/skills/userinterface-wiki
-              cp -rf ${inputs.skill-userinterface-wiki}/skills/* $out/skills/userinterface-wiki/
-
+              cp -rf ${./skills}/* $out/skills/
               cp -rf ${inputs.skill-duckdb-skills}/skills/duckdb-docs $out/skills/duckdb-docs
-              cp -rf ${inputs.pi-autoresearch-src}/skills/* $out/skills/
-
-              cp -rf ${./skills}/chrome-cdp $out/skills/chrome-cdp
-              cp -rf ${./skills}/jujutsu $out/skills/jujutsu
-              cp -rf ${./skills}/bus-pack $out/skills/bus-pack
-              cp -rf ${./skills}/business-eval $out/skills/business-eval
-              cp -rf ${./skills}/code-naming $out/skills/code-naming
-              cp -rf ${./skills}/code-pkm $out/skills/code-pkm
-              cp -rf ${./skills}/debrief $out/skills/debrief
-              cp -rf ${./skills}/diataxis $out/skills/diataxis
-              cp -rf ${./skills}/dichotomy $out/skills/dichotomy
-              cp -rf ${./skills}/dip-or-cul-de-sac $out/skills/dip-or-cul-de-sac
-              cp -rf ${./skills}/dispatch $out/skills/dispatch
-              cp -rf ${./skills}/growth-hack $out/skills/growth-hack
-              cp -rf ${./skills}/hacker-mindset $out/skills/hacker-mindset
-              cp -rf ${./skills}/lead-magnet $out/skills/lead-magnet
-              cp -rf ${./skills}/mental-models $out/skills/mental-models
-              cp -rf ${./skills}/offer-doctor $out/skills/offer-doctor
-              cp -rf ${./skills}/permission-audit $out/skills/permission-audit
-              cp -rf ${./skills}/prompt-humans $out/skills/prompt-humans
-              cp -rf ${./skills}/taste-loop $out/skills/taste-loop
-              cp -rf ${./skills}/voss $out/skills/voss
 
               ${pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
                 mkdir -p $out/skills/peekaboo
@@ -197,15 +118,8 @@
                 "private": true,
                 "keywords": ["pi-package"],
                 "pi": {
-                  "theme": "catppuccin-mocha",
-                  "extensions": [
-                    "./extensions/*/index.ts"
-                  ],
                   "skills": [
                     "./skills"
-                  ],
-                  "prompts": [
-                    "./prompts"
                   ],
                   "themes": [
                     "./themes"
@@ -228,19 +142,7 @@
               wrapProgram $out/bin/pi \
                 --set SSL_CERT_FILE ${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt \
                 --set NODE_EXTRA_CA_CERTS ${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt \
-                --add-flags "--extension $out/extensions/bug-fix/index.ts" \
-                --add-flags "--extension $out/extensions/owasp-fix/index.ts" \
-                --add-flags "--extension $out/extensions/refactor/index.ts" \
-                --add-flags "--extension $out/extensions/test-audit/index.ts" \
-                --add-flags "--extension $out/extensions/catppuccin/index.ts" \
-                --add-flags "--extension $out/extensions/web-fetch/index.ts" \
-                --add-flags "--extension $out/extensions/web-search/index.ts" \
-                --add-flags "--extension $out/extensions/plan/index.ts" \
-                --add-flags "--extension $out/extensions/btw/index.ts" \
-                --add-flags "--extension $out/extensions/autoresearch/index.ts" \
-                --add-flags "--extension $out/extensions/pi-mcp-adapter/index.ts" \
                 --add-flags "--skill $out/skills" \
-                --add-flags "--prompt-template $out/prompts" \
                 --add-flags "--theme $out/themes"
             '';
           };

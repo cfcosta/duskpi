@@ -31,7 +31,7 @@ The book is written for personal mortality planning, but its 3-level structure t
 - Onboarding a successor for a role
 - The user themselves asking "if I got hit by a bus tomorrow, what would happen?"
 
-If the documentation is for _current users_ of a system (a feature doc, a tutorial), this is the wrong skill — use `diataxis`.
+If the documentation is for _current users_ of a system (a feature doc, a tutorial), this is the wrong skill.
 
 ## The non-negotiable mental model
 

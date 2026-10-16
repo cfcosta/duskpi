@@ -155,4 +155,4 @@ Return:
 
 ## Reference
 
-Michael Heap, "Prompt Engineering for Humans" (michaelheap.com, 2026). Local clipping: `resources/writing-communication/Prompt Engineering for Humans.md`. Pairs with: `diataxis` (for documentation directives — make sure the doc is the right mode for what you're asking for), `voss` (for directives where the recipient has emotion or leverage).
+Michael Heap, "Prompt Engineering for Humans" (michaelheap.com, 2026). Local clipping: `resources/writing-communication/Prompt Engineering for Humans.md`.

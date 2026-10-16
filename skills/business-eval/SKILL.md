@@ -58,18 +58,18 @@ Before you collect anything, get these five facts. Ask the user for the ones the
 
 Read `capability-map.md` in this skill's directory. It holds the reference map: 10 L1 domains and 56 L2 capabilities, each with a scope and typical signals.
 
-| L1 | Domain |
-| --- | --- |
-| 01 | Manage strategy, performance and transformation |
-| 02 | Structure capital and manage financial resources |
-| 03 | Manage market and commercial intelligence |
-| 04 | Manage innovation and portfolio differentiation |
-| 05 | Manage regulatory affairs |
-| 06 | Manage production and operational efficiency |
-| 07 | Manage planning, procurement and logistics |
-| 08 | Manage market access and commercial effectiveness |
-| 09 | Manage customer experience and performance in use |
-| 10 | Develop people, technology and a scalable organization |
+| L1  | Domain                                                 |
+| --- | ------------------------------------------------------ |
+| 01  | Manage strategy, performance and transformation        |
+| 02  | Structure capital and manage financial resources       |
+| 03  | Manage market and commercial intelligence              |
+| 04  | Manage innovation and portfolio differentiation        |
+| 05  | Manage regulatory affairs                              |
+| 06  | Manage production and operational efficiency           |
+| 07  | Manage planning, procurement and logistics             |
+| 08  | Manage market access and commercial effectiveness      |
+| 09  | Manage customer experience and performance in use      |
+| 10  | Develop people, technology and a scalable organization |
 
 Adaptation rules:
 
@@ -115,13 +115,13 @@ Map each document to the capabilities it informs before you read it in depth. A 
 
 Score each L2 on this scale. The anchors are generic; translate them into the capability's terms.
 
-| Score | Level | Anchor |
-| --- | --- | --- |
-| 1 | Initial | Ad hoc, depends on individuals, results are not repeatable. Nobody owns it. |
-| 2 | Repeatable | Done the same way most of the time, but informal. Some metrics, not used to decide. |
-| 3 | Defined | Documented process with a clear owner. Basic metrics are tracked and reviewed. |
-| 4 | Managed | Run by metrics with targets. Problems are found and corrected systematically. Supported by systems. |
-| 5 | Optimized | Continuously improved, benchmarked against the best, a source of advantage that others copy. |
+| Score | Level      | Anchor                                                                                              |
+| ----- | ---------- | --------------------------------------------------------------------------------------------------- |
+| 1     | Initial    | Ad hoc, depends on individuals, results are not repeatable. Nobody owns it.                         |
+| 2     | Repeatable | Done the same way most of the time, but informal. Some metrics, not used to decide.                 |
+| 3     | Defined    | Documented process with a clear owner. Basic metrics are tracked and reviewed.                      |
+| 4     | Managed    | Run by metrics with targets. Problems are found and corrected systematically. Supported by systems. |
+| 5     | Optimized  | Continuously improved, benchmarked against the best, a source of advantage that others copy.        |
 
 Rules:
 
@@ -157,11 +157,11 @@ Keep it honest: a typical company has **5–10 differentiating capabilities**. I
 
 Verdict scale by purpose:
 
-| Purpose | Verdict options |
-| --- | --- |
-| Invest / acquire | Proceed / Proceed with conditions / Do not proceed |
-| Self-diagnosis | On track / Fix before scaling / Rethink the strategy |
-| Partner vetting | Partner / Partner with safeguards / Do not partner |
+| Purpose             | Verdict options                                                |
+| ------------------- | -------------------------------------------------------------- |
+| Invest / acquire    | Proceed / Proceed with conditions / Do not proceed             |
+| Self-diagnosis      | On track / Fix before scaling / Rethink the strategy           |
+| Partner vetting     | Partner / Partner with safeguards / Do not partner             |
 | Competitor analysis | Threat level: High / Medium / Low, plus where they are exposed |
 
 Memo contents:
@@ -199,7 +199,12 @@ The rendered page has: KPI tiles, the capability map (colored by maturity, gap o
   "purpose": "string (e.g. 'Acquisition due diligence')",
   "evaluator": "string",
   "sources": [
-    { "id": "I1 | P1 | D1", "kind": "interview | public | document", "title": "string", "url": "https://... (public only)" }
+    {
+      "id": "I1 | P1 | D1",
+      "kind": "interview | public | document",
+      "title": "string",
+      "url": "https://... (public only)"
+    }
   ],
   "domains": [
     {
@@ -222,7 +227,12 @@ The rendered page has: KPI tiles, the capability map (colored by maturity, gap o
     }
   ],
   "priorities": [
-    { "code": "08.3", "action": "concrete action", "horizon": "0–6 months", "rationale": "why it ranks here" }
+    {
+      "code": "08.3",
+      "action": "concrete action",
+      "horizon": "0–6 months",
+      "rationale": "why it ranks here"
+    }
   ],
   "memo": {
     "verdict": "string from the Step 6 scale",

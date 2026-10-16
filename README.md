@@ -2,80 +2,18 @@
 
 `duskpi` is a Nix-packaged Pi distribution.
 
-Instead of treating Pi as a bare upstream binary and layering configuration on top, this repo ships a ready-to-run Pi package with opinionated workflows, prompts, skills, and themes already bundled.
-
-If you want a Pi that comes with structured bug-fixing, refactor review, security review, planning mode, curated skills, and Catppuccin themes out of the box, this is the package.
+It wraps upstream Pi with a curated set of skills and the Catppuccin themes, so `nix run .#` gives you a ready-to-use Pi without separate local setup.
 
 ## What this distribution includes
 
-The default package bundles upstream Pi together with repo-owned resources:
-
-- **Workflow extensions**
-  - `/bugfix`
-  - `/owasp-fix`
-  - `/test-audit`
-  - `/refactor`
-- **Planning extension**
-  - `/plan`
-  - `/todos`
-- **Autoresearch extension**
-  - `/autoresearch`
-  - `init_experiment`
-  - `run_experiment`
-  - `log_experiment`
-- **Side-question extension**
-  - `/btw`
-- **Direct commands**
-  - `/web-fetch`
-  - `/web-search` _(when `KAGI_API_KEY` is set)_
-- **Prompt templates**
-  - `/innovate`
-  - `/jj-commit`
-- **Custom tools**
-  - `web_fetch`
-  - `web_search` _(when `KAGI_API_KEY` is set)_
 - **Skills**
-  - `autoresearch-create`
-  - `autoresearch-finalize`
-  - `autoresearch-hooks`
-  - `chrome-cdp`
-  - `code-naming`
-  - `dispatch`
-  - `duckdb-docs`
-  - `humanizer`
-  - `rust-proptest`
-  - `userinterface-wiki`
-  - `visual-explainer`
+  - Engineering: `chrome-cdp`, `code-naming`, `dispatch`, `duckdb-docs`, `humanizer`, `jujutsu`, `rust-proptest`, `peekaboo` _(macOS only)_
+  - Thinking and business: `bus-pack`, `business-eval`, `code-pkm`, `debrief`, `dichotomy`, `growth-hack`, `lead-magnet`, `mental-models`, `offer-doctor`, `prompt-humans`
 - **Themes**
   - `catppuccin-latte`
   - `catppuccin-frappe`
   - `catppuccin-macchiato`
   - `catppuccin-mocha`
-
-It also activates `catppuccin-mocha` automatically at startup through a bundled extension.
-
-Theme loading follows two paths:
-
-- the package manifest advertises bundled themes from `themes/`
-- the wrapped `pi` binary passes `--theme $out/themes` so `nix run .#` can discover them immediately
-
-That keeps theme discovery explicit while still letting the startup extension switch to the package default theme by name.
-
-## What makes it a distribution
-
-The package is not just a folder of extras.
-
-`packages.<system>.default` wraps upstream Pi and preloads the bundled resources so they are available immediately when you run it. That means `nix run .#` behaves like a complete Pi environment, not a half-configured base install.
-
-In practice, the distribution gives you:
-
-- a `pi` binary
-- bundled extensions under `extensions/`
-- bundled prompt templates under `prompts/`
-- bundled skills under `skills/`
-- bundled themes under `themes/`
-- package metadata that Pi can understand
-- startup wiring so the important resources are loaded automatically
 
 ## Quick start
 
@@ -99,243 +37,41 @@ nix profile install .#
 pi
 ```
 
-## What you can do with it
+## Skills
 
-### 1. Use structured workflows instead of one-off prompts
-
-This distribution ships several multi-step extensions that guide Pi through more deliberate workflows.
-
-#### `/bugfix`
-
-Runs an adversarial bug-finding and fixing workflow.
-
-Use it when you want Pi to:
-
-- search for likely defects first
-- challenge its own findings
-- arbitrate which bugs are real into explicit execution units
-- execute approved fixes through the shared workflow-core runtime
-- run independent fix units in parallel dependency layers when possible
-
-#### `/owasp-fix`
-
-Security-focused workflow around OWASP-style findings.
-
-Use it when you want Pi to:
-
-- inspect code for security issues
-- reduce false positives through adversarial review
-- only fix issues that survive scrutiny
-
-#### `/test-audit`
-
-Test-gap and test-quality workflow.
-
-Use it when you want Pi to:
-
-- inspect what is untested
-- challenge weak test ideas
-- produce a tighter, verified testing plan with explicit execution units
-- implement approved test improvements through the shared workflow-core runtime
-- run independent test-improvement units in parallel dependency layers when possible
-
-#### `/refactor`
-
-Refactor workflow with explicit skepticism, structured approval, and branch-and-merge execution.
-
-Use it when you want Pi to:
-
-- map refactor candidates into a structured plan
-- challenge whether they are actually worth doing
-- revise the plan through hidden arbiter follow-ups before approval
-- run approved work in isolated jj workspaces through worker agents
-- execute independent refactor units in parallel dependency layers when possible
-- keep merge/conflict handling manager-owned instead of leaving it to workers
-
-`packages/workflow-core/` is now the shared execution home for the repo's migrated workflow family.
-
-- `/bugfix`, `/refactor`, and `/test-audit` use `GuidedExecutionWorkflow` plus shared execution helpers from `packages/workflow-core/`
-- `/plan` uses `GuidedWorkflow` for read-only planning, hidden critique/revision turns, approval callbacks, and step tracking
-- `/owasp-fix` remains on `PhaseWorkflow` in this pass
-
-That split keeps shared orchestration in workflow-core while letting each extension keep its own tagged JSON contracts and prompts.
-
-### 2. Switch into explicit planning mode
-
-The bundled `plan` extension adds:
-
-- `/plan`
-- `/autoplan`
-- `/todos`
-
-Use `/plan` when you want Pi to stay read-only while it investigates, proposes an execution plan, runs an internal critique pass, and waits for approval before switching back to execution. When the plan output includes a valid structured `pi-plan-json` payload, the plan widget becomes a compact structured dashboard instead of the older plain todo-only surface.
-
-Use `/autoplan` when the top-level goal needs multiple rounds of planning: it gets one approved high-level plan first, then re-plans and executes each approved subtask automatically while checking whether new tasks are still needed. Top-level autoplan planning may still ask clarification questions before that first approval, but the inner autoplan loop reuses the approved top-level plan as context and keeps going without re-questioning the user. The same structured dashboard now covers top-level `/autoplan` approval, inner subtask work, and autoplan review states whenever validated structured payloads exist.
-
-This is useful when you want:
-
-- more safety before edits
-- a concrete step list
-- a review point before execution
-- tracked step-by-step execution after approval
-- a structured dashboard widget with `alt+x` expand/collapse and `alt+shift+x` fullscreen controls for validated plan/review output
-
-### 3. Run autonomous optimization loops
-
-The bundled `autoresearch` extension (pulled from upstream [`davebcn87/pi-autoresearch`](https://github.com/davebcn87/pi-autoresearch) as a flake input) adds:
-
-- `/autoresearch`
-- `init_experiment`
-- `run_experiment`
-- `log_experiment`
-- the `autoresearch-create`, `autoresearch-finalize`, and `autoresearch-hooks` skills
-
-Use it when you want Pi to benchmark changes in a loop, keep wins automatically, and preserve experiment history in `.auto/log.jsonl`.
-
-### 4. Ask side questions without interrupting the main task
-
-The bundled `/btw` extension opens an ephemeral overlay for quick side questions.
-
-Use it when you want to:
-
-- ask a focused repo question while Pi keeps working
-- sanity-check a design detail without polluting the main thread
-- get a quick answer based on the current session context and recent tool activity
-
-The side answer is tool-less by design and is intended to feel lightweight and disposable.
-
-![Screenshot of the `/btw` side-question overlay while the main task keeps running](resources/btw.png)
-
-### 5. Use prompt templates for recurring tasks
-
-The distribution ships prompt templates that expand into reusable workflows.
-
-- `/innovate` for ideation and solution exploration
-- `/jj-commit` for commit-message and jujutsu-oriented commit flow guidance
-
-These are available immediately because the package preloads them.
-
-### 5a. Use `/web-fetch` to pull readable page content into the session
-
-The distribution also ships a `/web-fetch` command that fetches a concrete URL, runs Readability.js over the returned HTML, and injects the extracted content into the current session context as a user message.
-
-Use it when you already know the exact page you want Pi to work from.
-
-### 5b. Use `/web-search` for direct web queries
-
-When `KAGI_API_KEY` is set, the distribution ships a `/web-search` command and `web_search` tool that run the bundled Kagi-backed implementation directly.
-
-If `KAGI_API_KEY` is not set, the search extension stays disabled, so `/web-search` and `web_search` will not be exposed in the runtime at all.
-
-Use it when you want a command-style entrypoint with immediate search output instead of asking in freeform prose.
-
-### 6. Use specialized skills without extra setup
-
-The bundled skills cover common high-value tasks:
-
-- **attach-db** for attaching DuckDB database files and persisting shared session state
-- **autoresearch-create** for setting up and launching autonomous optimization loops
-- **autoresearch-finalize** for turning a noisy experiment branch into clean, reviewable branches
-- **autoresearch-hooks** for wiring lifecycle hooks around experiment runs
-- **chrome-cdp** for inspecting and interacting with your live Chrome, Chromium, or Brave session
-- **code-naming** for choosing and reviewing names that keep actions as verbs and expose domain intent
-- **duckdb-docs** for searching DuckDB and DuckLake documentation from the session
-- **humanizer** for making generated text sound less AI-written
-- **rust-proptest** for Rust property testing with hegel
-- **userinterface-wiki** for UI/UX reviews covering animation, typography, CSS, audio, and interaction patterns
-- **visual-explainer** for turning complex technical material into visual HTML explainers
+- **bus-pack**: continuity packs for roles, systems, and codebases (3-level "hit by a bus" structure)
+- **business-eval**: capability-map evaluation of a business, rendered as an interactive HTML report
+- **chrome-cdp**: inspect and interact with your live Chrome, Chromium, Brave, Edge, Arc, or Dia session
+- **code-naming**: choose and review names that keep actions as verbs and expose domain intent
+- **code-pkm**: distill a folder of notes with Tiago Forte's CODE and PARA methods
+- **debrief**: post-mortems and retros using the Extreme Ownership doctrine
+- **dichotomy**: name the leadership dichotomy in play and the balance to strike
+- **dispatch**: split a coding task into small Codex tasks, one jj workspace each, landed as verified commits
+- **duckdb-docs**: search DuckDB and DuckLake documentation from the session
+- **growth-hack**: staged launch and growth plans (Ryan Holiday's 4-stage framework)
+- **humanizer**: make generated text sound less AI-written
+- **jujutsu**: correct use of the jj version control system
+- **lead-magnet**: lead-generation plans from Hormozi's "$100M Leads"
+- **mental-models**: analyze decisions through 5 named mental models, inversion included
+- **offer-doctor**: diagnose and rebuild pitches and offers with Hormozi's Value Equation
+- **peekaboo**: macOS desktop automation (darwin builds only)
+- **prompt-humans**: audit directives to people against a 5-element context checklist
+- **rust-proptest**: Rust property testing with hegel
 
 ## Startup behavior
 
-This package intentionally changes startup from “plain Pi” to “distro Pi”.
-
-When `pi` starts from this package, the wrapper preloads bundled resources so commands, templates, and themes are available without needing a separate local Pi setup.
-
-That is why commands like these should be present right away:
-
-- `/bugfix`
-- `/owasp-fix`
-- `/test-audit`
-- `/refactor`
-- `/plan`
-- `/autoplan`
-- `/todos`
-- `/autoresearch`
-- `/btw`
-- `/web-search`
-- `/web-fetch`
-- `/innovate`
-
-The Catppuccin theme is activated by the bundled `catppuccin` extension, which reads the package's `pi.theme` value and calls `setTheme()` after the wrapped binary has already exposed the bundled theme files.
+The wrapped `pi` binary passes `--skill $out/skills` and `--theme $out/themes`, so bundled skills and themes are discovered on startup.
 
 ## Repository layout
 
-### `extensions/`
-
-Pi extensions bundled into the distribution.
-
-Notable entries:
-
-- `bug-fix`
-- `owasp-fix`
-- `test-audit`
-- `refactor`
-- `catppuccin`
-- `plan` (repo-local private extension vendored under `extensions/plan`)
-- `btw`
-- `web-fetch`
-- `web-search`
-
-### `packages/workflow-core/`
-
-Shared runtime package used by the workflow extensions in this repo.
-
-It holds the reusable orchestration pieces for:
-
-- `GuidedExecutionWorkflow` plus shared execution helpers for `/bugfix`, `/refactor`, and `/test-audit`
-- `GuidedWorkflow` for `/plan`
-- `PhaseWorkflow` for `/owasp-fix`
-- registration helpers for both workflow styles
-- prompt loading and message parsing helpers
-- extension-facing API abstractions and local typings
-
-See `packages/workflow-core/README.md` for the current architecture split.
-
-### `prompts/`
-
-Prompt templates loaded by Pi.
-
-### `skills/`
-
-Bundled skill directories and curated skill integrations.
-
-### `themes/`
-
-Catppuccin themes shipped as Pi theme files.
+- `skills/`: bundled skill directories. Every directory here is shipped; `duckdb-docs` and `peekaboo` are pulled from upstream flake inputs.
+- `themes/`: Catppuccin themes shipped as Pi theme files.
 
 ## Nix design
-
-This repo is built as a flake and exposes a package per supported system.
 
 The flake:
 
 - pulls upstream Pi from `numtide/llm-agents.nix`
-- builds third-party resources needed by this distribution
-- vendors local extensions, skills, prompts, and themes into one output
+- builds the `chrome-cdp` CLI and, on macOS, the prebuilt `peekaboo` binary
+- vendors local skills, upstream skills, and themes into one output
 - wraps the final `pi` binary so bundled resources are loaded on startup
-
-`plan` is vendored directly into `extensions/plan`, so you can modify it locally like the other bundled extensions. `autoresearch` is pulled from the upstream `davebcn87/pi-autoresearch` repo as a flake input at build time — its extension, assets, and skills are copied into the bundled resources, so updating it is a `nix flake update pi-autoresearch-src` away.
-
-## Why this repo exists
-
-The goal is not to fork Pi.
-
-The goal is to ship a sharper default Pi:
-
-- more structured workflows
-- better prompting ergonomics
-- stronger review and planning modes
-- good built-in themes
-- one installable package instead of a pile of ad hoc setup
-
-If upstream Pi is the base terminal coding harness, `duskpi` is a batteries-included distribution on top of it.
