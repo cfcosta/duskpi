@@ -114,7 +114,7 @@
               mkdir -p $out/docs
               cp -rf ${inputs.pstack-src}/pstack/docs/guide $out/docs/guide
 
-              ${pkgs.lib.optionalString pkgs.stdenv.isDarwin ''
+              ${pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
                 mkdir -p $out/skills/peekaboo
                 cp -rf ${inputs.peekaboo-src}/skills/peekaboo/* $out/skills/peekaboo/
               ''}
@@ -154,7 +154,7 @@
               inputs.llm-agents.packages.${system}.pi
               resources
             ]
-            ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [ peekaboo ];
+            ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [ peekaboo ];
             nativeBuildInputs = [ pkgs.makeWrapper ];
             postBuild = ''
               wrapProgram $out/bin/pi \
@@ -165,7 +165,7 @@
             '';
           };
         }
-        // pkgs.lib.optionalAttrs pkgs.stdenv.isDarwin { inherit peekaboo; }
+        // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin { inherit peekaboo; }
       );
     };
 }
