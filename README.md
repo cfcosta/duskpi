@@ -51,6 +51,7 @@ pi
 - **duckdb-docs**: search DuckDB and DuckLake documentation from the session
 - **growth-hack**: staged launch and growth plans (Ryan Holiday's 4-stage framework)
 - **humanizer**: make generated text sound less AI-written
+- **jev**: build on TypeSafe's Jev System One model: decompose decisions into typed questions, route on calibrated probabilities
 - **jujutsu**: correct use of the jj version control system
 - **lead-magnet**: lead-generation plans from Hormozi's "$100M Leads"
 - **mental-models**: analyze decisions through 5 named mental models, inversion included
