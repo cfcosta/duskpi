@@ -8,7 +8,7 @@ It wraps upstream Pi with a curated set of skills and the Catppuccin themes, so 
 
 - **Skills**
   - Engineering: `chrome-cdp`, `code-naming`, `dispatch`, `duckdb-docs`, `humanizer`, `jujutsu`, `rust-proptest`, `peekaboo` _(macOS only)_
-  - Thinking and business: `bus-pack`, `business-eval`, `code-pkm`, `debrief`, `dichotomy`, `growth-hack`, `lead-magnet`, `mental-models`, `offer-doctor`, `prompt-humans`
+  - Thinking and business: `bus-pack`, `business-eval`, `code-pkm`, `debrief`, `dichotomy`, `growth-hack`, `lead-magnet`, `mental-models`, `offer-doctor`, `prompt-humans`, `sales-machine-scaffold`
   - [pstack](https://github.com/cursor/plugins/tree/main/pstack): all of poteto's skills, including `poteto-mode`, `architect`, `interrogate`, `unslop`, `how`, `why`, `tdd` and the `principle-*` set
 - **Themes**
   - `catppuccin-latte`
@@ -59,6 +59,7 @@ pi
 - **peekaboo**: macOS desktop automation (darwin builds only)
 - **prompt-humans**: audit directives to people against a 5-element context checklist
 - **rust-proptest**: Rust property testing with hegel
+- **sales-machine-scaffold**: build a product-led sales machine from local product files: positioning, 6-stage machine, growth loops, articles, landing specs, sales manual, HCL system spec and an HTML audit report
 
 ### pstack
 
