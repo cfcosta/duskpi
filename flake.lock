@@ -134,7 +134,41 @@
         "nixpkgs": "nixpkgs",
         "peekaboo-src": "peekaboo-src",
         "pstack-src": "pstack-src",
+        "sales-machine-scaffold-src": "sales-machine-scaffold-src",
+        "security-audit-src": "security-audit-src",
         "skill-duckdb-skills": "skill-duckdb-skills"
+      }
+    },
+    "sales-machine-scaffold-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1795455284,
+        "narHash": "sha256-ES0kjz6pzo7Uf3mttZPaPkFoONpCCIH0wzvxnTkg8a0=",
+        "owner": "devton",
+        "repo": "sales-machine-scaffold",
+        "rev": "20ebfe88bae915c4c131952b288e2a05084aaf2f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "devton",
+        "repo": "sales-machine-scaffold",
+        "type": "github"
+      }
+    },
+    "security-audit-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1789414134,
+        "narHash": "sha256-oVVACjotkHvllQGxEP8yWaEt4c3GxT0d909TUM5P3NM=",
+        "owner": "cloudflare",
+        "repo": "security-audit-skill",
+        "rev": "c1c8a8c1471069fb0e188eeaff69b8e8db6564a8",
+        "type": "github"
+      },
+      "original": {
+        "owner": "cloudflare",
+        "repo": "security-audit-skill",
+        "type": "github"
       }
     },
     "skill-duckdb-skills": {

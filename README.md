@@ -74,7 +74,7 @@ The wrapped `pi` binary passes `--skill $out/skills` and `--theme $out/themes`, 
 
 ## Repository layout
 
-- `skills/`: bundled skill directories. Every directory here is shipped; `duckdb-docs`, `peekaboo` and the pstack skills are pulled from upstream flake inputs.
+- `skills/`: bundled skill directories. Every directory here is shipped; `duckdb-docs`, `peekaboo`, `sales-machine-scaffold`, `security-audit` and the pstack skills are pulled from upstream flake inputs.
 - `themes/`: Catppuccin themes shipped as Pi theme files.
 
 ## Nix design
@@ -83,5 +83,5 @@ The flake:
 
 - pulls upstream Pi from `numtide/llm-agents.nix`
 - builds the `chrome-cdp` CLI and, on macOS, the prebuilt `peekaboo` binary
-- vendors local skills, upstream skills (duckdb-docs, pstack, peekaboo), and themes into one output
+- vendors local skills, upstream skills (duckdb-docs, pstack, peekaboo, sales-machine-scaffold, security-audit), and themes into one output
 - wraps the final `pi` binary so bundled resources are loaded on startup

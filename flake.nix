@@ -10,6 +10,14 @@
       url = "github:cursor/plugins";
       flake = false;
     };
+    sales-machine-scaffold-src = {
+      url = "github:devton/sales-machine-scaffold";
+      flake = false;
+    };
+    security-audit-src = {
+      url = "github:cloudflare/security-audit-skill";
+      flake = false;
+    };
     peekaboo-src = {
       url = "github:openclaw/Peekaboo/v3.2.2";
       flake = false;
@@ -107,6 +115,14 @@
 
               cp -rf ${./skills}/* $out/skills/
               cp -rf ${inputs.skill-duckdb-skills}/skills/duckdb-docs $out/skills/duckdb-docs
+              cp -rf ${inputs.security-audit-src}/skills/security-audit $out/skills/security-audit
+
+              # sales-machine-scaffold is a skill at the repo root. Its examples/
+              # hold SKILL.md files for unrelated products that Pi would load as
+              # skills, so only the skill's own files are copied.
+              mkdir -p $out/skills/sales-machine-scaffold
+              cp -rf ${inputs.sales-machine-scaffold-src}/{SKILL.md,template.json,config.example.json,docs,reference,runbooks,workflows} \
+                $out/skills/sales-machine-scaffold/
 
               # pstack (cursor/plugins). poteto-help links to ../../docs/guide,
               # so the guide lands at the output root next to skills/.
